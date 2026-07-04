@@ -87,6 +87,20 @@
   color: #9a3412;
 }
 
+.detail-polish-btn--busy {
+  animation: detail-polish-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes detail-polish-pulse {
+  0%,
+  100% {
+    border-color: color-mix(in srgb, #e86b24 28%, transparent);
+  }
+  50% {
+    border-color: color-mix(in srgb, #e86b24 65%, transparent);
+  }
+}
+
 .detail-page .profile-section__actions {
   display: flex;
   flex-wrap: wrap;

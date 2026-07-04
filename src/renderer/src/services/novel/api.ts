@@ -208,6 +208,22 @@ export class NovelAPI {
     return novelClient.saveProject(project)
   }
 
+  static async saveSectionPolishUiState(
+    projectId: string,
+    state: {
+      scope_mode?: string
+      workflow_mode?: string
+      entry_section?: string
+    }
+  ): Promise<NovelProject> {
+    const project = await novelClient.getProject(projectId)
+    project.section_polish_state = {
+      ...(project.section_polish_state ?? {}),
+      ...state,
+    }
+    return novelClient.saveProject(project)
+  }
+
   static async markSectionPolishApplied(projectId: string): Promise<NovelProject> {
     const project = await novelClient.getProject(projectId)
     const history = [...(project.section_polish_history ?? [])]

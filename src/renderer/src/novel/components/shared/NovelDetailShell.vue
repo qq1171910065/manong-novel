@@ -39,14 +39,24 @@
               <div class="profile-section__intro">
                 <h2 class="profile-section__title">{{ activeSectionMeta.label }}</h2>
                 <p class="profile-section__desc">{{ activeSectionMeta.description }}</p>
-                <p v-if="canPolishActiveSection" class="detail-polish-hint">
-                  「AI 修改」全书共用同一会话，关闭后再开也会保留；右上角 ↺ 可开启新会话。
+                <p v-if="canOpenAiAssistant" class="detail-polish-hint">
+                  「AI 助手」全书共用同一会话，关闭窗口后对话与进行中的请求仍会保留；可选修改范围（当前板块 / 全书 / 智能识别）或「重新过灵感」重构框架。
                 </p>
                 <p v-if="isImportPending" class="detail-import-hint">
                   已导入 {{ importedChapterCount }} 章。智能解析会逐批阅读全书并填充各 Tab，请耐心等待；解析完成前不可编辑。
                 </p>
               </div>
-              <div v-if="showSectionHeaderActions" class="profile-section__actions">
+              <div v-if="showSectionHeaderActions || canOpenAiAssistant" class="profile-section__actions">
+                <button
+                  v-if="canOpenAiAssistant"
+                  type="button"
+                  class="detail-polish-btn md-ripple"
+                  :class="{ 'detail-polish-btn--busy': aiAssistantBusy }"
+                  @click="openAiAssistant"
+                >
+                  <Sparkles :size="16" aria-hidden="true" />
+                  <span>{{ aiAssistantBusy ? 'AI 处理中…' : 'AI 助手' }}</span>
+                </button>
                 <button
                   v-if="showAddButton"
                   type="button"
@@ -55,15 +65,6 @@
                 >
                   <Plus :size="16" aria-hidden="true" />
                   <span>新增</span>
-                </button>
-                <button
-                  v-if="canPolishActiveSection"
-                  type="button"
-                  class="detail-polish-btn md-ripple"
-                  @click="openSectionPolish"
-                >
-                  <Sparkles :size="16" aria-hidden="true" />
-                  <span>AI 修改</span>
                 </button>
               </div>
             </div>
@@ -116,6 +117,7 @@
       :project-id="projectId"
       :mode="inspirationModalMode"
       :polish-context="polishContext"
+      :keep-mounted="canOpenAiAssistant || inspirationModalMode === 'inspiration'"
       @close="closeInspiration"
       @blueprint-saved="closeInspiration"
       @blueprint-generating="onBlueprintGenerating"
@@ -190,7 +192,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
   BookOpen,
   List,
@@ -252,7 +254,7 @@ import {
 } from '@renderer/services/project-stats-service'
 import type { ActivityLogEntry } from '@renderer/services/activity-log-service'
 import {
-  buildPolishContext,
+  buildUnifiedPolishContext,
   formatAffectedSectionLabels,
   isPolishableSection,
   resolveAffectedSectionsFromUpdates,
@@ -262,6 +264,7 @@ import {
   type SectionPolishApplyPayload,
   type SectionPolishContext,
 } from '@renderer/novel/utils/section-polish'
+import { isAiAssistantBusy } from '@renderer/novel/composables/useAiAssistantRuntime'
 import {
   filterSectionsForMode,
   resolveWritingMode,
@@ -502,6 +505,15 @@ const canPolishActiveSection = computed(() => {
   return isPolishableSection(section as PolishableSectionKey)
 })
 
+const canOpenAiAssistant = computed(() => {
+  if (props.isAdmin || isContentLocked.value) return false
+  const project = novel.value
+  if (!project) return false
+  return !needsInspirationConversation(project)
+})
+
+const aiAssistantBusy = computed(() => isAiAssistantBusy(projectId))
+
 const showAddButton = computed(() => {
   if (props.isAdmin || isContentLocked.value) return false
   const ws = sectionData.world_setting?.world_setting as { core_rules?: string; key_locations?: unknown[]; factions?: unknown[] } | undefined
@@ -523,9 +535,7 @@ const showAddButton = computed(() => {
   }
 })
 
-const showSectionHeaderActions = computed(
-  () => showAddButton.value || canPolishActiveSection.value
-)
+const showSectionHeaderActions = computed(() => showAddButton.value)
 
 const onHeaderAdd = () => {
   if (activeSection.value === 'chapter_outline') {
@@ -768,17 +778,39 @@ const goToWritingDesk = async () => {
   showWritingDeskModal.value = true
 }
 
-const openSectionPolish = async () => {
-  const polishSection = resolvePolishableSection(activeSection.value)
-  if (!isPolishableSection(polishSection as PolishableSectionKey)) return
+const openAiAssistant = async () => {
+  await ensureProjectLoaded()
+  const project = novel.value
+  if (!project) return
+
+  const entrySection = canPolishActiveSection.value
+    ? (resolvePolishableSection(activeSection.value) as PolishableSectionKey)
+    : 'overview'
+
   if (!sectionData.world_setting && isWorldViewSection(activeSection.value)) {
     await loadSection(activeSection.value, true)
-  } else if (!sectionData[polishSection as SectionKey]) {
-    await loadSection(polishSection as SectionKey, true)
+  } else if (!sectionData[entrySection as SectionKey] && entrySection !== 'overview') {
+    await loadSection(entrySection as SectionKey, true)
   }
-  const ctx = buildPolishContext(
-    polishSection as PolishableSectionKey,
-    sectionData as Record<string, unknown>
+  if (!sectionData.overview) {
+    await loadSection('overview', true)
+  }
+
+  const savedState = project.section_polish_state ?? {}
+  const ctx = buildUnifiedPolishContext(
+    entrySection,
+    sectionData as Record<string, unknown>,
+    project.blueprint ?? novelStore.currentProject?.blueprint,
+    {
+      scopeMode:
+        savedState.scope_mode === 'entry' ||
+        savedState.scope_mode === 'global' ||
+        savedState.scope_mode === 'auto'
+          ? savedState.scope_mode
+          : 'auto',
+      workflowMode:
+        savedState.workflow_mode === 'reinspiration' ? 'reinspiration' : 'edit',
+    }
   )
   if (!ctx) return
   inspirationModalMode.value = 'section-polish'
@@ -813,10 +845,15 @@ const handleSectionPolishApplied = async (payload: SectionPolishApplyPayload) =>
 
   try {
     const patch = validateBlueprintUpdates(payload.blueprintUpdates)
-    const updatedProject = await NovelAPI.updateBlueprint(project.id, patch)
+    if (payload.replaceEntireBlueprint) {
+      const merged = { ...(project.blueprint ?? {}), ...patch }
+      await NovelAPI.saveBlueprint(project.id, merged)
+    } else {
+      await NovelAPI.updateBlueprint(project.id, patch)
+    }
     const syncedProject = await NovelAPI.markSectionPolishApplied(project.id)
     novelStore.setCurrentProject(syncedProject)
-    syncSectionDataFromBlueprint(updatedProject.blueprint ?? syncedProject.blueprint)
+    syncSectionDataFromBlueprint(syncedProject.blueprint)
     projectStatsService.recordEdit(projectId)
     const affectedSections =
       payload.affectedSections.length > 0
@@ -826,7 +863,9 @@ const handleSectionPolishApplied = async (payload: SectionPolishApplyPayload) =>
     activityLogService.logBlueprintEdit(
       projectId,
       overviewMeta.title || project.title || '未命名作品',
-      `${affectedLabels}（AI 修改）`
+      payload.replaceEntireBlueprint
+        ? '全书框架（重新过灵感）'
+        : `${affectedLabels}（AI 修改）`
     )
     for (const key of resolveAllSectionReloadKeys(affectedSections)) {
       await loadSection(key, true)
@@ -834,9 +873,11 @@ const handleSectionPolishApplied = async (payload: SectionPolishApplyPayload) =>
     if (activeSection.value === 'stats') loadInsightSection('stats')
     if (activeSection.value === 'activity_log') loadInsightSection('activity_log')
     globalAlert.showSuccess(
-      affectedLabels.length > 1
-        ? `已更新 ${affectedLabels}`
-        : `${affectedLabels} 修改已应用`,
+      payload.replaceEntireBlueprint
+        ? '全书框架已重构并保存'
+        : affectedLabels.length > 1
+          ? `已更新 ${affectedLabels}`
+          : `${affectedLabels} 修改已应用`,
       '保存成功'
     )
     closeInspiration()
@@ -849,9 +890,35 @@ const handleSectionPolishApplied = async (payload: SectionPolishApplyPayload) =>
 const closeInspiration = () => {
   showInspirationModal.value = false
   inspirationModalMode.value = 'inspiration'
-  polishContext.value = null
   refreshDetailSections()
 }
+
+watch(activeSection, () => {
+  if (!showInspirationModal.value || inspirationModalMode.value !== 'section-polish') return
+  if (!novel.value?.blueprint) return
+  const entrySection = canPolishActiveSection.value
+    ? (resolvePolishableSection(activeSection.value) as PolishableSectionKey)
+    : 'overview'
+  const savedState = novel.value.section_polish_state ?? {}
+  const ctx = buildUnifiedPolishContext(
+    entrySection,
+    sectionData as Record<string, unknown>,
+    novel.value.blueprint,
+    {
+      scopeMode:
+        savedState.scope_mode === 'entry' ||
+        savedState.scope_mode === 'global' ||
+        savedState.scope_mode === 'auto'
+          ? savedState.scope_mode
+          : polishContext.value?.scopeMode ?? 'auto',
+      workflowMode:
+        savedState.workflow_mode === 'reinspiration'
+          ? 'reinspiration'
+          : polishContext.value?.workflowMode ?? 'edit',
+    }
+  )
+  if (ctx) polishContext.value = ctx
+})
 
 const refreshDetailSections = () => {
   void loadSection('overview', true)
@@ -873,7 +940,7 @@ const onBlueprintGenerating = async () => {
       overviewMeta.title || novel.value?.title || '未命名作品'
     )
     refreshDetailSections()
-    globalAlert.showSuccess('蓝图已生成。可在各 Tab 使用「AI 修改」继续调整设定。', '生成成功')
+    globalAlert.showSuccess('蓝图已生成。可在各 Tab 使用「AI 助手」继续调整设定。', '生成成功')
   } catch (error) {
     if (isAbortError(error)) {
       globalAlert.showSuccess('已取消蓝图生成', '已取消')

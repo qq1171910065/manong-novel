@@ -8,17 +8,27 @@ export type PolishableSectionKey =
   | 'relationships'
   | 'chapter_outline'
 
+export type PolishScopeMode = 'auto' | 'entry' | 'global'
+
+export type PolishWorkflowMode = 'edit' | 'reinspiration'
+
 export interface SectionPolishContext {
   section: PolishableSectionKey
   sectionLabel: string
   scope: string
   currentContent: unknown
+  /** 全书蓝图快照，供全局修改与联动 */
+  fullBlueprint?: Blueprint
+  scopeMode?: PolishScopeMode
+  workflowMode?: PolishWorkflowMode
 }
 
 export interface SectionPolishApplyPayload {
   entrySection: PolishableSectionKey
   blueprintUpdates: Partial<Blueprint>
   affectedSections: PolishableSectionKey[]
+  /** 重新过灵感：整本替换蓝图 */
+  replaceEntireBlueprint?: boolean
 }
 
 export const POLISHABLE_SECTION_KEYS: PolishableSectionKey[] = [
@@ -65,6 +75,59 @@ const POLISH_META: Record<
 
 export function isPolishableSection(section: AllSectionType): section is PolishableSectionKey {
   return (POLISHABLE_SECTION_KEYS as string[]).includes(section)
+}
+
+export const POLISH_SCOPE_LABELS: Record<PolishScopeMode, string> = {
+  auto: '智能识别',
+  entry: '当前板块',
+  global: '全书设定',
+}
+
+export const POLISH_WORKFLOW_LABELS: Record<PolishWorkflowMode, string> = {
+  edit: '局部修改',
+  reinspiration: '重新过灵感',
+}
+
+const GLOBAL_INTENT_PATTERN =
+  /(全书|全局|整体|框架|重构|全部|所有板块|整个故事|从头到尾|大改|彻底|重新过灵感|重新构思|换类型|换题材|换世界观|推翻)/
+
+const ENTRY_ONLY_PATTERN =
+  /(仅.{0,6}(当前|这个|本).{0,6}(tab|板块|部分|章节|角色)|只改.{0,8}(这里|当前|这一)|不要联动|别动其他)/
+
+export function detectScopeFromUserInput(text: string): PolishScopeMode | null {
+  const input = text.trim()
+  if (!input) return null
+  if (ENTRY_ONLY_PATTERN.test(input)) return 'entry'
+  if (GLOBAL_INTENT_PATTERN.test(input)) return 'global'
+  return null
+}
+
+export function resolvePolishScopeMode(
+  preferred: PolishScopeMode | undefined,
+  userText?: string | null
+): PolishScopeMode {
+  const detected = userText ? detectScopeFromUserInput(userText) : null
+  if (detected) return detected
+  return preferred ?? 'auto'
+}
+
+export function buildUnifiedPolishContext(
+  entrySection: PolishableSectionKey,
+  sectionData: Record<string, unknown>,
+  blueprint?: Blueprint | null,
+  options?: {
+    scopeMode?: PolishScopeMode
+    workflowMode?: PolishWorkflowMode
+  }
+): SectionPolishContext | null {
+  const base = buildPolishContext(entrySection, sectionData)
+  if (!base) return null
+  return {
+    ...base,
+    fullBlueprint: blueprint ?? undefined,
+    scopeMode: options?.scopeMode ?? 'auto',
+    workflowMode: options?.workflowMode ?? 'edit',
+  }
 }
 
 export function buildPolishContext(

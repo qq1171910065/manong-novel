@@ -9,6 +9,7 @@ import optimizeEnvironmentPrompt from '@shared/novel/prompts/optimize_environmen
 import optimizePsychologyPrompt from '@shared/novel/prompts/optimize_psychology.md?raw'
 import optimizeRhythmPrompt from '@shared/novel/prompts/optimize_rhythm.md?raw'
 import sectionPolishPrompt from '@shared/novel/prompts/section_polish.md?raw'
+import blueprintReinspirationPrompt from '@shared/novel/prompts/blueprint_reinspiration.md?raw'
 import { formatGatewayContentFilterError, gatewayChatStream } from '@renderer/services/gateway-api'
 import type { GatewayTokenUsage } from '@renderer/services/gateway-api'
 import { projectStatsService } from '@renderer/services/project-stats-service'
@@ -41,7 +42,12 @@ import {
   hasValidPolishBlueprintUpdates,
   looksLikePolishAppliedClaim,
   normalizeAffectedSections,
+  POLISH_SCOPE_LABELS,
+  POLISH_WORKFLOW_LABELS,
+  resolvePolishScopeMode,
   shouldAutoMaterializePolish,
+  type PolishScopeMode,
+  type PolishWorkflowMode,
 } from '@renderer/novel/utils/section-polish'
 import { cloneJson } from '@shared/clone-json'
 import {
@@ -650,24 +656,68 @@ export async function converseConcept(
   }
 }
 
-function buildSectionPolishSystemPrompt(context: SectionPolishContext, project: NovelProject): string {
-  const blueprintJson = JSON.stringify(project.blueprint ?? {}, null, 2)
+function resolvePolishWorkflowMode(
+  context: SectionPolishContext,
+  conversationState: Record<string, unknown>
+): PolishWorkflowMode {
+  const fromState = conversationState.workflow_mode
+  if (fromState === 'reinspiration' || fromState === 'edit') return fromState
+  if (context.workflowMode === 'reinspiration') return 'reinspiration'
+  return 'edit'
+}
+
+function resolvePolishScopeModeForTurn(
+  context: SectionPolishContext,
+  conversationState: Record<string, unknown>,
+  userInput: { id?: string | null; value?: string | null } | null
+): PolishScopeMode {
+  if (userInput?.id === 'scope_entry') return 'entry'
+  if (userInput?.id === 'scope_global') return 'global'
+  if (userInput?.id === 'scope_auto') return 'auto'
+  const fromState = conversationState.scope_mode
+  const preferred =
+    fromState === 'entry' || fromState === 'global' || fromState === 'auto'
+      ? fromState
+      : context.scopeMode
+  return resolvePolishScopeMode(preferred, userInput?.value)
+}
+
+function buildSectionPolishSystemPrompt(
+  context: SectionPolishContext,
+  project: NovelProject,
+  scopeMode: PolishScopeMode,
+  workflowMode: PolishWorkflowMode
+): string {
+  const blueprintJson = JSON.stringify(project.blueprint ?? context.fullBlueprint ?? {}, null, 2)
   const entryContentJson = JSON.stringify(context.currentContent ?? {}, null, 2)
-  return `${sectionPolishPrompt}
+  const basePrompt = workflowMode === 'reinspiration' ? blueprintReinspirationPrompt : sectionPolishPrompt
+  const scopeHint =
+    scopeMode === 'entry'
+      ? '本轮以入口 Tab 为主，除非用户明确要求或一致性必需，否则不要改动其他板块。'
+      : scopeMode === 'global'
+        ? '本轮按全书/global 范围处理，必须通读全书蓝图并输出所有受影响板块。'
+        : '根据用户描述自动判断范围：全局重构类诉求按 global；仅改当前板块按 entry。'
+
+  return `${basePrompt}
 ${SECTION_POLISH_JSON_INSTRUCTION}
 
-## Entry Section（用户入口 Tab）
+## 工作模式
+- workflow_mode: ${workflowMode}（${POLISH_WORKFLOW_LABELS[workflowMode]}）
+- scope_mode: ${scopeMode}（${POLISH_SCOPE_LABELS[scopeMode]}）
+- ${scopeHint}
+
+## Entry Section（用户当前所在 Tab，全书共用同一会话）
 - 板块名称：${context.sectionLabel}
 - 板块标识：${context.section}
 - 当前关注范围：${context.scope}
-- 说明：用户从此 Tab 进入，但可按意图修改蓝图任意相关板块
+- 说明：各 Tab 打开的是同一 AI 助手会话；Entry Section 仅表示用户当前浏览位置
 
-## 全书蓝图（修改基准，按意图增量更新）
+## 全书蓝图（修改基准）
 \`\`\`json
 ${blueprintJson}
 \`\`\`
 
-## 入口 Tab 当前内容（优先关注）
+## 入口 Tab 当前内容
 \`\`\`json
 ${entryContentJson}
 \`\`\`
@@ -687,7 +737,9 @@ export async function converseSectionPolish(
   const userContent = JSON.stringify(formattedInput)
   nextHistory.push({ role: 'user', content: userContent })
 
-  const systemPrompt = buildSectionPolishSystemPrompt(context, project)
+  const workflowMode = resolvePolishWorkflowMode(context, conversationState)
+  const scopeMode = resolvePolishScopeModeForTurn(context, conversationState, formattedInput)
+  const systemPrompt = buildSectionPolishSystemPrompt(context, project, scopeMode, workflowMode)
   const raw = await chat(
     systemPrompt,
     nextHistory.map((m) => ({ role: m.role, content: m.content })),
@@ -702,11 +754,14 @@ export async function converseSectionPolish(
   let aiMessage = resolveAiMessage(raw, parsed)
   const uiControl = parseUiControl(parsed.ui_control, aiMessage)
   const safeConversationState = cloneJson(conversationState)
-  const nextConversationState = {
+  const nextConversationState: Record<string, unknown> = {
     ...safeConversationState,
     ...(parsed.conversation_state && typeof parsed.conversation_state === 'object'
       ? cloneJson(parsed.conversation_state as Record<string, unknown>)
       : {}),
+    scope_mode: scopeMode,
+    workflow_mode: workflowMode,
+    entry_section: context.section,
   }
 
   const readyToApplyRaw = Boolean(parsed.ready_to_apply)
@@ -816,17 +871,29 @@ export async function materializeSectionPolishUpdates(
   latestAiMessage: string,
   options?: ConversationRequestOptions
 ): Promise<SectionPolishMaterializeResponse> {
-  const blueprintJson = JSON.stringify(project.blueprint ?? {}, null, 2)
+  const blueprintJson = JSON.stringify(project.blueprint ?? context.fullBlueprint ?? {}, null, 2)
   const historyText = formatPolishHistoryForMaterialize(history)
-  const systemPrompt = `${sectionPolishPrompt}
+  const workflowMode = context.workflowMode ?? 'edit'
+  const scopeMode = context.scopeMode ?? 'auto'
+  const basePrompt = workflowMode === 'reinspiration' ? blueprintReinspirationPrompt : sectionPolishPrompt
+  const materializeExtra =
+    workflowMode === 'reinspiration'
+      ? '- 输出**完整** blueprint_updates（各板块完整数组/对象），用于整本替换\n'
+      : scopeMode === 'global'
+        ? '- 按 global 范围输出所有受影响板块的 blueprint_updates\n'
+        : ''
+  const systemPrompt = `${basePrompt}
 ${MATERIALIZE_POLISH_INSTRUCTION}
 
 ## 任务
 对话助手已在自然语言中描述了修改方案，但尚未输出可写入的 blueprint_updates。
 请将下列对话中**已确认的修改**序列化为 blueprint_updates。
+${materializeExtra}
 
-## Entry Section
+## Entry Section（用户当前 Tab）
 - ${context.sectionLabel}（${context.section}）
+- scope_mode: ${scopeMode}
+- workflow_mode: ${workflowMode}
 
 ## 当前全书蓝图
 \`\`\`json

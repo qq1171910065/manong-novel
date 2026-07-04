@@ -54,19 +54,45 @@
             </div>
             <div class="novel-chat-panel__title-text">
               <h2 class="novel-chat-panel__title">
-                <template v-if="isPolishMode">
-                  AI 修改
-                  <span class="novel-chat-panel__title-accent">{{ polishContext?.sectionLabel }}</span>
-                </template>
+                <template v-if="isPolishMode">AI 助手</template>
                 <template v-else>灵感对话</template>
               </h2>
               <p class="novel-chat-panel__subtitle">
                 <template v-if="isPolishMode">
-                  从「{{ polishContext?.sectionLabel }}」出发，按你的意图修改或新增设定；可联动调整其他板块
+                  全书共用同一会话 · 当前浏览「{{ polishContext?.sectionLabel }}」
+                  <span v-if="polishScopeMode !== 'auto'" class="novel-chat-panel__scope-tag">
+                    {{ POLISH_SCOPE_LABELS[polishScopeMode] }}
+                  </span>
+                  <span v-if="polishWorkflowMode === 'reinspiration'" class="novel-chat-panel__scope-tag is-warn">
+                    {{ POLISH_WORKFLOW_LABELS.reinspiration }}
+                  </span>
                 </template>
                 <template v-else>与文思一起构思你的故事</template>
               </p>
             </div>
+          </div>
+          <div v-if="isPolishMode" class="novel-chat-panel__scope-bar">
+            <span class="novel-chat-panel__scope-label">修改范围</span>
+            <button
+              v-for="mode in scopeModeOptions"
+              :key="mode.id"
+              type="button"
+              class="novel-chat-panel__scope-btn"
+              :class="{ 'is-active': polishScopeMode === mode.id }"
+              :disabled="inputDisabled"
+              @click="setPolishScopeMode(mode.id)"
+            >
+              {{ mode.label }}
+            </button>
+            <button
+              type="button"
+              class="novel-chat-panel__reinspire-btn"
+              :disabled="inputDisabled"
+              title="基于现有蓝图重新构思整体框架"
+              @click="startReinspiration"
+            >
+              重新过灵感
+            </button>
           </div>
           <div class="novel-chat-panel__meta">
             <span
@@ -160,6 +186,9 @@
         <SectionPolishConfirmation
           :ai-message="confirmationMessage"
           :affected-labels="pendingAffectedSectionLabels"
+          :replace-entire-blueprint="polishWorkflowMode === 'reinspiration'"
+          :before-blueprint="novelStore.currentProject?.blueprint ?? null"
+          :blueprint-updates="pendingBlueprintUpdates"
           @apply="handleApplySectionPolish"
           @back="backFromSectionPolishConfirmation"
         />
@@ -209,7 +238,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, onMounted, onUnmounted, computed } from 'vue'
+import { ref, nextTick, onMounted, onUnmounted, computed, watch } from 'vue'
 import { RotateCcw, X, Sparkles, MessageCircle } from 'lucide-vue-next'
 import { useRouter, useRoute } from '@renderer/novel/composables/useNovelRouter'
 import { useNovelStore } from '@renderer/stores/novel'
@@ -221,8 +250,13 @@ import type { SectionPolishContext, PolishableSectionKey, SectionPolishApplyPayl
 import {
   normalizeAffectedSections,
   POLISH_SECTION_LABELS,
+  POLISH_SCOPE_LABELS,
+  POLISH_WORKFLOW_LABELS,
   shouldAutoMaterializePolish,
+  type PolishScopeMode,
+  type PolishWorkflowMode,
 } from '@renderer/novel/utils/section-polish'
+import { patchAiAssistantRuntime } from '@renderer/novel/composables/useAiAssistantRuntime'
 import { restorePolishSession } from '@renderer/novel/utils/polish-session'
 import ChatBubble from '@renderer/novel/components/ChatBubble.vue'
 import ConversationInput from '@renderer/novel/components/ConversationInput.vue'
@@ -388,6 +422,43 @@ const pendingAffectedSections = ref<PolishableSectionKey[]>([])
 const isPolishMaterializing = ref(false)
 const isChatRequestInFlight = ref(false)
 const lastPolishAiMessage = ref('')
+const polishScopeMode = ref<PolishScopeMode>('auto')
+const polishWorkflowMode = ref<PolishWorkflowMode>('edit')
+const sessionBootstrapped = ref(false)
+
+const scopeModeOptions: { id: PolishScopeMode; label: string }[] = [
+  { id: 'auto', label: POLISH_SCOPE_LABELS.auto },
+  { id: 'entry', label: POLISH_SCOPE_LABELS.entry },
+  { id: 'global', label: POLISH_SCOPE_LABELS.global },
+]
+
+const syncAssistantRuntime = () => {
+  if (!isPolishMode.value || !props.projectId) return
+  patchAiAssistantRuntime(props.projectId, {
+    inFlight: isChatRequestInFlight.value,
+    materializing: isPolishMaterializing.value,
+    entrySectionLabel: props.polishContext?.sectionLabel ?? '',
+    scopeMode: polishScopeMode.value,
+    workflowMode: polishWorkflowMode.value,
+  })
+}
+
+watch([isChatRequestInFlight, isPolishMaterializing, polishScopeMode, polishWorkflowMode], syncAssistantRuntime, {
+  immediate: true,
+})
+
+watch(
+  () => props.polishContext?.section,
+  (section) => {
+    if (!isPolishMode.value || !section || !sessionBootstrapped.value) return
+    polishConversationState.value = {
+      ...polishConversationState.value,
+      entry_section: section,
+    }
+    restorePolishInputControl()
+    syncAssistantRuntime()
+  }
+)
 const pendingAffectedSectionLabels = computed(() =>
   pendingAffectedSections.value.map((s) => POLISH_SECTION_LABELS[s])
 )
@@ -401,8 +472,54 @@ const restorePolishInputControl = () => {
   if (!props.polishContext) return
   currentUIControl.value = {
     type: 'text_input',
-    placeholder: polishInputPlaceholder(props.polishContext),
+    placeholder: polishInputPlaceholder(props.polishContext, polishScopeMode.value, polishWorkflowMode.value),
   }
+}
+
+const setPolishScopeMode = (mode: PolishScopeMode) => {
+  polishScopeMode.value = mode
+  polishConversationState.value = {
+    ...polishConversationState.value,
+    scope_mode: mode,
+  }
+  if (props.projectId) {
+    void persistPolishUiState()
+  }
+}
+
+const persistPolishUiState = async () => {
+  if (!props.projectId || !novelStore.currentProject) return
+  novelStore.currentProject.section_polish_state = {
+    ...polishConversationState.value,
+    scope_mode: polishScopeMode.value,
+    workflow_mode: polishWorkflowMode.value,
+    entry_section: props.polishContext?.section,
+  }
+  await NovelAPI.saveSectionPolishUiState(props.projectId, {
+    scope_mode: polishScopeMode.value,
+    workflow_mode: polishWorkflowMode.value,
+    entry_section: props.polishContext?.section,
+  })
+}
+
+const startReinspiration = async () => {
+  const confirmed = await globalAlert.showConfirm(
+    '「重新过灵感」会基于现有蓝图重构整体框架（类型、世界观、人物、关系、大纲等）。已写章节可能与新版设定不符，请谨慎使用。是否进入重构对话？',
+    '重新过灵感'
+  )
+  if (!confirmed) return
+  polishWorkflowMode.value = 'reinspiration'
+  polishScopeMode.value = 'global'
+  polishConversationState.value = {
+    ...polishConversationState.value,
+    workflow_mode: 'reinspiration',
+    scope_mode: 'global',
+  }
+  await handlePolishInput({
+    id: 'reinspiration_start',
+    value:
+      '进入重新过灵感模式：请基于当前全书蓝图，问我希望保留哪些元素、以及想改成的故事方向，然后给出完整重构方案。',
+  })
 }
 
 const polishMaterializeChoiceControl = (): UIControl => ({
@@ -487,6 +604,9 @@ const resetInspirationMode = (clearProject = true) => {
   pendingAffectedSections.value = []
   isChatRequestInFlight.value = false
   isPolishMaterializing.value = false
+  sessionBootstrapped.value = false
+  polishScopeMode.value = 'auto'
+  polishWorkflowMode.value = 'edit'
 
   if (clearProject && !isPolishMode.value) {
     novelStore.setCurrentProject(null)
@@ -515,7 +635,8 @@ const handleRestart = async () => {
       await NovelAPI.clearSectionPolishSession(props.projectId)
       await novelStore.loadProject(props.projectId, true)
       if (props.polishContext) {
-        await initSectionPolishSession(props.projectId, props.polishContext)
+        sessionBootstrapped.value = false
+        await initSectionPolishSession(props.projectId, props.polishContext, true)
       }
     } else {
       await startConversation()
@@ -631,11 +752,30 @@ const restoreConversation = async (projectId: string) => {
   }
 }
 
-const polishInputPlaceholder = (context: SectionPolishContext) =>
-  `描述你想如何修改或新增「${context.sectionLabel}」内容，也可联动调整全书设定…`
+const polishInputPlaceholder = (
+  context: SectionPolishContext,
+  scope: PolishScopeMode = 'auto',
+  workflow: PolishWorkflowMode = 'edit'
+) => {
+  if (workflow === 'reinspiration') {
+    return '描述你想保留的元素，以及希望整本书改成什么方向…'
+  }
+  if (scope === 'global') {
+    return '描述全书层面的修改（类型、世界观、人物体系、大纲等）…'
+  }
+  if (scope === 'entry') {
+    return `描述你想如何修改「${context.sectionLabel}」（仅当前板块，不联动其他）…`
+  }
+  return `描述修改意图；说「全书/框架」则全局改，说「只改这里」则仅改「${context.sectionLabel}」…`
+}
 
-const initSectionPolishSession = async (projectId: string, context: SectionPolishContext) => {
-  abortActiveRequest()
+const initSectionPolishSession = async (projectId: string, context: SectionPolishContext, force = false) => {
+  if (sessionBootstrapped.value && !force) {
+    restorePolishInputControl()
+    syncAssistantRuntime()
+    return
+  }
+
   conversationStarted.value = true
   isInitialLoading.value = false
   showSectionPolishConfirmation.value = false
@@ -649,19 +789,31 @@ const initSectionPolishSession = async (projectId: string, context: SectionPolis
 
   const project = novelStore.currentProject
   const history = project?.section_polish_history ?? []
-  const placeholder = polishInputPlaceholder(context)
+  const savedState = project?.section_polish_state ?? {}
+  if (savedState.scope_mode === 'entry' || savedState.scope_mode === 'global' || savedState.scope_mode === 'auto') {
+    polishScopeMode.value = savedState.scope_mode
+  }
+  if (savedState.workflow_mode === 'edit' || savedState.workflow_mode === 'reinspiration') {
+    polishWorkflowMode.value = savedState.workflow_mode
+  }
+  const placeholder = polishInputPlaceholder(context, polishScopeMode.value, polishWorkflowMode.value)
 
   if (history.length) {
     const restored = restorePolishSession(
       history,
-      project?.section_polish_state ?? {},
+      savedState,
       context.section,
       project?.blueprint,
       placeholder
     )
     chatMessages.value = restored.chatMessages
     polishHistory.value = restored.polishHistory
-    polishConversationState.value = restored.polishConversationState
+    polishConversationState.value = {
+      ...restored.polishConversationState,
+      scope_mode: polishScopeMode.value,
+      workflow_mode: polishWorkflowMode.value,
+      entry_section: context.section,
+    }
     currentUIControl.value = restored.currentUIControl
     currentTurn.value = restored.currentTurn
     if (restored.pendingConfirmation) {
@@ -673,17 +825,35 @@ const initSectionPolishSession = async (projectId: string, context: SectionPolis
       lastPolishAiMessage.value = restored.autoMaterializeMessage ?? ''
       await runPolishMaterialize(restored.autoMaterializeMessage)
     }
+    sessionBootstrapped.value = true
+    syncAssistantRuntime()
     await scrollToBottom()
     return
   }
 
   chatMessages.value = []
   polishHistory.value = []
-  polishConversationState.value = {}
+  polishConversationState.value = {
+    scope_mode: polishScopeMode.value,
+    workflow_mode: polishWorkflowMode.value,
+    entry_section: context.section,
+  }
   currentTurn.value = 0
   currentUIControl.value = {
     type: 'text_input',
     placeholder,
+  }
+  sessionBootstrapped.value = true
+  syncAssistantRuntime()
+}
+
+const buildEffectivePolishContext = (): SectionPolishContext | null => {
+  if (!props.polishContext) return null
+  return {
+    ...props.polishContext,
+    scopeMode: polishScopeMode.value,
+    workflowMode: polishWorkflowMode.value,
+    fullBlueprint: novelStore.currentProject?.blueprint ?? props.polishContext.fullBlueprint,
   }
 }
 
@@ -712,9 +882,11 @@ const runPolishMaterialize = async (latestMessage?: string) => {
   currentUIControl.value = { ...LOADING_UI_CONTROL, placeholder: '正在生成可应用的修改稿…' }
 
   try {
+    const effectiveContext = buildEffectivePolishContext()
+    if (!effectiveContext) return false
     const result = await NovelAPI.materializeSectionPolishUpdates(
       props.projectId,
-      props.polishContext,
+      effectiveContext,
       polishHistory.value,
       latestAiMessage
     )
@@ -773,10 +945,7 @@ const handlePolishInput = async (userInput: any) => {
   if (!props.projectId || !props.polishContext) return
 
   if (userInput?.id === 'continue_edit') {
-    currentUIControl.value = {
-      type: 'text_input',
-      placeholder: polishInputPlaceholder(props.polishContext),
-    }
+    restorePolishInputControl()
     return
   }
   if (userInput?.id === 'materialize_apply') {
@@ -815,9 +984,11 @@ const handlePolishInput = async (userInput: any) => {
     await scrollToBottom()
 
     const signal = beginRequest()
+    const effectiveContext = buildEffectivePolishContext()
+    if (!effectiveContext) return
     const response = await NovelAPI.converseSectionPolish(
       props.projectId,
-      props.polishContext,
+      effectiveContext,
       userInput,
       polishHistory.value,
       polishConversationState.value,
@@ -841,6 +1012,14 @@ const handlePolishInput = async (userInput: any) => {
       polishHistory.value = response.conversation_state.polish_history as ConversationMessage[]
       const { polish_history: _ignored, ...state } = response.conversation_state
       polishConversationState.value = state
+    }
+    const scope = response.conversation_state?.scope_mode
+    const workflow = response.conversation_state?.workflow_mode
+    if (scope === 'entry' || scope === 'global' || scope === 'auto') {
+      polishScopeMode.value = scope
+    }
+    if (workflow === 'edit' || workflow === 'reinspiration') {
+      polishWorkflowMode.value = workflow
     }
     if (novelStore.currentProject) {
       novelStore.currentProject.section_polish_history = polishHistory.value
@@ -908,6 +1087,7 @@ const handleApplySectionPolish = () => {
     entrySection: props.polishContext.section,
     blueprintUpdates: pendingBlueprintUpdates.value,
     affectedSections: pendingAffectedSections.value,
+    replaceEntireBlueprint: polishWorkflowMode.value === 'reinspiration',
   })
   showSectionPolishConfirmation.value = false
   pendingBlueprintUpdates.value = null
@@ -1104,7 +1284,9 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  abortActiveRequest()
+  if (!props.embedded) {
+    abortActiveRequest()
+  }
 })
 </script>
 
@@ -1144,5 +1326,56 @@ onUnmounted(() => {
   font-size: 12px;
   line-height: 1.55;
   color: var(--muted, rgba(255, 255, 255, 0.65));
+}
+
+.novel-chat-panel__scope-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-text) 8%, transparent);
+}
+
+.novel-chat-panel__scope-label {
+  font-size: 12px;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+
+.novel-chat-panel__scope-btn,
+.novel-chat-panel__reinspire-btn {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--color-text) 12%, transparent);
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.novel-chat-panel__scope-btn.is-active {
+  border-color: color-mix(in srgb, #e86b24 45%, transparent);
+  background: color-mix(in srgb, #e86b24 12%, transparent);
+  color: #c2410c;
+}
+
+.novel-chat-panel__reinspire-btn {
+  margin-left: auto;
+  border-color: color-mix(in srgb, #6366f1 35%, transparent);
+  color: #4f46e5;
+}
+
+.novel-chat-panel__scope-tag {
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: color-mix(in srgb, #e86b24 12%, transparent);
+  color: #c2410c;
+}
+
+.novel-chat-panel__scope-tag.is-warn {
+  background: color-mix(in srgb, #6366f1 12%, transparent);
+  color: #4f46e5;
 }
 </style>
