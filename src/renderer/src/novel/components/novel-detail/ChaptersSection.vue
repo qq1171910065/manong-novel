@@ -122,7 +122,7 @@ import { NovelAPI } from '@renderer/services/novel/api'
 import { useRoute } from '@renderer/novel/composables/useNovelRouter'
 import DetailEmptyState from './DetailEmptyState.vue'
 
-interface ChapterItem {
+export interface ChapterItem {
   chapter_number: number
   title?: string | null
   summary?: string | null
@@ -131,7 +131,7 @@ interface ChapterItem {
   generation_status?: string
 }
 
-interface ChapterOutlineItem {
+export interface ChapterOutlineItem {
   chapter_number: number
   title?: string | null
   summary?: string | null

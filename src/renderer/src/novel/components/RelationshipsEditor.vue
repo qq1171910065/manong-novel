@@ -59,7 +59,15 @@ let syncing = false;
 
 watch(() => props.modelValue, (newVal) => {
   syncing = true;
-  localRelationships.value = (newVal || []).map((item) => ensureRelationship(item));
+  localRelationships.value = (newVal || []).map((item) => {
+    const rel = ensureRelationship(item);
+    return {
+      id: rel.id,
+      character_from: rel.character_from || '',
+      character_to: rel.character_to || '',
+      description: rel.description || '',
+    };
+  });
   nextTick(() => {
     syncing = false;
   });

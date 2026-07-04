@@ -275,7 +275,7 @@ function onSheetDragStart(event: PointerEvent) {
   sheetDragging.value = true
   sheetDragStartY = event.clientY
   sheetDragStartOffset = sheetDragOffset.value
-  event.currentTarget?.setPointerCapture(event.pointerId)
+  ;(event.currentTarget as HTMLElement | null)?.setPointerCapture(event.pointerId)
 }
 
 function onSheetDragMove(event: PointerEvent) {
@@ -286,7 +286,7 @@ function onSheetDragMove(event: PointerEvent) {
 
 function finishSheetDrag(event: PointerEvent) {
   if (!sheetDragging.value) return
-  event.currentTarget?.releasePointerCapture(event.pointerId)
+  ;(event.currentTarget as HTMLElement | null)?.releasePointerCapture(event.pointerId)
   const shouldClose = sheetDragOffset.value > 96
   resetSheetDrag()
   if (shouldClose) showSettings.value = false
@@ -413,12 +413,6 @@ function nextChapter() {
   persistProgress(0)
   onReadingTurn()
   void nextTick().then(() => jumpScrollTop(0))
-}
-
-async function restoreScrollPosition() {
-  await nextTick()
-  if (isPageMode.value) return
-  jumpScrollTop(0)
 }
 
 async function ensureChapterLoaded(chapter: ReadableChapter) {

@@ -132,8 +132,7 @@ const handleLogin = async () => {
   error.value = '';
   isLoading.value = true;
   try {
-    const mustChange = await authStore.login(username.value, password.value);
-    const user = authStore.user;
+    await authStore.login(username.value, password.value);
     router.push('/')
   } catch (err) {
     error.value = '登录失败，请检查您的用户名和密码。';

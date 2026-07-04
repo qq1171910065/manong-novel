@@ -33,7 +33,7 @@ interface Props {
   text?: string
 }
 
-const props = defineProps<Props>()
+defineProps<Props>()
 
 const showTooltip = ref(false)
 const triggerRef = ref<HTMLElement | null>(null)

@@ -10,7 +10,7 @@ const defaultBase = getDefaultApiBaseUrl()
 const pinging = ref(false)
 const alertType = ref<'success' | 'error' | undefined>(undefined)
 const alertText = ref('')
-const phase = ref<'login' | 'main'>('main')
+const phase = ref<'login' | 'main' | 'reading'>('main')
 
 onMounted(async () => {
   phase.value = await window.api.getPhase()

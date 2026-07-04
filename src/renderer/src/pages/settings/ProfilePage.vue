@@ -143,7 +143,7 @@ const displayName = computed(() => {
 })
 const avatarUrl = computed(() => {
   void localProfileRevision.value
-  return resolveUserAvatarUrl(profile.value, getUserLocalProfile(profile.value?.id))
+  return resolveUserAvatarUrl(profile.value, getUserLocalProfile(profile.value?.id), '')
 })
 const avatarInitial = computed(() => (displayName.value.trim()[0] || 'U').toUpperCase())
 const activeKeysCount = computed(() => keys.value.filter((k) => k.status === 'active').length)

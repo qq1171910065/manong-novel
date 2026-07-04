@@ -8,10 +8,12 @@
             v-if="!isAdmin"
             type="button"
             class="detail-sidebar-create"
+            :class="{ 'is-auto-writing': isCurrentProjectAutoWriteRunning }"
             :disabled="isPrimaryActionBusy"
             @click="goToWritingDesk"
           >
-            <PenLine :size="18" aria-hidden="true" />
+            <Pause v-if="isCurrentProjectAutoWriteRunning" :size="18" aria-hidden="true" />
+            <PenLine v-else :size="18" aria-hidden="true" />
             <span>{{ primaryActionLabel }}</span>
           </button>
 
@@ -20,7 +22,7 @@
               type="button"
               class="detail-sidebar-action detail-sidebar-action--ai"
               :class="{ 'is-busy': aiAssistantBusy }"
-              :disabled="isPrimaryActionBusy"
+              :disabled="isPrimaryActionBusy || isWritingDeskLocked"
               @click="openAiAssistant()"
             >
               <Sparkles :size="15" aria-hidden="true" />
@@ -29,7 +31,7 @@
             <button
               type="button"
               class="detail-sidebar-action detail-sidebar-action--reinspire"
-              :disabled="isPrimaryActionBusy || aiAssistantBusy"
+              :disabled="isPrimaryActionBusy || aiAssistantBusy || isWritingDeskLocked"
               @click="openReinspiration"
             >
               <RefreshCw :size="15" aria-hidden="true" />
@@ -62,7 +64,7 @@
                 <h2 class="profile-section__title">{{ activeSectionMeta.label }}</h2>
                 <p class="profile-section__desc">{{ activeSectionMeta.description }}</p>
                 <p v-if="canOpenAiAssistant" class="detail-polish-hint">
-                  左侧「AI 助手」与「重新过灵感」共用同一对话；「开始创作」将按章节顺序自动生成、评审并确认。
+                  左侧「开始创作」会在后台按章节顺序自动生成并确认；进行中可点同一按钮暂停，任务可在状态栏查看。
                 </p>
                 <p v-if="isImportPending" class="detail-import-hint">
                   已导入 {{ importedChapterCount }} 章。智能解析会逐批阅读全书并填充各 Tab，请耐心等待；解析完成前不可编辑。
@@ -121,6 +123,7 @@
     <WritingDeskModal
       :show="showWritingDeskModal"
       :project-id="projectId"
+      :auto-write-locked="isWritingDeskLocked"
       @close="closeWritingDesk"
     />
 
@@ -138,9 +141,9 @@
 
     <BlueprintGeneratingOverlay
       :show="showGenerationOverlay"
-      :progress="autoWriteOverlayProgress"
-      :loading-text="autoWriteOverlayText"
-      :description="autoWriteOverlayDescription"
+      :progress="generationOverlayProgress"
+      :loading-text="generationOverlayText"
+      :description="generationOverlayDescription"
       @cancel="cancelGenerationOverlay"
     />
 
@@ -219,12 +222,13 @@ import {
   History,
   BarChart3,
   PenLine,
+  Pause,
   Sparkles,
   RefreshCw,
   Plus,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
-import { useRoute, useRouter } from '@renderer/novel/composables/useNovelRouter'
+import { useRoute } from '@renderer/novel/composables/useNovelRouter'
 import { useNovelStore } from '@renderer/stores/novel'
 import { NovelAPI } from '@renderer/services/novel/api'
 import { isAbortError, isBlueprintGenerating, isImportParsing } from '@renderer/services/novel/async-task-registry'
@@ -318,7 +322,6 @@ const props = withDefaults(defineProps<Props>(), {
 })
 
 const route = useRoute()
-const router = useRouter()
 const novelStore = useNovelStore()
 
 const projectId = route.params.id as string
@@ -474,28 +477,20 @@ const generationOverlayDescription = computed(() =>
     : 'AI 正在为您精心打造独特的故事蓝图，请稍候…'
 )
 
-const autoWriteOverlayProgress = computed(() => {
-  if (autoWrite.isRunning.value) return autoWrite.progressPercent.value
-  return generationOverlay.value.progress.value
-})
+const generationOverlayProgress = computed(() => generationOverlay.value.progress.value)
 
-const autoWriteOverlayText = computed(() => {
-  if (autoWrite.isRunning.value) return autoWrite.loadingText.value
+const generationOverlayText = computed(() => {
   if (showImportParsing.value) return importParseMessage.value
   return generationOverlay.value.loadingText.value
 })
 
 const showGenerationOverlay = computed(
-  () => showBlueprintGenerating.value || showImportParsing.value || autoWrite.isRunning.value
+  () => showBlueprintGenerating.value || showImportParsing.value
 )
 
-const autoWriteOverlayDescription = computed(() => {
-  if (autoWrite.isRunning.value) {
-    const current = autoWrite.progress.value
-    return `AI 接管创作：已完成 ${current.completedCount}/${current.totalCount} 章。每章生成时会实时显示字数，可随时取消。`
-  }
-  return generationOverlayDescription.value
-})
+const isCurrentProjectAutoWriteRunning = computed(() => autoWrite.isProjectActive(projectId))
+const isCurrentProjectAutoWritePaused = computed(() => autoWrite.isProjectPaused(projectId))
+const isWritingDeskLocked = computed(() => isCurrentProjectAutoWriteRunning.value)
 
 function resolveImportParseProgressPercent(progress: ImportParseProgress): number {
   switch (progress.phase) {
@@ -523,7 +518,8 @@ const isImportPending = computed(() => isTxtImportPending(novel.value))
 const isContentLocked = computed(() => isTxtImportLocked(novel.value))
 const importedChapterCount = computed(() => novel.value?.chapters?.length ?? 0)
 const primaryActionLabel = computed(() => {
-  if (autoWrite.isRunning.value) return '创作中...'
+  if (isCurrentProjectAutoWriteRunning.value) return '暂停创作'
+  if (isCurrentProjectAutoWritePaused.value) return '继续创作'
   if (showImportParsing.value) return '解析中...'
   if (isImportPending.value) return '智能解析'
   const project = novel.value
@@ -534,7 +530,7 @@ const primaryActionLabel = computed(() => {
   return '开始创作'
 })
 const isPrimaryActionBusy = computed(
-  () => showImportParsing.value || showBlueprintGenerating.value || autoWrite.isRunning.value
+  () => showImportParsing.value || showBlueprintGenerating.value
 )
 
 const projectWritingMode = computed(() => {
@@ -778,6 +774,18 @@ const goToWritingDesk = async () => {
   const project = novel.value
   if (!project) return
 
+  if (isCurrentProjectAutoWriteRunning.value) {
+    autoWrite.pause()
+    globalAlert.showSuccess('AI 创作已转入后台暂停，可在状态栏任务列表继续或取消', '已暂停')
+    return
+  }
+
+  if (isCurrentProjectAutoWritePaused.value) {
+    showWritingDeskModal.value = true
+    void resumeAutoWritePipeline()
+    return
+  }
+
   if (isTxtImportPending(project)) {
     importParseMessage.value = '正在准备智能解析…'
     try {
@@ -843,8 +851,8 @@ const goToWritingDesk = async () => {
   const remaining = outlines.length - completed
   const confirmed = await globalAlert.showConfirm(
     completed > 0
-      ? `将从第 ${nextChapter} 章继续：AI 将自动生成、评审并确认剩余 ${remaining} 章，直至大纲全部完成。写作台会同步展示进度，可随时取消。`
-      : `AI 将按章节顺序自动生成、评审并确认全部 ${outlines.length} 章。写作台会同步展示进度，可随时取消。`,
+      ? `将从第 ${nextChapter} 章继续：AI 将在后台自动生成并确认剩余 ${remaining} 章。您可关闭弹窗继续浏览，进度见状态栏任务列表。`
+      : `AI 将在后台按章节顺序自动生成并确认全部 ${outlines.length} 章。您可关闭弹窗继续浏览，进度见状态栏任务列表。`,
     '开始创作'
   )
   if (!confirmed) return
@@ -854,7 +862,8 @@ const goToWritingDesk = async () => {
 }
 
 const runAutoWritePipeline = async () => {
-  const result = await autoWrite.run(projectId)
+  const title = novel.value?.title || overviewMeta.title || '未命名作品'
+  const result = await autoWrite.run(projectId, title)
   await novelStore.loadProject(projectId, true)
   void loadSection('chapters', true)
   if (result === 'completed') {
@@ -863,6 +872,18 @@ const runAutoWritePipeline = async () => {
     globalAlert.showError(autoWrite.progress.value.message || 'AI 接管创作中断', '创作中断')
   } else if (result === 'cancelled') {
     globalAlert.showSuccess('已取消 AI 接管创作', '已取消')
+  }
+}
+
+const resumeAutoWritePipeline = async () => {
+  const title = novel.value?.title || overviewMeta.title || '未命名作品'
+  const result = await autoWrite.run(projectId, title)
+  await novelStore.loadProject(projectId, true)
+  void loadSection('chapters', true)
+  if (result === 'completed') {
+    globalAlert.showSuccess('全部章节已由 AI 生成并确认', '创作完成')
+  } else if (result === 'failed') {
+    globalAlert.showError(autoWrite.progress.value.message || 'AI 接管创作中断', '创作中断')
   }
 }
 
@@ -1057,11 +1078,6 @@ const onBlueprintGenerating = async () => {
 }
 
 const cancelGenerationOverlay = () => {
-  if (autoWrite.isRunning.value) {
-    autoWrite.cancel()
-    autoWrite.resetProgress()
-    return
-  }
   if (showImportParsing.value) {
     novelStore.cancelImportParse()
     return

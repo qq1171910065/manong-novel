@@ -112,10 +112,8 @@ import {
 
 import {
   AdminAPI,
-  type DailyRequestLimit,
   type SystemConfig,
   type SystemConfigUpdatePayload,
-  type SystemConfigUpsertPayload
 } from '@/api/admin'
 import { useAlert } from '@renderer/novel/composables/useAlert'
 

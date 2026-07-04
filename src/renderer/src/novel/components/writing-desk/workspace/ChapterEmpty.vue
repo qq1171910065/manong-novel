@@ -13,7 +13,7 @@
         <p class="md-body-medium md-on-surface-variant mb-4">点击"开始创作"按钮生成这个章节</p>
         <button
           @click="$emit('generateChapter', chapterNumber)"
-          :disabled="generatingChapter === chapterNumber"
+          :disabled="autoWriteLocked || generatingChapter === chapterNumber"
           class="md-btn md-btn-filled md-ripple flex items-center gap-2 mx-auto disabled:opacity-50"
         >
           <svg v-if="generatingChapter === chapterNumber" class="w-4 h-4 animate-spin" fill="currentColor" viewBox="0 0 20 20">
@@ -40,13 +40,18 @@
 </template>
 
 <script setup lang="ts">
+import { withDefaults } from 'vue'
+
 interface Props {
   chapterNumber: number
   generatingChapter: number | null
   canGenerate: boolean
+  autoWriteLocked?: boolean
 }
 
-defineProps<Props>()
+withDefaults(defineProps<Props>(), {
+  autoWriteLocked: false,
+})
 
 defineEmits(['generateChapter'])
 </script>

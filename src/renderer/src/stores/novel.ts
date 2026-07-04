@@ -7,7 +7,7 @@ import { novelClient } from '@renderer/services/novel/client'
 import * as writing from '@renderer/services/novel/writing-service'
 import { activityLogService } from '@renderer/services/activity-log-service'
 import { projectStatsService } from '@renderer/services/project-stats-service'
-import type { ChatStreamHandlers, ConversationRequestOptions } from '@renderer/services/novel/writing-service'
+import type { ConversationRequestOptions } from '@renderer/services/novel/writing-service'
 import {
   cancelAsyncTask,
   getActiveChapterEvaluation,
@@ -518,7 +518,7 @@ export const useNovelStore = defineStore('novel', () => {
       }
     }
     if (changed) {
-      currentProject.value = await NovelAPI.getNovel(projectId)
+      currentProject.value = await novelClient.saveProject(currentProject.value)
     }
   }
 

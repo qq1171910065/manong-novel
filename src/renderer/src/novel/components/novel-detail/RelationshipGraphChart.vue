@@ -36,7 +36,6 @@ const rootRef = ref<HTMLElement | null>(null)
 const width = ref(960)
 const height = ref(640)
 
-const NODE_RADIUS = 32
 const NODE_LABEL_Y = 48
 /** 节点碰撞半径（含下方名字），保证圆+文字不重叠 */
 const NODE_COLLISION_RADIUS = 54
@@ -357,18 +356,20 @@ const nodeMeta = computed(() => {
 })
 
 const layout = computed(() => {
-  const names = nodeNames.value
-  const w = width.value
-  const h = height.value
   const posMap = positions.value
 
-  const nodes: LayoutNode[] = nodeMeta.value
-    .map((meta) => {
-      const pos = posMap.get(meta.name)
-      if (!pos) return null
-      return { ...meta, x: pos.x, y: pos.y }
+  const nodes: LayoutNode[] = []
+  for (const meta of nodeMeta.value) {
+    const pos = posMap.get(meta.name)
+    if (!pos) continue
+    nodes.push({
+      name: meta.name,
+      color: meta.color,
+      portrait: meta.portrait,
+      x: pos.x,
+      y: pos.y,
     })
-    .filter((item): item is LayoutNode => Boolean(item))
+  }
 
   const nodeMap = new Map(nodes.map((node) => [node.name, node]))
 

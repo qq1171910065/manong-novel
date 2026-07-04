@@ -6,6 +6,7 @@ import WritingDesk from '@renderer/novel/views/WritingDesk.vue'
 const props = defineProps<{
   show: boolean
   projectId: string
+  autoWriteLocked?: boolean
 }>()
 
 const emit = defineEmits<{ close: [] }>()
@@ -48,6 +49,7 @@ onUnmounted(() => {
         <WritingDesk
           :key="projectId"
           :project-id="projectId"
+          :auto-write-locked="autoWriteLocked"
           embedded
           @close="emit('close')"
         />

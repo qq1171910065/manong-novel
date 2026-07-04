@@ -241,6 +241,29 @@ import { submitCharacterToLibrary } from '@renderer/services/novel/material-libr
 import { ensureCharacter } from '@renderer/services/novel/blueprint-asset';
 import { randomUUID } from '@renderer/utils/id';
 import { globalAlert } from '@renderer/novel/composables/useAlert';
+import type { Character as SharedCharacter } from '@shared/novel/types';
+
+function toLocalCharacter(item: SharedCharacter): Character {
+  const c = ensureCharacter(item);
+  return {
+    ...c,
+    description: c.description ?? '',
+    identity: c.identity ?? '',
+    personality: c.personality ?? '',
+    goals: c.goals ?? '',
+    abilities: c.abilities ?? '',
+    relationship_to_protagonist: c.relationship_to_protagonist ?? '',
+    extra: c.extra as Character['extra'],
+  };
+}
+
+function toSharedCharacter(character: Character): SharedCharacter {
+  return ensureCharacter({
+    ...character,
+    description: character.description ?? '',
+    portrait_url: character.portrait_url ?? undefined,
+  });
+}
 
 interface DNAProfile {
   childhood_trauma: string;
@@ -300,7 +323,12 @@ const portraitGeneratingIndex = ref<number | null>(null);
 let syncing = false;
 
 function characterPrompt(character: Character) {
-  return buildCharacterPortraitPrompt(character);
+  return buildCharacterPortraitPrompt({
+    name: character.name,
+    identity: character.identity ?? '',
+    personality: character.personality ?? '',
+    description: character.description ?? '',
+  });
 }
 
 async function generatePortrait(index: number, prompt: string) {
@@ -309,7 +337,7 @@ async function generatePortrait(index: number, prompt: string) {
   portraitGeneratingIndex.value = index;
   try {
     character.portrait_url = await generateCharacterPortrait(
-      character,
+      toSharedCharacter(character),
       undefined,
       prompt,
       {
@@ -371,7 +399,7 @@ const toggleDNA = (index: number) => {
 
 watch(() => props.modelValue, (newVal) => {
   syncing = true;
-  localCharacters.value = (newVal || []).map((item) => ensureCharacter(item as Character));
+  localCharacters.value = (newVal || []).map((item) => toLocalCharacter(item as SharedCharacter));
   nextTick(() => {
     syncing = false;
   });
@@ -405,7 +433,7 @@ async function submitCharacterToLibraryItem(index: number) {
     return;
   }
   try {
-    const { item, character: next } = await submitCharacterToLibrary(character, {
+    const { item, character: next } = await submitCharacterToLibrary(toSharedCharacter(character), {
       projectId: props.projectId || undefined,
       projectTitle: props.projectTitle || undefined,
       project: {
@@ -413,7 +441,7 @@ async function submitCharacterToLibraryItem(index: number) {
         image_model_id: props.imageModelId || undefined,
       },
     });
-    localCharacters.value[index] = next;
+    localCharacters.value[index] = toLocalCharacter(next);
     emit('update:modelValue', JSON.parse(JSON.stringify(localCharacters.value)));
     globalAlert.showSuccess(`「${item.title}」已存入角色库`, '提交成功');
   } catch (error) {

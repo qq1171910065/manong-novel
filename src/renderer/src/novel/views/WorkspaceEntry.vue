@@ -150,9 +150,9 @@
 import { ref, onMounted, computed } from 'vue'
 import { marked } from 'marked'
 import { useRouter } from '@renderer/novel/composables/useNovelRouter'
-import { useAuthStore } from '../stores/auth'
-import { getLatestUpdates } from '../api/updates'
-import type { UpdateLog } from '../api/updates'
+import { useAuthStore } from '@renderer/stores/auth'
+import { getLatestUpdates } from '@renderer/api/updates'
+import type { UpdateLog } from '@renderer/api/updates'
 
 marked.setOptions({
   gfm: true,

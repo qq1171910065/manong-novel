@@ -18,11 +18,11 @@ const router = {
       navigate(to)
       return
     }
-    const path = to.path || '/home'
+    const path = to.path || (to.name === 'admin' ? '/admin' : '/home')
     const query = to.query ? `?${new URLSearchParams(to.query).toString()}` : ''
     navigate(`${path}${query}`)
   },
-  replace(to: string | { path?: string; query?: Record<string, string> }) {
+  replace(to: string | { name?: string; path?: string; query?: Record<string, string> }) {
     this.push(to)
   },
   get currentRoute() {

@@ -516,9 +516,6 @@ const polishMaterializeChoiceControl = (): UIControl => ({
   ],
 })
 
-const isAbortError = (error: unknown) =>
-  error instanceof DOMException && error.name === 'AbortError'
-
 const abortActiveRequest = () => {
   if (activeAbortController) {
     activeAbortController.abort()
@@ -861,15 +858,49 @@ const runPolishMaterialize = async (latestMessage?: string) => {
   isPolishMaterializing.value = true
   currentUIControl.value = { ...LOADING_UI_CONTROL, placeholder: '正在生成可应用的修改稿…' }
 
+  const draftId = randomUUID()
+  chatMessages.value.push({
+    id: draftId,
+    content: '',
+    type: 'ai',
+    streamStatus: 'pending',
+  })
+  await scrollToBottom()
+
   try {
     const effectiveContext = buildEffectivePolishContext()
     if (!effectiveContext) return false
+    const signal = beginRequest()
     const result = await NovelAPI.materializeSectionPolishUpdates(
       props.projectId,
       effectiveContext,
       polishHistory.value,
-      latestAiMessage
+      latestAiMessage,
+      {
+        signal,
+        stream: {
+          onChunk: ({ display, status }) => {
+            const idx = chatMessages.value.findIndex((m) => m.id === draftId)
+            if (idx < 0) return
+            chatMessages.value[idx] = {
+              ...chatMessages.value[idx],
+              content: display || '正在整理修改稿…',
+              streamStatus: status,
+            }
+            void scrollToBottom()
+          },
+        },
+      }
     )
+    activeAbortController = null
+    const draftIdx = chatMessages.value.findIndex((m) => m.id === draftId)
+    if (draftIdx >= 0) {
+      chatMessages.value[draftIdx] = {
+        ...chatMessages.value[draftIdx],
+        content: result.summary,
+        streamStatus: 'done',
+      }
+    }
     if (!result.blueprint_updates || !Object.keys(result.blueprint_updates).length) {
       throw new Error('未能生成可写入的修改数据')
     }
@@ -974,15 +1005,17 @@ const handlePolishInput = async (userInput: any) => {
       polishConversationState.value,
       {
         signal,
-        onChunk: ({ display, status }) => {
-          const idx = chatMessages.value.findIndex((m) => m.id === draftId)
-          if (idx < 0) return
-          chatMessages.value[idx] = {
-            ...chatMessages.value[idx],
-            content: display,
-            streamStatus: status,
-          }
-          void scrollToBottom()
+        stream: {
+          onChunk: ({ display, status }) => {
+            const idx = chatMessages.value.findIndex((m) => m.id === draftId)
+            if (idx < 0) return
+            chatMessages.value[idx] = {
+              ...chatMessages.value[idx],
+              content: display,
+              streamStatus: status,
+            }
+            void scrollToBottom()
+          },
         },
       }
     )
@@ -1104,15 +1137,17 @@ const handleUserInput = async (userInput: any) => {
     const signal = beginRequest()
     const response = await novelStore.sendConversation(userInput, {
       signal,
-      onChunk: ({ display, status }) => {
-        const idx = chatMessages.value.findIndex((m) => m.id === draftId)
-        if (idx < 0) return
-        chatMessages.value[idx] = {
-          ...chatMessages.value[idx],
-          content: display,
-          streamStatus: status,
-        }
-        void scrollToBottom()
+      stream: {
+        onChunk: ({ display, status }) => {
+          const idx = chatMessages.value.findIndex((m) => m.id === draftId)
+          if (idx < 0) return
+          chatMessages.value[idx] = {
+            ...chatMessages.value[idx],
+            content: display,
+            streamStatus: status,
+          }
+          void scrollToBottom()
+        },
       },
     })
     activeAbortController = null

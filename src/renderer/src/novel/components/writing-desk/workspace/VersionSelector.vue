@@ -17,7 +17,7 @@
         </div>
         <button
           @click="$emit('evaluateChapter')"
-          :disabled="evaluatingChapter === selectedChapter?.chapter_number"
+          :disabled="autoWriteLocked || evaluatingChapter === selectedChapter?.chapter_number"
           class="md-btn md-btn-filled md-ripple disabled:opacity-50 flex items-center gap-2 whitespace-nowrap"
           style="background-color: var(--md-error); color: var(--md-on-error);"
         >
@@ -151,7 +151,7 @@
         </p>
         <button
           @click="$emit('evaluateChapter')"
-          :disabled="evaluatingChapter === selectedChapter?.chapter_number || availableVersions.length < 2"
+          :disabled="autoWriteLocked || evaluatingChapter === selectedChapter?.chapter_number || availableVersions.length < 2"
           :title="availableVersions.length < 2 ? '需要至少 2 个版本才能进行 AI 评审' : '对比所有版本并给出推荐'"
           class="md-btn md-btn-tonal md-ripple disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
         >
@@ -162,7 +162,7 @@
         </button>
         <button
           @click="$emit('confirmVersionSelection')"
-          :disabled="!availableVersions?.[selectedVersionIndex]?.content || isConfirmedVersion(selectedVersionIndex) || isSelectingVersion"
+          :disabled="autoWriteLocked || !availableVersions?.[selectedVersionIndex]?.content || isConfirmedVersion(selectedVersionIndex) || isSelectingVersion"
           class="md-btn md-btn-filled md-ripple disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
         >
           <svg v-if="isSelectingVersion" class="w-5 h-5 animate-spin" fill="currentColor" viewBox="0 0 20 20">
@@ -178,7 +178,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { withDefaults } from 'vue'
 import type { Chapter, ChapterGenerationResponse, ChapterVersion } from '@renderer/services/novel/api'
 
 interface Props {
@@ -189,9 +189,12 @@ interface Props {
   evaluatingChapter: number | null
   isSelectingVersion?: boolean
   isEvaluationFailed?: boolean
+  autoWriteLocked?: boolean
 }
 
-const props = defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), {
+  autoWriteLocked: false,
+})
 
 defineEmits(['hideVersionSelector', 'update:selectedVersionIndex', 'showVersionDetail', 'confirmVersionSelection', 'evaluateChapter', 'showEvaluationDetail'])
 

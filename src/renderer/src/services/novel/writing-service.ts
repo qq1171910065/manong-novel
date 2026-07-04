@@ -64,6 +64,9 @@ import {
 } from '@shared/novel/chapter-length-plan'
 import {
   detectRepetitionIssues,
+  extractBannedPhrases,
+  formatRepetitionRewriteHint,
+  hasSevereRepetition,
   sanitizeChapterContent,
 } from '@shared/novel/chapter-content-guard'
 import {
@@ -1024,10 +1027,68 @@ function buildPriorChapterContext(project: NovelProject, chapterNumber: number) 
 
   const content = priorChapter.content.trim()
   return {
-    priorEnding: content.slice(-1000),
+    priorEnding: content.slice(-600),
     priorSummary: priorChapter.summary?.trim() || '',
     priorContent: content,
   }
+}
+
+function buildChapterGenerationUserMessage(input: {
+  project: NovelProject
+  chapterNumber: number
+  outline: ReturnType<typeof chapterOutlineEntry>
+  wordCountHint: string
+  recentStats: string
+  priorSummary: string
+  priorEnding: string
+  priorContent: string | null
+  styleHint?: string
+  rewriteHint?: string
+}) {
+  const bannedPhrases = extractBannedPhrases(input.priorContent)
+  return [
+    `书名：${input.project.title}`,
+    `蓝图摘要：${input.project.blueprint?.full_synopsis || input.project.initial_prompt}`,
+    `当前章节：第${input.chapterNumber}章 ${input.outline?.title || ''}`,
+    `章节纲要：${input.outline?.summary || '按蓝图推进'}`,
+    input.wordCountHint,
+    input.recentStats ? `近期章节字数（保持体量一致）：\n${input.recentStats}` : '',
+    `衔接要求：仅承接上一章结尾最后一拍，推进新信息；禁止复述上一章已写情节、对话、环境描写。`,
+    `反重复要求：每个动作/情绪/环境细节在本章内只写一次；禁止插入与正文无关的重复小段或同义句。`,
+    bannedPhrases.length
+      ? `以下表达已在上一章出现，本章禁止原样或换词重复：\n${bannedPhrases.map((item) => `- ${item}`).join('\n')}`
+      : '',
+    input.priorSummary ? `上一章摘要：${input.priorSummary}` : '',
+    input.priorEnding ? `上一章结尾片段（仅供衔接，禁止复述）：\n${input.priorEnding}` : '',
+    input.styleHint ? `写作风格提示：${input.styleHint}` : '',
+    input.rewriteHint || '',
+    `请直接输出章节正文，不要输出 JSON 或解释。`,
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+}
+
+async function generateChapterDraft(
+  project: NovelProject,
+  userMessage: string,
+  options?: { signal?: AbortSignal; onStream?: (chars: number) => void }
+): Promise<string> {
+  return chat(
+    writingPrompt,
+    [{ role: 'user', content: userMessage }],
+    projectChatOpts(project, {
+      temperature: 0.82,
+      timeoutMs: LONG_STREAM_TIMEOUT_MS,
+      signal: options?.signal,
+      stream: options?.onStream
+        ? {
+            onChunk: ({ raw }) => {
+              options.onStream?.(countChapterChars(raw))
+            },
+          }
+        : undefined,
+    })
+  )
 }
 
 function buildRecentWordCountEntries(
@@ -1128,50 +1189,63 @@ export async function generateChapterContent(
       })
 
       let streamedChars = 0
-      const content = await chat(
-        writingPrompt,
-        [
-          {
-            role: 'user',
-            content: [
-              `书名：${project.title}`,
-              `蓝图摘要：${project.blueprint?.full_synopsis || project.initial_prompt}`,
-              `当前章节：第${chapterNumber}章 ${outline?.title || ''}`,
-              `章节纲要：${outline?.summary || '按蓝图推进'}`,
+      const userMessage = buildChapterGenerationUserMessage({
+        project,
+        chapterNumber,
+        outline,
+        wordCountHint,
+        recentStats,
+        priorSummary,
+        priorEnding,
+        priorContent,
+        styleHint: versionCount > 1 ? styleHint : undefined,
+      })
+
+      let content = await generateChapterDraft(project, userMessage, {
+        signal: options?.signal,
+        onStream: (chars) => {
+          streamedChars = chars
+          patchChapterGenProgress({
+            phase: 'writing',
+            chars: streamedChars,
+            message:
+              versionCount > 1
+                ? `第 ${chapterNumber} 章版本 ${i + 1}/${versionCount}：已输出 ${streamedChars} 字…`
+                : `第 ${chapterNumber} 章：已输出 ${streamedChars} 字…`,
+          })
+        },
+      })
+
+      let sanitized = sanitizeChapterContent(content, priorContent)
+      if (hasSevereRepetition(sanitized, priorContent)) {
+        const rewriteHint = formatRepetitionRewriteHint(sanitized, priorContent)
+        if (rewriteHint) {
+          patchChapterGenProgress({
+            phase: 'writing',
+            message: `检测到重复片段，正在重写第 ${chapterNumber} 章…`,
+          })
+          content = await generateChapterDraft(
+            project,
+            buildChapterGenerationUserMessage({
+              project,
+              chapterNumber,
+              outline,
               wordCountHint,
-              recentStats ? `近期章节字数（保持体量一致）：\n${recentStats}` : '',
-              `衔接要求：仅承接上一章结尾最后一拍，推进新信息；禁止复述上一章已写情节、对话或环境描写。`,
-              priorSummary ? `上一章摘要：${priorSummary}` : '',
-              priorEnding ? `上一章结尾片段（仅供衔接，禁止复述）：\n${priorEnding}` : '',
-              versionCount > 1 ? `写作风格提示：${styleHint}` : '',
-              `请直接输出章节正文，不要输出 JSON 或解释。`,
-            ]
-              .filter(Boolean)
-              .join('\n\n'),
-          },
-        ],
-        projectChatOpts(project, {
-          temperature: 0.85,
-          timeoutMs: LONG_STREAM_TIMEOUT_MS,
-          signal: options?.signal,
-          stream: {
-            onChunk: ({ raw }) => {
-              streamedChars = countChapterChars(raw)
-              patchChapterGenProgress({
-                phase: 'writing',
-                chars: streamedChars,
-                message:
-                  versionCount > 1
-                    ? `第 ${chapterNumber} 章版本 ${i + 1}/${versionCount}：已输出 ${streamedChars} 字…`
-                    : `第 ${chapterNumber} 章：已输出 ${streamedChars} 字…`,
-              })
-            },
-          },
-        })
-      )
+              recentStats,
+              priorSummary,
+              priorEnding,
+              priorContent,
+              styleHint: versionCount > 1 ? styleHint : undefined,
+              rewriteHint,
+            }),
+            { signal: options?.signal }
+          )
+          sanitized = sanitizeChapterContent(content, priorContent)
+        }
+      }
 
       patchChapterGenProgress({ phase: 'processing', message: `整理第 ${chapterNumber} 章正文…` })
-      versions.push(sanitizeChapterContent(content, priorContent))
+      versions.push(sanitized)
     }
   } finally {
     setChapterGenProgress(null)

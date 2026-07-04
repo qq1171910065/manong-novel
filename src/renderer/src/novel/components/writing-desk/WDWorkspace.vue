@@ -34,7 +34,7 @@
           <div class="flex items-center gap-2">
             <button
               @click="confirmRegenerateChapter"
-              :disabled="generatingChapter === selectedChapterNumber"
+              :disabled="autoWriteLocked || generatingChapter === selectedChapterNumber"
               class="md-btn md-btn-filled md-ripple flex items-center gap-2 whitespace-nowrap disabled:opacity-50"
             >
               <svg v-if="generatingChapter === selectedChapterNumber" class="w-4 h-4 animate-spin" fill="currentColor" viewBox="0 0 20 20">
@@ -126,7 +126,7 @@ import { computed, ref, watch, onUnmounted } from 'vue'
 import NovelModalShell from '@renderer/novel/components/shared/NovelModalShell.vue'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
 import { formatChapterList, getLaterStartedChapterNumbers } from '@renderer/novel/utils/chapter-progress'
-import type { Chapter, ChapterOutline, ChapterGenerationResponse, ChapterVersion, NovelProject } from '@renderer/services/novel/api'
+import type { ChapterGenerationResponse, ChapterVersion, NovelProject } from '@renderer/services/novel/api'
 import WorkspaceInitial from './workspace/WorkspaceInitial.vue'
 import ChapterGenerating from './workspace/ChapterGenerating.vue'
 import VersionSelector from './workspace/VersionSelector.vue'
@@ -144,11 +144,13 @@ interface Props {
   selectedVersionIndex: number
   availableVersions: ChapterVersion[]
   isSelectingVersion?: boolean
+  autoWriteLocked?: boolean
   embedded?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
   embedded: false,
+  autoWriteLocked: false,
 })
 
 const emit = defineEmits([
@@ -293,13 +295,6 @@ const isChapterCompleted = (chapterNumber: number) => {
   return chapter && chapter.generation_status === 'successful'
 }
 
-const isChapterGenerating = (chapterNumber: number) => {
-  if (props.generatingChapter === chapterNumber) return true
-  if (!props.project?.chapters) return false
-  const chapter = props.project.chapters.find(ch => ch.chapter_number === chapterNumber)
-  return chapter && chapter.generation_status === 'generating'
-}
-
 const isChapterFailed = (chapterNumber: number) => {
   if (!props.project?.chapters) return false
   const chapter = props.project.chapters.find(ch => ch.chapter_number === chapterNumber)
@@ -382,15 +377,14 @@ const stopPolling = () => {
 
 watch(
   () => [selectedChapter.value?.generation_status, props.evaluatingChapter, props.isSelectingVersion, props.selectedChapterNumber],
-  ([status, evaluating, selecting, chapterNumber]) => {
+  ([status, evaluating, , chapterNumber]) => {
     if (chapterNumber === null) {
       stopPolling()
       return
     }
 
-    const isEvaluating = evaluating === chapterNumber
     // Poll when generating, evaluating, or selecting a version
-    const needsPolling = status === 'generating' || status === 'evaluating' || status === 'selecting'
+    const needsPolling = status === 'generating' || status === 'evaluating' || status === 'selecting' || evaluating === chapterNumber
 
     if (needsPolling) {
       startPolling()
@@ -437,24 +431,28 @@ const currentComponentProps = computed(() => {
       selectedVersionIndex: props.selectedVersionIndex,
       isSelectingVersion: props.isSelectingVersion,
       evaluatingChapter: props.evaluatingChapter,
+      autoWriteLocked: props.autoWriteLocked,
       isEvaluationFailed: isChapterEvaluationFailed(props.selectedChapterNumber)
     }
   }
   if (selectedChapter.value?.content) {
     return { 
       selectedChapter: selectedChapter.value,
-      projectId: props.project?.id
+      projectId: props.project?.id,
+      autoWriteLocked: props.autoWriteLocked,
     }
   }
   if (isChapterFailed(props.selectedChapterNumber)) {
     return {
       chapterNumber: props.selectedChapterNumber,
-      generatingChapter: props.generatingChapter
+      generatingChapter: props.generatingChapter,
+      autoWriteLocked: props.autoWriteLocked,
     }
   }
   return {
     chapterNumber: props.selectedChapterNumber,
     generatingChapter: props.generatingChapter,
+    autoWriteLocked: props.autoWriteLocked,
     canGenerate: canGenerateChapter(props.selectedChapterNumber)
   }
 })

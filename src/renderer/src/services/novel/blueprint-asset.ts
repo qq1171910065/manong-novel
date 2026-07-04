@@ -16,13 +16,13 @@ export function ensureAssetId<T extends { id?: string }>(item: T): T {
 export function ensureWorldListItem(item: WorldListItem | string): WorldListItem {
   if (typeof item === 'string') {
     const [title, ...rest] = item.split('：')
-    return ensureAssetId({
+    return ensureAssetId<WorldListItem>({
       name: title || item,
       title: title || item,
       description: rest.join('：') || '',
     })
   }
-  return ensureAssetId({
+  return ensureAssetId<WorldListItem>({
     ...item,
     name: item.name || item.title || '',
     title: item.title || item.name || '',
@@ -32,8 +32,8 @@ export function ensureWorldListItem(item: WorldListItem | string): WorldListItem
 
 export function ensureCharacter(character: Character): Character {
   return ensureAssetId({
-    description: '',
     ...character,
+    description: character.description ?? '',
   })
 }
 

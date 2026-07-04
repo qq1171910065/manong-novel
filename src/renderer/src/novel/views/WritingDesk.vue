@@ -44,7 +44,11 @@
       </div>
 
       <!-- 主要内容 -->
-      <div v-else-if="project" :class="embedded ? 'wd-desk__columns' : 'h-full flex gap-6'">
+      <div v-else-if="project" class="wd-desk-stack">
+        <div v-if="autoWriteLocked" class="wd-auto-write-banner">
+          AI 正在后台接管创作，写作台操作已暂时锁定。可在状态栏任务列表查看进度或暂停。
+        </div>
+        <div :class="embedded ? 'wd-desk__columns' : 'h-full flex gap-6'">
         <WDSidebar
           :project="project"
           :sidebar-open="sidebarOpen"
@@ -52,6 +56,7 @@
           :generating-chapter="generatingChapter"
           :evaluating-chapter="evaluatingChapter"
           :is-generating-outline="isGeneratingOutline"
+          :auto-write-locked="autoWriteLocked"
           :embedded="embedded"
           @close-sidebar="closeSidebar"
           @select-chapter="selectChapter"
@@ -72,6 +77,7 @@
             :selected-version-index="selectedVersionIndex"
             :available-versions="availableVersions"
             :is-selecting-version="isSelectingVersion || isConfirmingVersion"
+            :auto-write-locked="autoWriteLocked"
             :embedded="embedded"
           @regenerate-chapter="regenerateChapter"
           @evaluate-chapter="evaluateChapter"
@@ -85,6 +91,7 @@
           @edit-chapter="editChapterContent"
           @cancel-chapter-task="cancelChapterTask"
           />
+        </div>
         </div>
       </div>
     </div>
@@ -120,7 +127,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from '@renderer/novel/composables/useNovelRouter'
 import { useNovelStore } from '@renderer/stores/novel'
-import type { Chapter, ChapterOutline, ChapterGenerationResponse, ChapterVersion } from '@renderer/services/novel/api'
+import type { ChapterOutline, ChapterGenerationResponse } from '@renderer/services/novel/api'
 import { NovelAPI } from '@renderer/services/novel/api'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
 import * as writing from '@renderer/services/novel/writing-service'
@@ -132,7 +139,7 @@ import {
   getActiveChapterGeneration,
   getActiveChapterEvaluation,
 } from '@renderer/services/novel/async-task-registry'
-import Tooltip from '@renderer/novel/components/Tooltip.vue'
+import { useChapterGenProgress } from '@renderer/novel/composables/chapter-generation-progress'
 import WDHeader from '@renderer/novel/components/writing-desk/WDHeader.vue'
 import WDSidebar from '@renderer/novel/components/writing-desk/WDSidebar.vue'
 import WDWorkspace from '@renderer/novel/components/writing-desk/WDWorkspace.vue'
@@ -144,11 +151,13 @@ import WDGenerateOutlineModal from '@renderer/novel/components/writing-desk/WDGe
 interface Props {
   projectId?: string
   embedded?: boolean
+  autoWriteLocked?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
   projectId: '',
   embedded: false,
+  autoWriteLocked: false,
 })
 
 const emit = defineEmits<{ close: [] }>()
@@ -158,6 +167,15 @@ const route = useRoute()
 const novelStore = useNovelStore()
 
 const resolvedProjectId = computed(() => props.projectId || route.params.id || '')
+const { activeProgress: chapterGenProgress } = useChapterGenProgress()
+
+watch(
+  chapterGenProgress,
+  (live) => {
+    if (!live || live.projectId !== resolvedProjectId.value) return
+    selectedChapterNumber.value = live.chapterNumber
+  }
+)
 
 // 状态管理
 const selectedChapterNumber = ref<number | null>(null)
@@ -211,11 +229,6 @@ const evaluatingChapter = computed(() => {
 
 const isSelectingVersion = computed(() => {
   return selectedChapter.value?.generation_status === 'selecting'
-})
-
-const selectedChapterOutline = computed(() => {
-  if (!project.value?.blueprint?.chapter_outline || selectedChapterNumber.value === null) return null
-  return project.value.blueprint.chapter_outline.find(ch => ch.chapter_number === selectedChapterNumber.value) || null
 })
 
 const progress = computed(() => {
@@ -456,6 +469,10 @@ const selectChapter = (chapterNumber: number) => {
 }
 
 const generateChapter = async (chapterNumber: number) => {
+  if (props.autoWriteLocked) {
+    globalAlert.showError('AI 后台创作进行中，请暂停后再手动操作', '操作受限')
+    return
+  }
   if (!canGenerateChapter(chapterNumber) && !isChapterFailed(chapterNumber) && !hasChapterInProgress(chapterNumber)) {
     globalAlert.showError('请按顺序生成章节，先完成前面的章节', '生成受限')
     return
@@ -720,6 +737,31 @@ onUnmounted(() => {
   border-radius: 0;
   background: transparent;
   animation: none;
+}
+
+.wd-desk-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+}
+
+.wd-desk-stack .wd-desk__columns,
+.wd-desk-stack > .h-full {
+  flex: 1;
+  min-height: 0;
+}
+
+.wd-auto-write-banner {
+  flex: 0 0 auto;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, var(--brand) 20%, transparent);
+  background: color-mix(in srgb, var(--brand-soft) 72%, var(--surface));
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.5;
 }
 
 .wd-desk__main {

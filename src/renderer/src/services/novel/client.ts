@@ -1,5 +1,4 @@
 import { userInfoRef } from '@renderer/services/auth'
-import { isWebRuntime } from '@renderer/composables/useRuntime'
 import { cloneJson } from '@shared/clone-json'
 
 export function getNovelUserId(): string {

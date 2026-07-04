@@ -148,7 +148,6 @@ import {
 import {
   materialLibraryService,
   type MaterialItem,
-  type MaterialLibraryType,
 } from '@renderer/services/novel/material-library-service'
 import {
   getMaterialLibraryPrefs,

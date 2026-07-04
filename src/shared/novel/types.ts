@@ -119,6 +119,19 @@ export interface Chapter {
   word_count?: number
 }
 
+export interface ChapterVersion {
+  content: string
+  style?: string
+}
+
+export interface ChapterGenerationResponse {
+  chapter_number: number
+  title?: string
+  versions?: ChapterVersion[]
+  evaluation?: string | null
+  ai_message?: string
+}
+
 export interface ConversationMessage {
   role: 'user' | 'assistant'
   content: string

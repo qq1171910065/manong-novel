@@ -315,7 +315,7 @@ const handleEdit = (row: AdminUser) => {
   formModel.email = row.email || ''
   formModel.password = '' // 密码留空表示不修改
   formModel.is_admin = row.is_admin
-  formModel.is_active = row.is_active
+  formModel.is_active = row.is_active ?? true
   showModal.value = true
 }
 

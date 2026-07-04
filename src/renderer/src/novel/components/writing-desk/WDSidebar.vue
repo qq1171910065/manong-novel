@@ -126,7 +126,7 @@
                       <button
                         v-if="canGenerateChapter(chapter.chapter_number) || isChapterFailed(chapter.chapter_number) || hasChapterInProgress(chapter.chapter_number)"
                         @click.stop="confirmGenerateChapter(chapter.chapter_number)"
-                        :disabled="generatingChapter === chapter.chapter_number || isChapterGenerating(chapter.chapter_number)"
+                        :disabled="autoWriteLocked || generatingChapter === chapter.chapter_number || isChapterGenerating(chapter.chapter_number)"
                         class="md-icon-btn md-ripple wd-outline-timeline__action disabled:opacity-50"
                         style="color: var(--md-primary);"
                         :title="isChapterCompleted(chapter.chapter_number) ? '重新生成' : isChapterFailed(chapter.chapter_number) ? '重试' : hasChapterInProgress(chapter.chapter_number) ? '重新生成版本' : '开始创作'"
@@ -272,7 +272,7 @@
                     <button
                       v-if="canGenerateChapter(chapter.chapter_number) || isChapterFailed(chapter.chapter_number) || hasChapterInProgress(chapter.chapter_number)"
                       @click.stop="confirmGenerateChapter(chapter.chapter_number)"
-                      :disabled="generatingChapter === chapter.chapter_number || isChapterGenerating(chapter.chapter_number)"
+                      :disabled="autoWriteLocked || generatingChapter === chapter.chapter_number || isChapterGenerating(chapter.chapter_number)"
                       class="md-icon-btn md-ripple disabled:opacity-50"
                       style="color: var(--md-primary);"
                       :title="isChapterCompleted(chapter.chapter_number) ? '重新生成' : isChapterFailed(chapter.chapter_number) ? '重试' : hasChapterInProgress(chapter.chapter_number) ? '重新生成版本' : '开始创作'"
@@ -310,7 +310,7 @@
             <div class="mt-4">
               <button
                 @click="$emit('generateOutline')"
-                :disabled="props.isGeneratingOutline"
+                :disabled="autoWriteLocked || props.isGeneratingOutline"
                 class="md-btn md-btn-tonal md-ripple w-full flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <svg v-if="props.isGeneratingOutline" class="w-5 h-5 animate-spin" fill="currentColor" viewBox="0 0 20 20">
@@ -343,11 +343,13 @@ interface Props {
   generatingChapter: number | null
   evaluatingChapter: number | null
   isGeneratingOutline: boolean
+  autoWriteLocked?: boolean
   embedded?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
   embedded: false,
+  autoWriteLocked: false,
 })
 
 const emit = defineEmits(['closeSidebar', 'selectChapter', 'generateChapter', 'editChapter', 'deleteChapter', 'generateOutline'])

@@ -18,6 +18,7 @@ import {
   resolveUserDisplayName,
 } from '../services/user-local-profile'
 import MarkdownContent from '../components/common/MarkdownContent.vue'
+import BackgroundTaskPanel from '../components/shell/BackgroundTaskPanel.vue'
 
 const DEFAULT_AVATAR = loginBundledAssets.defaultUserAvatar
 
@@ -273,6 +274,7 @@ const shellBgStyle = {
         >
           <Download :size="18" />
         </button>
+        <BackgroundTaskPanel />
         <div ref="profileWrapRef" class="arena-profile-wrap" :class="{ 'is-open': showProfilePopover }">
           <button
             type="button"

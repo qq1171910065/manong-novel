@@ -11,7 +11,7 @@
       <p class="md-body-medium md-on-surface-variant mb-6">很抱歉，AI在生成这个章节时遇到了问题。请点击重试按钮重新生成。</p>
       <button
         @click="$emit('generateChapter', chapterNumber)"
-        :disabled="generatingChapter === chapterNumber"
+        :disabled="autoWriteLocked || generatingChapter === chapterNumber"
         class="md-btn md-btn-filled md-ripple flex items-center gap-2 mx-auto disabled:opacity-50"
         style="background-color: var(--md-error); color: var(--md-on-error);"
       >
@@ -28,12 +28,17 @@
 </template>
 
 <script setup lang="ts">
+import { withDefaults } from 'vue'
+
 interface Props {
   chapterNumber: number
   generatingChapter: number | null
+  autoWriteLocked?: boolean
 }
 
-defineProps<Props>()
+withDefaults(defineProps<Props>(), {
+  autoWriteLocked: false,
+})
 
 defineEmits(['generateChapter'])
 </script>

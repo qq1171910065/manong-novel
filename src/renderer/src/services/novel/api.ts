@@ -3,7 +3,9 @@ export type {
   Blueprint,
   BlueprintGenerationResponse,
   Chapter,
+  ChapterGenerationResponse,
   ChapterOutline,
+  ChapterVersion,
   ConverseResponse,
   ConversationMessage,
   DeleteNovelsResponse,
@@ -48,7 +50,7 @@ import { isAbortError } from './async-task-registry'
 import { ensureBlueprintAssetIds } from './blueprint-asset'
 import { applyProjectModelPrefs } from './project-model'
 import * as writing from './writing-service'
-import type { ChatStreamHandlers, ConversationRequestOptions } from './writing-service'
+import type { ConversationRequestOptions } from './writing-service'
 import * as analytics from './analytics-service'
 import type { EmotionCurveResponse, ForeshadowingResponse } from './analytics-service'
 import {
@@ -369,6 +371,19 @@ export class NovelAPI {
     const chapter = project.chapters.find((c) => c.chapter_number === chapterNumber)
     if (!chapter) throw new Error('章节不存在')
     if (!chapter.content?.trim()) throw new Error('章节内容为空，无法确认')
+
+    if (!chapter.summary?.trim()) {
+      try {
+        chapter.summary = await writing.summarizeChapter(chapter.content)
+      } catch (error) {
+        console.warn('[confirmChapter] summary generation failed:', error)
+        const outline = project.blueprint?.chapter_outline?.find(
+          (item) => item.chapter_number === chapterNumber
+        )
+        chapter.summary = outline?.summary?.trim() || chapter.content.slice(0, 200)
+      }
+    }
+
     chapter.generation_status = 'successful'
     return novelClient.saveProject(project)
   }

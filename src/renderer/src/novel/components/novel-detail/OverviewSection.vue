@@ -137,7 +137,7 @@ import type { ProjectModelPrefs } from '@renderer/services/novel/project-model'
 import type { WritingMode } from '@shared/novel/types'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
 
-interface OverviewData {
+export interface OverviewData {
   title?: string | null
   cover_url?: string | null
   chat_model_id?: string | null

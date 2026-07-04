@@ -62,6 +62,12 @@
   opacity: 0.95;
 }
 
+.detail-sidebar-create.is-auto-writing {
+  border-color: color-mix(in srgb, var(--brand) 34%, transparent);
+  background: color-mix(in srgb, var(--brand-soft) 78%, var(--surface));
+  color: var(--brand);
+}
+
 .detail-sidebar-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;

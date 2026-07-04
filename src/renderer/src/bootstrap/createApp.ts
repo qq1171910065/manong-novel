@@ -13,7 +13,7 @@ import {
   syncRendererAuthFromMain,
 } from '../services/auth-session'
 import { settingsService, applyAppSettingsEffects } from '../services/app-settings'
-import { isWebRuntime, isDesktopRuntime } from '../composables/useRuntime'
+import { isDesktopRuntime } from '../composables/useRuntime'
 import { configureRuntime } from '../composables/runtime-config'
 import { setupAppShortcuts } from './setupAppShortcuts'
 import type { FeatureRegistry, RouteName } from '../types/registry'

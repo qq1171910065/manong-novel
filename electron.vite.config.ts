@@ -34,6 +34,7 @@ export default defineConfig({
     base: './',
     resolve: {
       alias: {
+        '@': resolve('src/renderer/src'),
         '@renderer': resolve('src/renderer/src'),
         '@shared': resolve('src/shared'),
       },

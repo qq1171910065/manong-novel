@@ -47,6 +47,16 @@ export interface MntoolsAppConfig {
   onReady?: () => void | Promise<void>
 }
 
+export type ThemeId =
+  | 'enterprise-light'
+  | 'enterprise-dark'
+  | 'creative-vivid'
+  | 'minimal-mono'
+  | 'ocean-teal'
+  | 'rose-warm'
+  | 'forest-calm'
+  | 'high-contrast'
+
 export interface PortalSession {
   token: string
   refreshToken: string

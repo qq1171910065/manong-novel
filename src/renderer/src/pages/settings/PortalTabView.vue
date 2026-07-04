@@ -47,7 +47,6 @@ const {
   rechargeColumns,
   rechargePagination,
   appKeyName,
-  appDisplayName,
   appSoftwareKey,
   newKeyPlain,
   creatingAppKey,

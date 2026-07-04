@@ -56,7 +56,14 @@ let syncing = false;
 
 watch(() => props.modelValue, (newVal) => {
   syncing = true;
-  localFactions.value = (newVal || []).map((item) => ensureWorldListItem(item));
+  localFactions.value = (newVal || []).map((item) => {
+    const normalized = ensureWorldListItem(item);
+    return {
+      id: normalized.id,
+      name: normalized.name || '',
+      description: normalized.description || '',
+    };
+  });
   nextTick(() => {
     syncing = false;
   });
