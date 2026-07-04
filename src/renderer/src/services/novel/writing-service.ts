@@ -367,8 +367,9 @@ IMPORTANT: 仅输出合法 JSON 对象：
   "blueprint_updates": { }
 }
 规则：
-- 根据对话中**已确认**的修改意图，基于当前全书蓝图生成 blueprint_updates
+- 根据对话中**已确认**的修改或新增意图，基于当前全书蓝图生成 blueprint_updates
 - 保留角色 id、未提及字段；角色改名时输出**完整 characters 数组**
+- **新增角色/关系/章节**时：在对应数组中追加新条目（可只输出新增项，系统会合并）；保留原有条目不变
 - 若涉及关系网，输出**完整 relationships 数组**，同步 character_from / character_to 中的姓名
 - affected_sections 列出实际变更的板块
 - 不要输出 ready_to_apply、ai_message 等对话字段

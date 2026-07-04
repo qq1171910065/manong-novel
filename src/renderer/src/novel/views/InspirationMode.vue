@@ -62,7 +62,7 @@
               </h2>
               <p class="novel-chat-panel__subtitle">
                 <template v-if="isPolishMode">
-                  从「{{ polishContext?.sectionLabel }}」出发，按你的意图修改设定；可联动调整其他板块
+                  从「{{ polishContext?.sectionLabel }}」出发，按你的意图修改或新增设定；可联动调整其他板块
                 </template>
                 <template v-else>与文思一起构思你的故事</template>
               </p>
@@ -70,7 +70,7 @@
           </div>
           <div class="novel-chat-panel__meta">
             <span
-              v-if="novelStore.isLoading"
+              v-if="isChatRequestInFlight || isPolishMaterializing"
               class="novel-chat-panel__status-badge"
               :class="{ 'novel-chat-panel__status-badge--polish': isPolishMode }"
             >
@@ -386,6 +386,7 @@ const polishConversationState = ref<Record<string, unknown>>({})
 const pendingBlueprintUpdates = ref<Partial<import('@shared/novel/types').Blueprint> | null>(null)
 const pendingAffectedSections = ref<PolishableSectionKey[]>([])
 const isPolishMaterializing = ref(false)
+const isChatRequestInFlight = ref(false)
 const lastPolishAiMessage = ref('')
 const pendingAffectedSectionLabels = computed(() =>
   pendingAffectedSections.value.map((s) => POLISH_SECTION_LABELS[s])
@@ -393,8 +394,32 @@ const pendingAffectedSectionLabels = computed(() =>
 let activeAbortController: AbortController | null = null
 
 const inputDisabled = computed(
-  () => isInitialLoading.value || novelStore.isLoading || isPolishMaterializing.value
+  () => isInitialLoading.value || isChatRequestInFlight.value || isPolishMaterializing.value
 )
+
+const restorePolishInputControl = () => {
+  if (!props.polishContext) return
+  currentUIControl.value = {
+    type: 'text_input',
+    placeholder: polishInputPlaceholder(props.polishContext),
+  }
+}
+
+const polishMaterializeChoiceControl = (): UIControl => ({
+  type: 'single_choice',
+  options: [
+    {
+      id: 'materialize_apply',
+      label: '生成并确认应用',
+      description: '根据上文描述生成蓝图变更并进入确认页',
+    },
+    {
+      id: 'continue_edit',
+      label: '继续调整',
+      description: '补充或修正修改、新增要求',
+    },
+  ],
+})
 
 const isAbortError = (error: unknown) =>
   error instanceof DOMException && error.name === 'AbortError'
@@ -460,6 +485,8 @@ const resetInspirationMode = (clearProject = true) => {
   polishConversationState.value = {}
   pendingBlueprintUpdates.value = null
   pendingAffectedSections.value = []
+  isChatRequestInFlight.value = false
+  isPolishMaterializing.value = false
 
   if (clearProject && !isPolishMode.value) {
     novelStore.setCurrentProject(null)
@@ -498,10 +525,12 @@ const handleRestart = async () => {
 
 const backFromSectionPolishConfirmation = () => {
   showSectionPolishConfirmation.value = false
+  restorePolishInputControl()
 }
 
 const backToConversation = () => {
   showBlueprintConfirmation.value = false
+  currentUIControl.value = { ...DEFAULT_UI_CONTROL }
 }
 
 const startConversation = async () => {
@@ -519,6 +548,14 @@ const startConversation = async () => {
     globalAlert.showError(`无法开始灵感模式: ${error instanceof Error ? error.message : '未知错误'}`, '启动失败')
     resetInspirationMode()
   }
+}
+
+const prepareConversationForProject = () => {
+  conversationStarted.value = true
+  isInitialLoading.value = false
+  chatMessages.value = []
+  currentTurn.value = 0
+  currentUIControl.value = { ...DEFAULT_UI_CONTROL }
 }
 
 const startConversationForProject = async (projectId: string) => {
@@ -595,7 +632,7 @@ const restoreConversation = async (projectId: string) => {
 }
 
 const polishInputPlaceholder = (context: SectionPolishContext) =>
-  `描述你想如何修改「${context.sectionLabel}」或全书设定…`
+  `描述你想如何修改或新增「${context.sectionLabel}」内容，也可联动调整全书设定…`
 
 const initSectionPolishSession = async (projectId: string, context: SectionPolishContext) => {
   abortActiveRequest()
@@ -636,7 +673,7 @@ const initSectionPolishSession = async (projectId: string, context: SectionPolis
       const lastAi = restored.chatMessages.filter((m) => m.type === 'ai').pop()?.content
       if (lastAi && shouldOfferPolishMaterialize(lastAi)) {
         lastPolishAiMessage.value = lastAi
-        await runPolishMaterialize(lastAi)
+        currentUIControl.value = polishMaterializeChoiceControl()
       }
     }
     await scrollToBottom()
@@ -661,6 +698,7 @@ const showPolishConfirmation = (
   confirmationMessage.value = aiMessage
   pendingBlueprintUpdates.value = updates
   pendingAffectedSections.value = affected
+  restorePolishInputControl()
   showSectionPolishConfirmation.value = true
 }
 
@@ -703,7 +741,7 @@ const runPolishMaterialize = async (latestMessage?: string) => {
       '生成修改稿失败'
     )
     currentUIControl.value = {
-      type: 'single_choice',
+      ...polishMaterializeChoiceControl(),
       options: [
         {
           id: 'materialize_apply',
@@ -713,7 +751,7 @@ const runPolishMaterialize = async (latestMessage?: string) => {
         {
           id: 'continue_edit',
           label: '继续调整',
-          description: '补充或修正修改要求',
+          description: '补充或修正修改、新增要求',
         },
       ],
     }
@@ -748,6 +786,7 @@ const handlePolishInput = async (userInput: any) => {
 
   const draftId = randomUUID()
 
+  isChatRequestInFlight.value = true
   try {
     if (userInput && userInput.value) {
       chatMessages.value.push({
@@ -826,24 +865,12 @@ const handlePolishInput = async (userInput: any) => {
       lastPolishAiMessage.value = resolveDisplayAiMessage(response.ai_message)
       const materialized = await runPolishMaterialize(lastPolishAiMessage.value)
       if (!materialized) {
-        currentUIControl.value = {
-          type: 'single_choice',
-          options: [
-            {
-              id: 'materialize_apply',
-              label: '生成并确认应用',
-              description: '根据上文描述生成蓝图变更并进入确认页',
-            },
-            {
-              id: 'continue_edit',
-              label: '继续调整',
-              description: '补充或修正修改要求',
-            },
-          ],
-        }
+        currentUIControl.value = polishMaterializeChoiceControl()
       }
-    } else {
+    } else if (response.ui_control) {
       currentUIControl.value = response.ui_control
+    } else {
+      restorePolishInputControl()
     }
   } catch (error) {
     activeAbortController = null
@@ -854,12 +881,9 @@ const handlePolishInput = async (userInput: any) => {
     if (isAbortError(error)) return
     console.error('设定修改对话失败:', error)
     globalAlert.showError(`抱歉，与AI连接时遇到问题: ${formatChatError(error)}`, '通信失败')
-    if (!currentUIControl.value) {
-      currentUIControl.value = {
-        type: 'text_input',
-        placeholder: `描述你想如何修改「${props.polishContext?.sectionLabel ?? '当前板块'}」或全书设定…`,
-      }
-    }
+    restorePolishInputControl()
+  } finally {
+    isChatRequestInFlight.value = false
   }
 }
 
@@ -885,6 +909,7 @@ const handleUserInput = async (userInput: any) => {
   }
   const draftId = randomUUID()
 
+  isChatRequestInFlight.value = true
   try {
     if (userInput && userInput.value) {
       chatMessages.value.push({
@@ -938,11 +963,14 @@ const handleUserInput = async (userInput: any) => {
 
     if (response.is_complete && response.ready_for_blueprint) {
       confirmationMessage.value = resolveDisplayAiMessage(response.ai_message)
+      currentUIControl.value = { ...DEFAULT_UI_CONTROL }
       showBlueprintConfirmation.value = true
     } else if (response.is_complete) {
       await handleGenerateBlueprint()
-    } else {
+    } else if (response.ui_control) {
       currentUIControl.value = response.ui_control
+    } else {
+      currentUIControl.value = { ...DEFAULT_UI_CONTROL }
     }
   } catch (error) {
     activeAbortController = null
@@ -953,9 +981,11 @@ const handleUserInput = async (userInput: any) => {
     if (isAbortError(error)) return
     console.error('对话失败:', error)
     globalAlert.showError(`抱歉，与AI连接时遇到问题: ${formatChatError(error)}`, '通信失败')
-    if (!currentUIControl.value) {
+    if (!currentUIControl.value || currentUIControl.value.placeholder === LOADING_UI_CONTROL.placeholder) {
       currentUIControl.value = { ...DEFAULT_UI_CONTROL }
     }
+  } finally {
+    isChatRequestInFlight.value = false
   }
 }
 
@@ -1032,10 +1062,12 @@ const scrollToBottom = async () => {
 }
 
 const bootstrapProject = async (projectId: string) => {
-  await novelStore.loadProject(projectId)
+  await novelStore.loadProject(projectId, props.embedded)
   const hasHistory = (novelStore.currentProject?.conversation_history?.length ?? 0) > 0
   if (hasHistory) {
     await restoreConversation(projectId)
+  } else if (props.embedded) {
+    prepareConversationForProject()
   } else {
     await startConversationForProject(projectId)
   }

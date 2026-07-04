@@ -51,15 +51,15 @@ const POLISH_META: Record<
   },
   characters: {
     label: '主要角色',
-    scope: '人物身份、性格、目标、能力与关系定位（可联动修改关系网、大纲等）',
+    scope: '新增或调整人物身份、性格、目标、能力与关系定位（可联动修改关系网、大纲等）',
   },
   relationships: {
     label: '人物关系',
-    scope: '角色之间的联系、关系类型与描述（可联动修改角色、大纲等）',
+    scope: '新增或调整角色之间的联系、关系类型与描述（可联动修改角色、大纲等）',
   },
   chapter_outline: {
     label: '章节大纲',
-    scope: '各章标题与情节摘要（可联动修改角色、世界观等）',
+    scope: '新增或调整各章标题与情节摘要（可联动修改角色、世界观等）',
   },
 }
 
@@ -382,8 +382,8 @@ export function shouldOfferPolishMaterialize(aiMessage: string): boolean {
   if (!text) return false
   if (/blueprint_updates/i.test(text)) return false
   return (
-    /(改名|联动|关系网|人物蓝图|修改指令|将.{0,12}改为|调整为|更名为)/.test(text) ||
-    /已(经)?.{0,10}(修改|更新|替换|更换|联动|接收)/.test(text)
+    /(改名|联动|关系网|人物蓝图|修改指令|新增|添加|增加|补充.{0,4}(角色|人物|关系|章节|地点)|将.{0,12}改为|调整为|更名为)/.test(text) ||
+    /已(经)?.{0,10}(修改|更新|替换|更换|新增|添加|联动|接收)/.test(text)
   )
 }
 
