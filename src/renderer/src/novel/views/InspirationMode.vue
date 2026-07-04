@@ -84,15 +84,6 @@
             >
               {{ mode.label }}
             </button>
-            <button
-              type="button"
-              class="novel-chat-panel__reinspire-btn"
-              :disabled="inputDisabled"
-              title="基于现有蓝图重新构思整体框架"
-              @click="startReinspiration"
-            >
-              重新过灵感
-            </button>
           </div>
           <div class="novel-chat-panel__meta">
             <span
@@ -448,16 +439,23 @@ watch([isChatRequestInFlight, isPolishMaterializing, polishScopeMode, polishWork
 })
 
 watch(
-  () => props.polishContext?.section,
-  (section) => {
-    if (!isPolishMode.value || !section || !sessionBootstrapped.value) return
-    polishConversationState.value = {
-      ...polishConversationState.value,
-      entry_section: section,
+  () => props.polishContext,
+  (ctx) => {
+    if (!isPolishMode.value || !ctx || !sessionBootstrapped.value) return
+    if (ctx.workflowMode) polishWorkflowMode.value = ctx.workflowMode
+    if (ctx.scopeMode) polishScopeMode.value = ctx.scopeMode
+    if (ctx.section) {
+      polishConversationState.value = {
+        ...polishConversationState.value,
+        entry_section: ctx.section,
+        workflow_mode: ctx.workflowMode ?? polishWorkflowMode.value,
+        scope_mode: ctx.scopeMode ?? polishScopeMode.value,
+      }
     }
     restorePolishInputControl()
     syncAssistantRuntime()
-  }
+  },
+  { deep: true }
 )
 const pendingAffectedSectionLabels = computed(() =>
   pendingAffectedSections.value.map((s) => POLISH_SECTION_LABELS[s])
@@ -499,26 +497,6 @@ const persistPolishUiState = async () => {
     scope_mode: polishScopeMode.value,
     workflow_mode: polishWorkflowMode.value,
     entry_section: props.polishContext?.section,
-  })
-}
-
-const startReinspiration = async () => {
-  const confirmed = await globalAlert.showConfirm(
-    '「重新过灵感」会基于现有蓝图重构整体框架（类型、世界观、人物、关系、大纲等）。已写章节可能与新版设定不符，请谨慎使用。是否进入重构对话？',
-    '重新过灵感'
-  )
-  if (!confirmed) return
-  polishWorkflowMode.value = 'reinspiration'
-  polishScopeMode.value = 'global'
-  polishConversationState.value = {
-    ...polishConversationState.value,
-    workflow_mode: 'reinspiration',
-    scope_mode: 'global',
-  }
-  await handlePolishInput({
-    id: 'reinspiration_start',
-    value:
-      '进入重新过灵感模式：请基于当前全书蓝图，问我希望保留哪些元素、以及想改成的故事方向，然后给出完整重构方案。',
   })
 }
 
@@ -796,6 +774,8 @@ const initSectionPolishSession = async (projectId: string, context: SectionPolis
   if (savedState.workflow_mode === 'edit' || savedState.workflow_mode === 'reinspiration') {
     polishWorkflowMode.value = savedState.workflow_mode
   }
+  if (context.workflowMode) polishWorkflowMode.value = context.workflowMode
+  if (context.scopeMode) polishScopeMode.value = context.scopeMode
   const placeholder = polishInputPlaceholder(context, polishScopeMode.value, polishWorkflowMode.value)
 
   if (history.length) {
@@ -1357,12 +1337,6 @@ onUnmounted(() => {
   border-color: color-mix(in srgb, #e86b24 45%, transparent);
   background: color-mix(in srgb, #e86b24 12%, transparent);
   color: #c2410c;
-}
-
-.novel-chat-panel__reinspire-btn {
-  margin-left: auto;
-  border-color: color-mix(in srgb, #6366f1 35%, transparent);
-  color: #4f46e5;
 }
 
 .novel-chat-panel__scope-tag {

@@ -56,6 +56,17 @@ import {
 } from '@shared/novel/chapter-version-count'
 import { resolveWritingMode, SIMPLE_BLUEPRINT_SUPPLEMENT, SIMPLE_CONCEPT_SUPPLEMENT } from '@shared/novel/writing-mode'
 import {
+  applyWordCountPlanToBlueprint,
+  countChapterChars,
+  formatRecentWordCountStats,
+  formatWordCountPlanHint,
+  resolveChapterTargetWordCount,
+} from '@shared/novel/chapter-length-plan'
+import {
+  detectRepetitionIssues,
+  sanitizeChapterContent,
+} from '@shared/novel/chapter-content-guard'
+import {
   applyUserAnswerToChecklist,
   buildAutoCompletionMessage,
   buildChecklistPromptSupplement,
@@ -985,6 +996,7 @@ export async function generateBlueprint(
     blueprint.relationships = []
   }
   project.blueprint = blueprint
+  applyWordCountPlanToBlueprint(blueprint, mode)
   project.title = blueprint.title || project.title
 
   return {
@@ -995,6 +1007,45 @@ export async function generateBlueprint(
 
 function chapterOutlineEntry(project: NovelProject, chapterNumber: number) {
   return project.blueprint?.chapter_outline?.find((c) => c.chapter_number === chapterNumber)
+}
+
+function buildPriorChapterContext(project: NovelProject, chapterNumber: number) {
+  const priorChapter = (project.chapters || [])
+    .filter((c) => c.chapter_number < chapterNumber && c.content?.trim())
+    .sort((a, b) => b.chapter_number - a.chapter_number)[0]
+
+  if (!priorChapter?.content?.trim()) {
+    return { priorEnding: '', priorSummary: '', priorContent: null as string | null }
+  }
+
+  const content = priorChapter.content.trim()
+  return {
+    priorEnding: content.slice(-1000),
+    priorSummary: priorChapter.summary?.trim() || '',
+    priorContent: content,
+  }
+}
+
+function buildRecentWordCountEntries(
+  project: NovelProject,
+  chapterNumber: number,
+  writingMode: ReturnType<typeof resolveWritingMode>
+) {
+  const totalChapters = project.blueprint?.chapter_outline?.length || project.chapters?.length || 1
+  return (project.chapters || [])
+    .filter((c) => c.chapter_number < chapterNumber && c.content?.trim())
+    .sort((a, b) => b.chapter_number - a.chapter_number)
+    .slice(0, 3)
+    .reverse()
+    .map((c) => {
+      const entry = chapterOutlineEntry(project, c.chapter_number)
+      return {
+        chapterNumber: c.chapter_number,
+        title: c.title,
+        actual: countChapterChars(c.content),
+        target: resolveChapterTargetWordCount(entry, totalChapters, writingMode),
+      }
+    })
 }
 
 export function upsertChapterStatus(
@@ -1032,13 +1083,14 @@ export async function generateChapterContent(
   options?: { signal?: AbortSignal }
 ): Promise<Chapter> {
   const outline = chapterOutlineEntry(project, chapterNumber)
+  const writingMode = resolveWritingMode(project)
   const totalChapters = project.blueprint?.chapter_outline?.length || project.chapters?.length || 1
   const versionCount = resolveChapterVersionCount(outline, totalChapters)
-  const prior = (project.chapters || [])
-    .filter((c) => c.chapter_number < chapterNumber && c.content)
-    .slice(-2)
-    .map((c) => `第${c.chapter_number}章 ${c.title}\n${c.content}`)
-    .join('\n\n')
+  const { priorEnding, priorSummary, priorContent } = buildPriorChapterContext(project, chapterNumber)
+  const wordCountHint = formatWordCountPlanHint(outline, totalChapters, writingMode)
+  const recentStats = formatRecentWordCountStats(
+    buildRecentWordCountEntries(project, chapterNumber, writingMode)
+  )
 
   const versions: string[] = []
   for (let i = 0; i < versionCount; i += 1) {
@@ -1056,7 +1108,11 @@ export async function generateChapterContent(
             `蓝图摘要：${project.blueprint?.full_synopsis || project.initial_prompt}`,
             `当前章节：第${chapterNumber}章 ${outline?.title || ''}`,
             `章节纲要：${outline?.summary || '按蓝图推进'}`,
-            prior ? `前文参考：\n${prior}` : '',
+            wordCountHint,
+            recentStats ? `近期章节字数（保持体量一致）：\n${recentStats}` : '',
+            `衔接要求：仅承接上一章结尾最后一拍，推进新信息；禁止复述上一章已写情节、对话或环境描写。`,
+            priorSummary ? `上一章摘要：${priorSummary}` : '',
+            priorEnding ? `上一章结尾片段（仅供衔接，禁止复述）：\n${priorEnding}` : '',
             versionCount > 1 ? `写作风格提示：${styleHint}` : '',
             `请直接输出章节正文，不要输出 JSON 或解释。`,
           ]
@@ -1070,7 +1126,7 @@ export async function generateChapterContent(
         signal: options?.signal,
       })
     )
-    versions.push(content)
+    versions.push(sanitizeChapterContent(content, priorContent))
   }
 
   const chapter: Chapter = {
@@ -1081,7 +1137,7 @@ export async function generateChapterContent(
     versions,
     evaluation: null,
     generation_status: 'waiting_for_confirm',
-    word_count: versions[0]?.length ?? 0,
+    word_count: countChapterChars(versions[0]),
   }
 
   if (!Array.isArray(project.chapters)) project.chapters = []
@@ -1106,6 +1162,9 @@ export async function evaluateChapter(
   }
 
   const outline = chapterOutlineEntry(project, chapterNumber)
+  const writingMode = resolveWritingMode(project)
+  const totalChapters = project.blueprint?.chapter_outline?.length || project.chapters?.length || 1
+  const { priorContent } = buildPriorChapterContext(project, chapterNumber)
   const completedChapters = (project.chapters || [])
     .filter((item) => item.chapter_number < chapterNumber && item.content?.trim())
     .map((item) => ({
@@ -1122,9 +1181,12 @@ export async function evaluateChapter(
       chapter_number: chapterNumber,
       chapter_title: outline?.title || chapter.title,
       chapter_summary: outline?.summary || chapter.summary,
+      target_word_count: resolveChapterTargetWordCount(outline, totalChapters, writingMode),
       versions: versions.map((content, index) => ({
         version: index + 1,
         content,
+        word_count: countChapterChars(content),
+        repetition_issues: detectRepetitionIssues(content, priorContent).slice(0, 5),
       })),
     },
   }
@@ -1146,7 +1208,7 @@ export async function evaluateChapter(
     const bestIndex = parsed.best_choice - 1
     if (bestIndex >= 0 && bestIndex < versions.length) {
       chapter.content = versions[bestIndex]
-      chapter.word_count = chapter.content.length
+      chapter.word_count = countChapterChars(chapter.content)
     }
   }
 
@@ -1165,7 +1227,7 @@ export async function generateChapterOutline(
     [
       {
         role: 'user',
-        content: `基于以下蓝图，为第 ${startChapter} 章起连续 ${numChapters} 章生成 chapter_outline JSON 数组（chapter_number, title, summary）。\n${JSON.stringify(project.blueprint ?? {}, null, 2)}`,
+        content: `基于以下蓝图，为第 ${startChapter} 章起连续 ${numChapters} 章生成 chapter_outline JSON 数组（chapter_number, title, summary, target_word_count）。相邻章节 target_word_count 应相对平稳。\n${JSON.stringify(project.blueprint ?? {}, null, 2)}`,
       },
     ],
     projectChatOpts(project, {
@@ -1182,12 +1244,13 @@ export async function generateChapterOutline(
     const existing = project.blueprint.chapter_outline || []
     const merged = [...existing]
     for (const item of outline) {
-      const entry = item as { chapter_number: number; title: string; summary: string }
+      const entry = item as { chapter_number: number; title: string; summary: string; target_word_count?: number }
       const idx = merged.findIndex((c) => c.chapter_number === entry.chapter_number)
-      if (idx >= 0) merged[idx] = entry
+      if (idx >= 0) merged[idx] = { ...merged[idx], ...entry }
       else merged.push(entry)
     }
     project.blueprint.chapter_outline = merged.sort((a, b) => a.chapter_number - b.chapter_number)
+    applyWordCountPlanToBlueprint(project.blueprint, resolveWritingMode(project))
   }
   return project
 }

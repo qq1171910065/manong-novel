@@ -6,6 +6,7 @@ export type NovelAsyncTaskKind =
   | 'chapter_outline'
   | 'blueprint'
   | 'import_parse'
+  | 'auto_write'
 
 export interface NovelAsyncTaskRef {
   kind: NovelAsyncTaskKind
@@ -106,4 +107,8 @@ export function isBlueprintGenerating(projectId: string): boolean {
 
 export function isImportParsing(projectId: string): boolean {
   return isAsyncTaskActive({ kind: 'import_parse', projectId })
+}
+
+export function isAutoWriteRunning(projectId: string): boolean {
+  return isAsyncTaskActive({ kind: 'auto_write', projectId })
 }

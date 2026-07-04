@@ -15,6 +15,28 @@
             <span>{{ primaryActionLabel }}</span>
           </button>
 
+          <div v-if="canOpenAiAssistant" class="detail-sidebar-actions">
+            <button
+              type="button"
+              class="detail-sidebar-action detail-sidebar-action--ai"
+              :class="{ 'is-busy': aiAssistantBusy }"
+              :disabled="isPrimaryActionBusy"
+              @click="openAiAssistant()"
+            >
+              <Sparkles :size="15" aria-hidden="true" />
+              <span>{{ aiAssistantBusy ? 'AI 处理中' : 'AI 助手' }}</span>
+            </button>
+            <button
+              type="button"
+              class="detail-sidebar-action detail-sidebar-action--reinspire"
+              :disabled="isPrimaryActionBusy || aiAssistantBusy"
+              @click="openReinspiration"
+            >
+              <RefreshCw :size="15" aria-hidden="true" />
+              <span>重新过灵感</span>
+            </button>
+          </div>
+
           <div v-for="group in navGroups" :key="group.label" class="profile-tab-group">
             <p>{{ group.label }}</p>
             <button
@@ -40,23 +62,13 @@
                 <h2 class="profile-section__title">{{ activeSectionMeta.label }}</h2>
                 <p class="profile-section__desc">{{ activeSectionMeta.description }}</p>
                 <p v-if="canOpenAiAssistant" class="detail-polish-hint">
-                  「AI 助手」全书共用同一会话，关闭窗口后对话与进行中的请求仍会保留；可选修改范围（当前板块 / 全书 / 智能识别）或「重新过灵感」重构框架。
+                  左侧「AI 助手」与「重新过灵感」共用同一对话；「开始创作」将按章节顺序自动生成、评审并确认。
                 </p>
                 <p v-if="isImportPending" class="detail-import-hint">
                   已导入 {{ importedChapterCount }} 章。智能解析会逐批阅读全书并填充各 Tab，请耐心等待；解析完成前不可编辑。
                 </p>
               </div>
-              <div v-if="showSectionHeaderActions || canOpenAiAssistant" class="profile-section__actions">
-                <button
-                  v-if="canOpenAiAssistant"
-                  type="button"
-                  class="detail-polish-btn md-ripple"
-                  :class="{ 'detail-polish-btn--busy': aiAssistantBusy }"
-                  @click="openAiAssistant"
-                >
-                  <Sparkles :size="16" aria-hidden="true" />
-                  <span>{{ aiAssistantBusy ? 'AI 处理中…' : 'AI 助手' }}</span>
-                </button>
+              <div v-if="showSectionHeaderActions" class="profile-section__actions">
                 <button
                   v-if="showAddButton"
                   type="button"
@@ -125,10 +137,10 @@
     />
 
     <BlueprintGeneratingOverlay
-      :show="showBlueprintGenerating || showImportParsing"
-      :progress="generationOverlay.progress.value"
-      :loading-text="importParseMessage || generationOverlay.loadingText.value"
-      :description="generationOverlayDescription"
+      :show="showBlueprintGenerating || showImportParsing || autoWrite.isRunning.value"
+      :progress="autoWriteOverlayProgress"
+      :loading-text="autoWriteOverlayText"
+      :description="autoWriteOverlayDescription"
       @cancel="cancelGenerationOverlay"
     />
 
@@ -208,6 +220,7 @@ import {
   BarChart3,
   PenLine,
   Sparkles,
+  RefreshCw,
   Plus,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
@@ -265,6 +278,12 @@ import {
   type SectionPolishContext,
 } from '@renderer/novel/utils/section-polish'
 import { isAiAssistantBusy } from '@renderer/novel/composables/useAiAssistantRuntime'
+import { useAutoChapterPipeline } from '@renderer/novel/composables/useAutoChapterPipeline'
+import {
+  countSuccessfulChapters,
+  getNextAutoWriteChapter,
+  listChapterOutlines,
+} from '@renderer/novel/utils/auto-chapter-pipeline'
 import {
   filterSectionsForMode,
   resolveWritingMode,
@@ -436,6 +455,7 @@ const inspirationModalMode = ref<'inspiration' | 'section-polish'>('inspiration'
 const polishContext = ref<SectionPolishContext | null>(null)
 const blueprintGen = useBlueprintGeneration()
 const importParseGen = useBlueprintGeneration()
+const autoWrite = useAutoChapterPipeline()
 const importParseMessage = ref('')
 const generationOverlay = computed(() =>
   showImportParsing.value ? importParseGen : blueprintGen
@@ -453,6 +473,25 @@ const generationOverlayDescription = computed(() =>
     ? '智能解析会逐批阅读全书，耗时可能较长，请保持应用在前台；可随时点击取消。'
     : 'AI 正在为您精心打造独特的故事蓝图，请稍候…'
 )
+
+const autoWriteOverlayProgress = computed(() => {
+  if (autoWrite.isRunning.value) return autoWrite.progressPercent.value
+  return generationOverlay.value.progress.value
+})
+
+const autoWriteOverlayText = computed(() => {
+  if (autoWrite.isRunning.value) return autoWrite.loadingText.value
+  if (showImportParsing.value) return importParseMessage.value
+  return generationOverlay.value.loadingText.value
+})
+
+const autoWriteOverlayDescription = computed(() => {
+  if (autoWrite.isRunning.value) {
+    const current = autoWrite.progress.value
+    return `AI 接管创作：已完成 ${current.completedCount}/${current.totalCount} 章。每章将经历生成 → 评审（多版本时）→ 自动确认，然后继续下一章。`
+  }
+  return generationOverlayDescription.value
+})
 
 function resolveImportParseProgressPercent(progress: ImportParseProgress): number {
   switch (progress.phase) {
@@ -480,11 +519,19 @@ const isImportPending = computed(() => isTxtImportPending(novel.value))
 const isContentLocked = computed(() => isTxtImportLocked(novel.value))
 const importedChapterCount = computed(() => novel.value?.chapters?.length ?? 0)
 const primaryActionLabel = computed(() => {
+  if (autoWrite.isRunning.value) return '创作中...'
   if (showImportParsing.value) return '解析中...'
   if (isImportPending.value) return '智能解析'
+  const project = novel.value
+  if (project && !needsInspirationConversation(project)) {
+    const next = getNextAutoWriteChapter(project)
+    if (next !== null && countSuccessfulChapters(project) > 0) return '继续创作'
+  }
   return '开始创作'
 })
-const isPrimaryActionBusy = computed(() => showImportParsing.value || showBlueprintGenerating.value)
+const isPrimaryActionBusy = computed(
+  () => showImportParsing.value || showBlueprintGenerating.value || autoWrite.isRunning.value
+)
 
 const projectWritingMode = computed(() => {
   const overviewMode = sectionData.overview?.writing_mode as import('@shared/novel/types').WritingMode | undefined
@@ -775,10 +822,50 @@ const goToWritingDesk = async () => {
     showInspirationModal.value = true
     return
   }
+
+  const outlines = listChapterOutlines(project)
+  if (!outlines.length) {
+    globalAlert.showError('请先完善章节大纲后再开始创作', '无法开始')
+    return
+  }
+
+  const nextChapter = getNextAutoWriteChapter(project)
+  if (nextChapter === null) {
+    showWritingDeskModal.value = true
+    return
+  }
+
+  const completed = countSuccessfulChapters(project)
+  const remaining = outlines.length - completed
+  const confirmed = await globalAlert.showConfirm(
+    completed > 0
+      ? `将从第 ${nextChapter} 章继续：AI 将自动生成、评审并确认剩余 ${remaining} 章，直至大纲全部完成。写作台会同步展示进度，可随时取消。`
+      : `AI 将按章节顺序自动生成、评审并确认全部 ${outlines.length} 章。写作台会同步展示进度，可随时取消。`,
+    '开始创作'
+  )
+  if (!confirmed) return
+
   showWritingDeskModal.value = true
+  void runAutoWritePipeline()
 }
 
-const openAiAssistant = async () => {
+const runAutoWritePipeline = async () => {
+  const result = await autoWrite.run(projectId)
+  await novelStore.loadProject(projectId, true)
+  void loadSection('chapters', true)
+  if (result === 'completed') {
+    globalAlert.showSuccess('全部章节已由 AI 生成并确认', '创作完成')
+  } else if (result === 'failed') {
+    globalAlert.showError(autoWrite.progress.value.message || 'AI 接管创作中断', '创作中断')
+  } else if (result === 'cancelled') {
+    globalAlert.showSuccess('已取消 AI 接管创作', '已取消')
+  }
+}
+
+const openAiAssistant = async (options?: {
+  workflowMode?: 'edit' | 'reinspiration'
+  scopeMode?: 'auto' | 'entry' | 'global'
+}) => {
   await ensureProjectLoaded()
   const project = novel.value
   if (!project) return
@@ -803,19 +890,30 @@ const openAiAssistant = async () => {
     project.blueprint ?? novelStore.currentProject?.blueprint,
     {
       scopeMode:
-        savedState.scope_mode === 'entry' ||
+        options?.scopeMode ??
+        (savedState.scope_mode === 'entry' ||
         savedState.scope_mode === 'global' ||
         savedState.scope_mode === 'auto'
           ? savedState.scope_mode
-          : 'auto',
+          : 'auto'),
       workflowMode:
-        savedState.workflow_mode === 'reinspiration' ? 'reinspiration' : 'edit',
+        options?.workflowMode ??
+        (savedState.workflow_mode === 'reinspiration' ? 'reinspiration' : 'edit'),
     }
   )
   if (!ctx) return
   inspirationModalMode.value = 'section-polish'
   polishContext.value = ctx
   showInspirationModal.value = true
+}
+
+const openReinspiration = async () => {
+  const confirmed = await globalAlert.showConfirm(
+    '「重新过灵感」会基于现有蓝图重构整体框架（类型、世界观、人物、关系、大纲等）。已写章节可能与新版设定不符，请谨慎使用。是否打开 AI 助手进入重构对话？',
+    '重新过灵感'
+  )
+  if (!confirmed) return
+  await openAiAssistant({ workflowMode: 'reinspiration', scopeMode: 'global' })
 }
 
 const syncSectionDataFromBlueprint = (blueprint: import('@shared/novel/types').Blueprint | undefined) => {
@@ -955,6 +1053,11 @@ const onBlueprintGenerating = async () => {
 }
 
 const cancelGenerationOverlay = () => {
+  if (autoWrite.isRunning.value) {
+    autoWrite.cancel()
+    autoWrite.resetProgress()
+    return
+  }
   if (showImportParsing.value) {
     novelStore.cancelImportParse()
     return

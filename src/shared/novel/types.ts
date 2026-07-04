@@ -96,6 +96,8 @@ export interface ChapterOutline {
   chapter_number: number
   title: string
   summary: string
+  /** 本章规划字数（汉字计，不含空白） */
+  target_word_count?: number
 }
 
 export interface Chapter {

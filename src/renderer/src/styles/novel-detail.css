@@ -62,6 +62,64 @@
   opacity: 0.95;
 }
 
+.detail-sidebar-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 0 0 14px;
+  padding: 0 4px;
+}
+
+.detail-sidebar-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.detail-sidebar-action svg {
+  flex-shrink: 0;
+}
+
+.detail-sidebar-action:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--brand) 28%, transparent);
+  color: var(--brand);
+}
+
+.detail-sidebar-action:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.detail-sidebar-action--ai {
+  border-color: color-mix(in srgb, #e86b24 28%, transparent);
+  background: color-mix(in srgb, #e86b24 8%, transparent);
+  color: #c2410c;
+}
+
+.detail-sidebar-action--ai.is-busy {
+  animation: detail-polish-pulse 1.4s ease-in-out infinite;
+}
+
+.detail-sidebar-action--reinspire {
+  border-color: color-mix(in srgb, #6366f1 28%, transparent);
+  background: color-mix(in srgb, #6366f1 8%, transparent);
+  color: #4f46e5;
+}
+
 .detail-polish-btn {
   display: inline-flex;
   align-items: center;
