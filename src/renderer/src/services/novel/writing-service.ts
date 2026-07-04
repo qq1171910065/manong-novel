@@ -807,6 +807,7 @@ ${blueprintJson}
   const parsed = parseJsonBlock(raw) || {}
   const coalesced = coalescePolishBlueprintUpdates(project.blueprint, context.section, {
     blueprint_updates: parsed.blueprint_updates,
+    section_update: parsed.section_update,
   })
   if (!Object.keys(coalesced).length) {
     throw new Error('未能从对话生成可写入的修改数据，请补充更具体的修改说明后重试')

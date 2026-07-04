@@ -440,6 +440,19 @@ export function shouldOfferPolishMaterialize(aiMessage: string): boolean {
   )
 }
 
+export function isPolishAssistantApplied(parsed: Record<string, unknown> | null | undefined): boolean {
+  return Boolean(parsed?.polish_applied)
+}
+
+export function shouldRestorePolishMaterializeChoice(
+  parsed: Record<string, unknown> | null | undefined,
+  aiMessage: string
+): boolean {
+  if (isPolishAssistantApplied(parsed)) return false
+  if (Boolean(parsed?.ready_to_apply)) return false
+  return shouldOfferPolishMaterialize(aiMessage)
+}
+
 export function formatAffectedSectionLabels(sections: PolishableSectionKey[]): string {
   return sections.map((s) => POLISH_SECTION_LABELS[s]).join('、')
 }

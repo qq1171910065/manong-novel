@@ -215,10 +215,48 @@ export class NovelAPI {
       if (history[i]?.role !== 'assistant') continue
       try {
         const parsed = JSON.parse(history[i].content) as Record<string, unknown>
-        if (!parsed.ready_to_apply) break
+        parsed.polish_applied = true
         parsed.ready_to_apply = false
-        parsed.is_complete = false
+        parsed.is_complete = true
         parsed.blueprint_updates = null
+        parsed.ui_control = {
+          type: 'text_input',
+          placeholder: '可继续描述新的修改需求…',
+        }
+        history[i] = { ...history[i], content: JSON.stringify(parsed) }
+      } catch {
+        // ignore malformed history
+      }
+      break
+    }
+    project.section_polish_history = history
+    return novelClient.saveProject(project)
+  }
+
+  static async persistMaterializedPolish(
+    projectId: string,
+    payload: {
+      summary: string
+      blueprintUpdates: Partial<import('@shared/novel/types').Blueprint>
+      affectedSections: import('@renderer/novel/utils/section-polish').PolishableSectionKey[]
+    }
+  ): Promise<NovelProject> {
+    const project = await novelClient.getProject(projectId)
+    const history = [...(project.section_polish_history ?? [])]
+    for (let i = history.length - 1; i >= 0; i -= 1) {
+      if (history[i]?.role !== 'assistant') continue
+      try {
+        const parsed = JSON.parse(history[i].content) as Record<string, unknown>
+        parsed.ready_to_apply = true
+        parsed.is_complete = true
+        parsed.polish_applied = false
+        parsed.blueprint_updates = payload.blueprintUpdates
+        parsed.affected_sections = payload.affectedSections
+        parsed.ai_message = payload.summary
+        parsed.ui_control = {
+          type: 'text_input',
+          placeholder: '可继续描述新的修改需求…',
+        }
         history[i] = { ...history[i], content: JSON.stringify(parsed) }
       } catch {
         // ignore malformed history

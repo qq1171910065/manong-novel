@@ -4,6 +4,7 @@ import { resolveDisplayAiMessage } from '@renderer/services/novel/json-utils'
 import { randomUUID } from '@renderer/utils/id'
 import {
   coalescePolishBlueprintUpdates,
+  isPolishAssistantApplied,
   normalizeAffectedSections,
   type PolishableSectionKey,
 } from '@renderer/novel/utils/section-polish'
@@ -86,8 +87,12 @@ export function restorePolishSession(
   let pendingConfirmation: RestoredPolishSession['pendingConfirmation']
 
   if (lastParsed) {
-    const readyToApply = Boolean(lastParsed.ready_to_apply)
-    if (readyToApply) {
+    if (isPolishAssistantApplied(lastParsed)) {
+      currentUIControl = {
+        type: 'text_input',
+        placeholder,
+      }
+    } else if (Boolean(lastParsed.ready_to_apply)) {
       const updates = coalescePolishBlueprintUpdates(existingBlueprint, entrySection, {
         blueprint_updates: lastParsed.blueprint_updates,
         section_update: lastParsed.section_update,
@@ -107,7 +112,11 @@ export function restorePolishSession(
           placeholder: '上次修改尚未生成可写入的数据，请继续说明或要求输出完整修改稿…',
         }
       }
-    } else if (lastParsed.ui_control && typeof lastParsed.ui_control === 'object') {
+    } else if (
+      lastParsed.ui_control &&
+      typeof lastParsed.ui_control === 'object' &&
+      (lastParsed.ui_control as UIControl).type !== 'single_choice'
+    ) {
       currentUIControl = lastParsed.ui_control as UIControl
     }
   }

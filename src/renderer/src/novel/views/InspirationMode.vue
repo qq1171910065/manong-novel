@@ -222,6 +222,7 @@ import {
   normalizeAffectedSections,
   POLISH_SECTION_LABELS,
   shouldOfferPolishMaterialize,
+  shouldRestorePolishMaterializeChoice,
 } from '@renderer/novel/utils/section-polish'
 import { restorePolishSession } from '@renderer/novel/utils/polish-session'
 import ChatBubble from '@renderer/novel/components/ChatBubble.vue'
@@ -671,7 +672,17 @@ const initSectionPolishSession = async (projectId: string, context: SectionPolis
       showSectionPolishConfirmation.value = true
     } else {
       const lastAi = restored.chatMessages.filter((m) => m.type === 'ai').pop()?.content
-      if (lastAi && shouldOfferPolishMaterialize(lastAi)) {
+      const lastAssistant = history.filter((item) => item.role === 'assistant').pop()
+      const lastParsed = lastAssistant
+        ? (() => {
+            try {
+              return JSON.parse(lastAssistant.content) as Record<string, unknown>
+            } catch {
+              return null
+            }
+          })()
+        : null
+      if (lastAi && shouldRestorePolishMaterializeChoice(lastParsed, lastAi)) {
         lastPolishAiMessage.value = lastAi
         currentUIControl.value = polishMaterializeChoiceControl()
       }
@@ -729,6 +740,17 @@ const runPolishMaterialize = async (latestMessage?: string) => {
       result.blueprint_updates,
       result.affected_sections as PolishableSectionKey[]
     )
+    if (props.projectId) {
+      const synced = await NovelAPI.persistMaterializedPolish(props.projectId, {
+        summary: result.summary,
+        blueprintUpdates: result.blueprint_updates,
+        affectedSections: result.affected_sections as PolishableSectionKey[],
+      })
+      polishHistory.value = synced.section_polish_history ?? polishHistory.value
+      if (novelStore.currentProject) {
+        novelStore.currentProject.section_polish_history = polishHistory.value
+      }
+    }
     currentUIControl.value = {
       type: 'text_input',
       placeholder: polishInputPlaceholder(props.polishContext),
@@ -863,10 +885,7 @@ const handlePolishInput = async (userInput: any) => {
       )
     } else if (shouldOfferPolishMaterialize(response.ai_message)) {
       lastPolishAiMessage.value = resolveDisplayAiMessage(response.ai_message)
-      const materialized = await runPolishMaterialize(lastPolishAiMessage.value)
-      if (!materialized) {
-        currentUIControl.value = polishMaterializeChoiceControl()
-      }
+      currentUIControl.value = polishMaterializeChoiceControl()
     } else if (response.ui_control) {
       currentUIControl.value = response.ui_control
     } else {
