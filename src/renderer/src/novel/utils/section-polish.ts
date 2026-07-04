@@ -430,14 +430,86 @@ export function resolveAllSectionReloadKeys(sections: PolishableSectionKey[]): P
   return [...keys]
 }
 
+export function looksLikePolishAppliedClaim(aiMessage: string): boolean {
+  const text = aiMessage.trim()
+  if (!text) return false
+  if (/尚未|还未|还没有|待确认|请确认|需要你/.test(text)) return false
+  return (
+    /已(经)?.{0,12}(修改|更新|替换|更换|新增|添加|联动|写入|应用|完成|调整)/.test(text) ||
+    /收到.{0,10}(指令|要求|需求|修改|反馈)/.test(text) ||
+    /(好的|明白|了解|收到).{0,16}(会|将|马上|立即|这就)/.test(text) ||
+    /(将会|将会为您|马上|立即).{0,12}(修改|更新|调整|处理)/.test(text)
+  )
+}
+
 export function shouldOfferPolishMaterialize(aiMessage: string): boolean {
   const text = aiMessage.trim()
   if (!text) return false
   if (/blueprint_updates/i.test(text)) return false
   return (
-    /(改名|联动|关系网|人物蓝图|修改指令|新增|添加|增加|补充.{0,4}(角色|人物|关系|章节|地点)|将.{0,12}改为|调整为|更名为)/.test(text) ||
-    /已(经)?.{0,10}(修改|更新|替换|更换|新增|添加|联动|接收)/.test(text)
+    looksLikePolishAppliedClaim(text) ||
+    /(改名|联动|关系网|人物蓝图|修改指令|新增|添加|增加|补充.{0,4}(角色|人物|关系|章节|地点)|将.{0,12}改为|调整为|更名为)/.test(
+      text
+    )
   )
+}
+
+export function isPolishClarifyingQuestion(
+  aiMessage: string,
+  uiControl?: { type?: string } | null
+): boolean {
+  if (uiControl?.type === 'single_choice' || uiControl?.type === 'multiple_choice') {
+    return true
+  }
+  const text = aiMessage.trim()
+  if (!text) return false
+  if ((text.endsWith('？') || text.endsWith('?')) && !looksLikePolishAppliedClaim(text)) {
+    return true
+  }
+  return /请(具体|进一步|详细|说明|补充|描述|告知)/.test(text) && !looksLikePolishAppliedClaim(text)
+}
+
+export function hasValidPolishBlueprintUpdates(
+  existingBlueprint: Blueprint | undefined | null,
+  entrySection: PolishableSectionKey,
+  payload: { blueprint_updates?: unknown; section_update?: unknown }
+): boolean {
+  try {
+    const coalesced = coalescePolishBlueprintUpdates(existingBlueprint, entrySection, payload)
+    return Object.keys(coalesced).length > 0
+  } catch {
+    return false
+  }
+}
+
+export function shouldAutoMaterializePolish(
+  response: {
+    ready_to_apply?: boolean
+    blueprint_updates?: unknown
+    section_update?: unknown
+    ai_message: string
+    ui_control?: { type?: string } | null
+  },
+  userInput: { id?: string | null; value?: string | null } | null,
+  existingBlueprint?: Blueprint | null,
+  entrySection?: PolishableSectionKey
+): boolean {
+  const userText = userInput?.value?.trim() ?? ''
+  const userHadSubstantiveInput =
+    userText.length >= 2 && userInput?.id !== 'continue_edit' && userInput?.id !== 'materialize_apply'
+
+  const hasValidUpdates =
+    entrySection !== undefined &&
+    hasValidPolishBlueprintUpdates(existingBlueprint, entrySection, {
+      blueprint_updates: response.blueprint_updates,
+      section_update: response.section_update,
+    })
+
+  if (response.ready_to_apply && hasValidUpdates) return false
+  if (response.ready_to_apply && !hasValidUpdates) return true
+  if (!userHadSubstantiveInput) return false
+  if (isPolishClarifyingQuestion(response.ai_message, response.ui_control)) return false
+  return true
 }
 
 export function isPolishAssistantApplied(parsed: Record<string, unknown> | null | undefined): boolean {
@@ -446,10 +518,22 @@ export function isPolishAssistantApplied(parsed: Record<string, unknown> | null 
 
 export function shouldRestorePolishMaterializeChoice(
   parsed: Record<string, unknown> | null | undefined,
-  aiMessage: string
+  aiMessage: string,
+  existingBlueprint?: Blueprint | null,
+  entrySection?: PolishableSectionKey
 ): boolean {
   if (isPolishAssistantApplied(parsed)) return false
-  if (Boolean(parsed?.ready_to_apply)) return false
+  if (
+    Boolean(parsed?.ready_to_apply) &&
+    entrySection !== undefined &&
+    hasValidPolishBlueprintUpdates(existingBlueprint, entrySection, {
+      blueprint_updates: parsed?.blueprint_updates,
+      section_update: parsed?.section_update,
+    })
+  ) {
+    return false
+  }
+  if (Boolean(parsed?.ready_to_apply) && entrySection !== undefined) return true
   return shouldOfferPolishMaterialize(aiMessage)
 }
 

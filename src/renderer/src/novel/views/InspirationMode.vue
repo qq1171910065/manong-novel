@@ -221,8 +221,7 @@ import type { SectionPolishContext, PolishableSectionKey, SectionPolishApplyPayl
 import {
   normalizeAffectedSections,
   POLISH_SECTION_LABELS,
-  shouldOfferPolishMaterialize,
-  shouldRestorePolishMaterializeChoice,
+  shouldAutoMaterializePolish,
 } from '@renderer/novel/utils/section-polish'
 import { restorePolishSession } from '@renderer/novel/utils/polish-session'
 import ChatBubble from '@renderer/novel/components/ChatBubble.vue'
@@ -670,22 +669,9 @@ const initSectionPolishSession = async (projectId: string, context: SectionPolis
       pendingBlueprintUpdates.value = restored.pendingConfirmation.blueprintUpdates
       pendingAffectedSections.value = restored.pendingConfirmation.affectedSections
       showSectionPolishConfirmation.value = true
-    } else {
-      const lastAi = restored.chatMessages.filter((m) => m.type === 'ai').pop()?.content
-      const lastAssistant = history.filter((item) => item.role === 'assistant').pop()
-      const lastParsed = lastAssistant
-        ? (() => {
-            try {
-              return JSON.parse(lastAssistant.content) as Record<string, unknown>
-            } catch {
-              return null
-            }
-          })()
-        : null
-      if (lastAi && shouldRestorePolishMaterializeChoice(lastParsed, lastAi)) {
-        lastPolishAiMessage.value = lastAi
-        currentUIControl.value = polishMaterializeChoiceControl()
-      }
+    } else if (restored.needsAutoMaterialize) {
+      lastPolishAiMessage.value = restored.autoMaterializeMessage ?? ''
+      await runPolishMaterialize(restored.autoMaterializeMessage)
     }
     await scrollToBottom()
     return
@@ -883,9 +869,16 @@ const handlePolishInput = async (userInput: any) => {
         response.blueprint_updates,
         normalizeAffectedSections(props.polishContext.section, response)
       )
-    } else if (shouldOfferPolishMaterialize(response.ai_message)) {
+    } else if (
+      shouldAutoMaterializePolish(
+        response,
+        userInput,
+        novelStore.currentProject?.blueprint,
+        props.polishContext.section
+      )
+    ) {
       lastPolishAiMessage.value = resolveDisplayAiMessage(response.ai_message)
-      currentUIControl.value = polishMaterializeChoiceControl()
+      await runPolishMaterialize(lastPolishAiMessage.value)
     } else if (response.ui_control) {
       currentUIControl.value = response.ui_control
     } else {

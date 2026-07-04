@@ -38,7 +38,10 @@ import type {
 import type { SectionPolishContext } from '@renderer/novel/utils/section-polish'
 import {
   coalescePolishBlueprintUpdates,
+  hasValidPolishBlueprintUpdates,
+  looksLikePolishAppliedClaim,
   normalizeAffectedSections,
+  shouldAutoMaterializePolish,
 } from '@renderer/novel/utils/section-polish'
 import { cloneJson } from '@shared/clone-json'
 import {
@@ -357,6 +360,8 @@ IMPORTANT: 你的回复必须是合法的 JSON 对象，并严格包含以下字
 - 用户确认应用时：ready_to_apply 为 true，is_complete 为 true
 - blueprint_updates 为 Partial Blueprint，只含需变更的字段/板块（可跨板块）
 - affected_sections 列出本次变更涉及的板块标识
+- **用户给出可执行的清晰指令时，同一轮必须 ready_to_apply=true 且输出 blueprint_updates，禁止只回复「收到/好的/已修改」**
+- **无 blueprint_updates 时，ai_message 禁止写完成态（已修改/已更新/收到指令/已写入）**
 不要输出额外的文本或解释。
 `
 
@@ -694,7 +699,7 @@ export async function converseSectionPolish(
   )
 
   const parsed = parseJsonBlock(raw) || {}
-  const aiMessage = resolveAiMessage(raw, parsed)
+  let aiMessage = resolveAiMessage(raw, parsed)
   const uiControl = parseUiControl(parsed.ui_control, aiMessage)
   const safeConversationState = cloneJson(conversationState)
   const nextConversationState = {
@@ -710,7 +715,7 @@ export async function converseSectionPolish(
       ? (parsed.blueprint_updates as SectionPolishResponse['blueprint_updates'])
       : undefined
   const sectionUpdate = parsed.section_update ?? undefined
-  const affectedSections = Array.isArray(parsed.affected_sections)
+  let affectedSections = Array.isArray(parsed.affected_sections)
     ? (parsed.affected_sections as SectionPolishResponse['affected_sections'])
     : undefined
   let readyToApply = readyToApplyRaw
@@ -722,13 +727,61 @@ export async function converseSectionPolish(
     })
     if (Object.keys(coalesced).length) {
       blueprintUpdates = coalesced
+      affectedSections = normalizeAffectedSections(context.section, {
+        affected_sections: affectedSections,
+        blueprint_updates: coalesced,
+      })
     } else {
       readyToApply = false
     }
   }
 
+  const needsMaterializeFallback =
+    !readyToApply &&
+    !hasValidPolishBlueprintUpdates(project.blueprint, context.section, {
+      blueprint_updates: blueprintUpdates,
+      section_update: sectionUpdate,
+    }) &&
+    shouldAutoMaterializePolish(
+      {
+        ready_to_apply: readyToApplyRaw,
+        blueprint_updates: blueprintUpdates,
+        section_update: sectionUpdate,
+        ai_message: aiMessage,
+        ui_control: uiControl,
+      },
+      formattedInput,
+      project.blueprint,
+      context.section
+    )
+
+  if (needsMaterializeFallback) {
+    try {
+      const materialized = await materializeSectionPolishUpdates(
+        project,
+        context,
+        nextHistory,
+        aiMessage,
+        options
+      )
+      blueprintUpdates = materialized.blueprint_updates
+      affectedSections = materialized.affected_sections
+      readyToApply = true
+      aiMessage = materialized.summary
+    } catch (error) {
+      console.warn('[section-polish] auto materialize fallback failed:', error)
+      if (looksLikePolishAppliedClaim(aiMessage)) {
+        aiMessage =
+          '我已理解你的修改意图，但尚未生成可写入的数据。请补充更具体的修改说明，或描述希望变更的字段与目标值。'
+      }
+    }
+  } else if (!readyToApply && looksLikePolishAppliedClaim(aiMessage)) {
+    aiMessage =
+      '我已理解你的修改意图。请确认具体要改哪些字段，或补充缺失信息，以便生成可应用的修改稿。'
+  }
+
   let isComplete = Boolean(parsed.is_complete) || readyToApply
-  if (readyToApplyRaw && !readyToApply) {
+  if (readyToApplyRaw && !readyToApply && !needsMaterializeFallback) {
     isComplete = false
   }
 

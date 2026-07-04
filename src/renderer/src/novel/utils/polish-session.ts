@@ -6,6 +6,7 @@ import {
   coalescePolishBlueprintUpdates,
   isPolishAssistantApplied,
   normalizeAffectedSections,
+  shouldRestorePolishMaterializeChoice,
   type PolishableSectionKey,
 } from '@renderer/novel/utils/section-polish'
 
@@ -27,6 +28,8 @@ export interface RestoredPolishSession {
     blueprintUpdates: Partial<Blueprint>
     affectedSections: PolishableSectionKey[]
   }
+  needsAutoMaterialize?: boolean
+  autoMaterializeMessage?: string
 }
 
 function parseAssistantPayload(content: string): Record<string, unknown> | null {
@@ -85,6 +88,8 @@ export function restorePolishSession(
     placeholder,
   }
   let pendingConfirmation: RestoredPolishSession['pendingConfirmation']
+  let needsAutoMaterialize = false
+  let autoMaterializeMessage: string | undefined
 
   if (lastParsed) {
     if (isPolishAssistantApplied(lastParsed)) {
@@ -107,10 +112,26 @@ export function restorePolishSession(
           }),
         }
       } else {
+        autoMaterializeMessage = resolveDisplayAiMessage(String(lastParsed.ai_message || ''))
+        needsAutoMaterialize = true
         currentUIControl = {
           type: 'text_input',
-          placeholder: '上次修改尚未生成可写入的数据，请继续说明或要求输出完整修改稿…',
+          placeholder: '正在根据上次对话生成可应用的修改稿…',
         }
+      }
+    } else if (
+      shouldRestorePolishMaterializeChoice(
+        lastParsed,
+        resolveDisplayAiMessage(String(lastParsed.ai_message || '')),
+        existingBlueprint,
+        entrySection
+      )
+    ) {
+      autoMaterializeMessage = resolveDisplayAiMessage(String(lastParsed.ai_message || ''))
+      needsAutoMaterialize = true
+      currentUIControl = {
+        type: 'text_input',
+        placeholder: '正在根据上次对话生成可应用的修改稿…',
       }
     } else if (
       lastParsed.ui_control &&
@@ -128,5 +149,7 @@ export function restorePolishSession(
     currentUIControl,
     currentTurn: history.filter((item) => item.role === 'assistant').length,
     pendingConfirmation,
+    needsAutoMaterialize,
+    autoMaterializeMessage,
   }
 }
