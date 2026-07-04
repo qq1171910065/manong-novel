@@ -1,0 +1,804 @@
+<!-- AIMETA P=写作台_章节编辑主页面|R=写作界面_章节管理|NR=不含详情展示|E=route:/novel/:id#component:WritingDesk|X=ui|A=写作台|D=vue|S=dom,net|RD=./README.ai -->
+<template>
+  <div
+    class="m3-shell h-full min-h-0 flex flex-col overflow-hidden"
+    :class="embedded ? 'writing-desk--embedded' : 'page page--viewport-lock'"
+  >
+    <div class="page__inner page__inner--full h-full min-h-0 flex flex-col mx-auto w-full">
+    <WDHeader
+      :project="project"
+      :progress="progress"
+      :completed-chapters="completedChapters"
+      :total-chapters="totalChapters"
+      :embedded="embedded"
+      @go-back="goBack"
+      @view-project-detail="viewProjectDetail"
+      @toggle-sidebar="toggleSidebar"
+    />
+
+    <!-- 主要内容区域 -->
+    <div
+      class="flex-1 w-full overflow-hidden min-h-0"
+      :class="embedded ? 'wd-desk__main' : 'px-4 sm:px-6 lg:px-8 py-6'"
+    >
+      <!-- 加载状态 -->
+      <div v-if="novelStore.isLoading" class="h-full flex justify-center items-center">
+        <div class="text-center">
+          <div class="md-spinner mx-auto mb-4"></div>
+          <p class="md-body-medium md-on-surface-variant">正在加载项目数据...</p>
+        </div>
+      </div>
+
+      <!-- 错误状态 -->
+      <div v-else-if="novelStore.error" class="text-center py-20">
+        <div class="md-card md-card-outlined p-8 max-w-md mx-auto" style="border-radius: var(--md-radius-xl);">
+          <div class="w-12 h-12 rounded-full mx-auto mb-4 flex items-center justify-center" style="background-color: var(--md-error-container);">
+            <svg class="w-6 h-6" style="color: var(--md-error);" fill="currentColor" viewBox="0 0 20 20">
+              <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path>
+            </svg>
+          </div>
+          <h3 class="md-title-large mb-2" style="color: var(--md-on-surface);">加载失败</h3>
+          <p class="md-body-medium mb-4" style="color: var(--md-error);">{{ novelStore.error }}</p>
+          <button @click="loadProject" class="md-btn md-btn-tonal md-ripple">重新加载</button>
+        </div>
+      </div>
+
+      <!-- 主要内容 -->
+      <div v-else-if="project" :class="embedded ? 'wd-desk__columns' : 'h-full flex gap-6'">
+        <WDSidebar
+          :project="project"
+          :sidebar-open="sidebarOpen"
+          :selected-chapter-number="selectedChapterNumber"
+          :generating-chapter="generatingChapter"
+          :evaluating-chapter="evaluatingChapter"
+          :is-generating-outline="isGeneratingOutline"
+          :embedded="embedded"
+          @close-sidebar="closeSidebar"
+          @select-chapter="selectChapter"
+          @generate-chapter="generateChapter"
+          @edit-chapter="openEditChapterModal"
+          @delete-chapter="deleteChapter"
+          @generate-outline="generateOutline"
+        />
+
+        <div class="flex-1 min-w-0">
+          <WDWorkspace
+            :project="project"
+            :selected-chapter-number="selectedChapterNumber"
+            :generating-chapter="generatingChapter"
+            :evaluating-chapter="evaluatingChapter"
+            :show-version-selector="showVersionSelector"
+            :chapter-generation-result="chapterGenerationResult"
+            :selected-version-index="selectedVersionIndex"
+            :available-versions="availableVersions"
+            :is-selecting-version="isSelectingVersion || isConfirmingVersion"
+            :embedded="embedded"
+          @regenerate-chapter="regenerateChapter"
+          @evaluate-chapter="evaluateChapter"
+          @hide-version-selector="hideVersionSelector"
+          @update:selected-version-index="selectedVersionIndex = $event"
+          @show-version-detail="showVersionDetail"
+          @confirm-version-selection="confirmVersionSelection"
+          @generate-chapter="generateChapter"
+          @show-evaluation-detail="showEvaluationDetailModal = true"
+          @fetch-chapter-status="fetchChapterStatus"
+          @edit-chapter="editChapterContent"
+          @cancel-chapter-task="cancelChapterTask"
+          />
+        </div>
+      </div>
+    </div>
+    </div>
+    <WDVersionDetailModal
+      :show="showVersionDetailModal"
+      :detail-version-index="detailVersionIndex"
+      :version="availableVersions[detailVersionIndex]"
+      :is-current="isCurrentVersion(detailVersionIndex)"
+      @close="closeVersionDetail"
+      @select-version="selectVersionFromDetail"
+    />
+    <WDEvaluationDetailModal
+      :show="showEvaluationDetailModal"
+      :evaluation="selectedChapter?.evaluation || null"
+      @close="showEvaluationDetailModal = false"
+    />
+    <WDEditChapterModal
+      :show="showEditChapterModal"
+      :chapter="editingChapter"
+      @close="showEditChapterModal = false"
+      @save="saveChapterChanges"
+    />
+    <WDGenerateOutlineModal
+      :show="showGenerateOutlineModal"
+      @close="showGenerateOutlineModal = false"
+      @generate="handleGenerateOutline"
+    />
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { useRoute, useRouter } from '@renderer/novel/composables/useNovelRouter'
+import { useNovelStore } from '@renderer/stores/novel'
+import type { Chapter, ChapterOutline, ChapterGenerationResponse, ChapterVersion } from '@renderer/services/novel/api'
+import { NovelAPI } from '@renderer/services/novel/api'
+import { globalAlert } from '@renderer/novel/composables/useAlert'
+import * as writing from '@renderer/services/novel/writing-service'
+import { novelClient } from '@renderer/services/novel/client'
+import {
+  cancelAsyncTask,
+  isAbortError,
+  isOutlineGenerating,
+  getActiveChapterGeneration,
+  getActiveChapterEvaluation,
+} from '@renderer/services/novel/async-task-registry'
+import Tooltip from '@renderer/novel/components/Tooltip.vue'
+import WDHeader from '@renderer/novel/components/writing-desk/WDHeader.vue'
+import WDSidebar from '@renderer/novel/components/writing-desk/WDSidebar.vue'
+import WDWorkspace from '@renderer/novel/components/writing-desk/WDWorkspace.vue'
+import WDVersionDetailModal from '@renderer/novel/components/writing-desk/WDVersionDetailModal.vue'
+import WDEvaluationDetailModal from '@renderer/novel/components/writing-desk/WDEvaluationDetailModal.vue'
+import WDEditChapterModal from '@renderer/novel/components/writing-desk/WDEditChapterModal.vue'
+import WDGenerateOutlineModal from '@renderer/novel/components/writing-desk/WDGenerateOutlineModal.vue'
+
+interface Props {
+  projectId?: string
+  embedded?: boolean
+}
+
+const props = withDefaults(defineProps<Props>(), {
+  projectId: '',
+  embedded: false,
+})
+
+const emit = defineEmits<{ close: [] }>()
+
+const router = useRouter()
+const route = useRoute()
+const novelStore = useNovelStore()
+
+const resolvedProjectId = computed(() => props.projectId || route.params.id || '')
+
+// 状态管理
+const selectedChapterNumber = ref<number | null>(null)
+const chapterGenerationResult = ref<ChapterGenerationResponse | null>(null)
+const selectedVersionIndex = ref<number>(0)
+const sidebarOpen = ref(false)
+const showVersionDetailModal = ref(false)
+const detailVersionIndex = ref<number>(0)
+const showEvaluationDetailModal = ref(false)
+const showEditChapterModal = ref(false)
+const editingChapter = ref<ChapterOutline | null>(null)
+const generatingChapter = computed(() => {
+  const projectId = resolvedProjectId.value
+  if (!projectId) return null
+  return getActiveChapterGeneration(projectId)
+})
+
+const isGeneratingOutline = computed(() => {
+  const projectId = resolvedProjectId.value
+  if (!projectId) return false
+  return isOutlineGenerating(projectId)
+})
+const showGenerateOutlineModal = ref(false)
+const isConfirmingVersion = ref(false)
+
+// 计算属性
+const project = computed(() => novelStore.currentProject)
+
+const selectedChapter = computed(() => {
+  if (!project.value || selectedChapterNumber.value === null) return null
+  return project.value.chapters.find(ch => ch.chapter_number === selectedChapterNumber.value) || null
+})
+
+const showVersionSelector = computed(() => {
+  if (!selectedChapter.value) return false
+  const status = selectedChapter.value.generation_status
+  return status === 'waiting_for_confirm' || status === 'evaluating' || status === 'evaluation_failed' || status === 'selecting'
+})
+
+const evaluatingChapter = computed(() => {
+  const projectId = resolvedProjectId.value
+  if (projectId) {
+    const active = getActiveChapterEvaluation(projectId)
+    if (active !== null) return active
+  }
+  if (selectedChapter.value?.generation_status === 'evaluating') {
+    return selectedChapter.value.chapter_number
+  }
+  return null
+})
+
+const isSelectingVersion = computed(() => {
+  return selectedChapter.value?.generation_status === 'selecting'
+})
+
+const selectedChapterOutline = computed(() => {
+  if (!project.value?.blueprint?.chapter_outline || selectedChapterNumber.value === null) return null
+  return project.value.blueprint.chapter_outline.find(ch => ch.chapter_number === selectedChapterNumber.value) || null
+})
+
+const progress = computed(() => {
+  if (!project.value?.blueprint?.chapter_outline) return 0
+  const totalChapters = project.value.blueprint.chapter_outline.length
+  const completedChapters = project.value.chapters.filter(ch => ch.content).length
+  return Math.round((completedChapters / totalChapters) * 100)
+})
+
+const totalChapters = computed(() => {
+  return project.value?.blueprint?.chapter_outline?.length || 0
+})
+
+const completedChapters = computed(() => {
+  return project.value?.chapters?.filter(ch => ch.content)?.length || 0
+})
+
+const isContentMatch = (versionIndex: number) => {
+  if (!selectedChapter.value?.content || !availableVersions.value?.[versionIndex]?.content) return false
+
+  const cleanCurrentContent = cleanVersionContent(selectedChapter.value.content)
+  const cleanVersionContentStr = cleanVersionContent(availableVersions.value[versionIndex].content)
+
+  return cleanCurrentContent === cleanVersionContentStr
+}
+
+const isCurrentVersion = (versionIndex: number) => {
+  if (selectedChapter.value?.generation_status !== 'successful') return false
+  return isContentMatch(versionIndex)
+}
+
+const cleanVersionContent = (content: string): string => {
+  if (!content) return ''
+
+  // 尝试解析JSON，看是否是完整的章节对象
+  try {
+    const parsed = JSON.parse(content)
+    const extractContent = (value: any): string | null => {
+      if (!value) return null
+      if (typeof value === 'string') return value
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          const nested = extractContent(item)
+          if (nested) return nested
+        }
+        return null
+      }
+      if (typeof value === 'object') {
+        for (const key of ['content', 'chapter_content', 'chapter_text', 'text', 'body', 'story']) {
+          if (value[key]) {
+            const nested = extractContent(value[key])
+            if (nested) return nested
+          }
+        }
+      }
+      return null
+    }
+    const extracted = extractContent(parsed)
+    if (extracted) {
+      // 如果是章节对象/数组，提取正文
+      content = extracted
+    }
+  } catch (error) {
+    // 如果不是JSON，继续处理字符串
+  }
+
+  // 去掉开头和结尾的引号
+  let cleaned = content.replace(/^"|"$/g, '')
+
+  // 处理转义字符
+  cleaned = cleaned.replace(/\\n/g, '\n')  // 换行符
+  cleaned = cleaned.replace(/\\"/g, '"')   // 引号
+  cleaned = cleaned.replace(/\\t/g, '\t')  // 制表符
+  cleaned = cleaned.replace(/\\\\/g, '\\') // 反斜杠
+
+  return cleaned
+}
+
+const canGenerateChapter = (chapterNumber: number) => {
+  if (!project.value?.blueprint?.chapter_outline) return false
+
+  // 检查前面所有章节是否都已成功生成
+  const outlines = project.value.blueprint.chapter_outline.sort((a, b) => a.chapter_number - b.chapter_number)
+  
+  for (const outline of outlines) {
+    if (outline.chapter_number >= chapterNumber) break
+    
+    const chapter = project.value?.chapters.find(ch => ch.chapter_number === outline.chapter_number)
+    if (!chapter || chapter.generation_status !== 'successful') {
+      return false // 前面有章节未完成
+    }
+  }
+
+  // 检查当前章节是否已经完成
+  const currentChapter = project.value?.chapters.find(ch => ch.chapter_number === chapterNumber)
+  if (currentChapter && currentChapter.generation_status === 'successful') {
+    return true // 已完成的章节可以重新生成
+  }
+
+  return true // 前面章节都完成了，可以生成当前章节
+}
+
+const isChapterFailed = (chapterNumber: number) => {
+  if (!project.value?.chapters) return false
+  const chapter = project.value.chapters.find(ch => ch.chapter_number === chapterNumber)
+  return chapter && chapter.generation_status === 'failed'
+}
+
+const hasChapterInProgress = (chapterNumber: number) => {
+  if (!project.value?.chapters) return false
+  const chapter = project.value.chapters.find(ch => ch.chapter_number === chapterNumber)
+  // waiting_for_confirm状态表示等待选择版本 = 进行中状态
+  return chapter && chapter.generation_status === 'waiting_for_confirm'
+}
+
+// 可用版本列表 (合并生成结果和已有版本)
+const availableVersions = computed(() => {
+  // 优先使用新生成的版本（对象数组格式）
+  if (chapterGenerationResult.value?.versions) {
+    console.log('使用生成结果版本:', chapterGenerationResult.value.versions)
+    return chapterGenerationResult.value.versions
+  }
+
+  // 使用章节已有的版本（字符串数组格式，需要转换为对象数组）
+  if (selectedChapter.value?.versions && Array.isArray(selectedChapter.value.versions)) {
+    console.log('原始章节版本 (字符串数组):', selectedChapter.value.versions)
+
+    // 将字符串数组转换为ChapterVersion对象数组
+    const convertedVersions = selectedChapter.value.versions.map((versionString, index) => {
+      console.log(`版本 ${index} 原始字符串:`, versionString)
+
+      try {
+        // 解析JSON字符串
+        const versionObj = JSON.parse(versionString)
+        console.log(`版本 ${index} 解析后的对象:`, versionObj)
+
+        // 提取content字段作为实际内容
+        const actualContent = versionObj.content || versionString
+
+        console.log(`版本 ${index} 实际内容:`, actualContent.substring(0, 100) + '...')
+
+        return {
+          content: actualContent,
+          style: '标准' // 默认风格
+        }
+      } catch (error) {
+        // 如果JSON解析失败，直接使用原始字符串
+        console.log(`版本 ${index} JSON解析失败，使用原始字符串:`, error)
+        return {
+          content: versionString,
+          style: '标准'
+        }
+      }
+    })
+
+    console.log('转换后的版本对象:', convertedVersions)
+    return convertedVersions
+  }
+
+  console.log('没有可用版本，selectedChapter:', selectedChapter.value)
+  return []
+})
+
+
+// 方法
+const goBack = () => {
+  if (props.embedded) {
+    emit('close')
+    return
+  }
+  router.push('/bookshelf')
+}
+
+const viewProjectDetail = () => {
+  if (props.embedded) {
+    emit('close')
+    return
+  }
+  if (project.value) {
+    router.push(`/detail/${project.value.id}`)
+  }
+}
+
+const toggleSidebar = () => {
+  sidebarOpen.value = !sidebarOpen.value
+}
+
+const closeSidebar = () => {
+  sidebarOpen.value = false
+}
+
+const loadProject = async () => {
+  if (!resolvedProjectId.value) return
+  try {
+    await novelStore.loadProject(resolvedProjectId.value)
+  } catch (error) {
+    console.error('加载项目失败:', error)
+  }
+}
+
+const fetchChapterStatus = async () => {
+  if (selectedChapterNumber.value === null) {
+    return
+  }
+  try {
+    await novelStore.loadChapter(selectedChapterNumber.value)
+    console.log('Chapter status polled and updated.')
+  } catch (error) {
+    console.error('轮询章节状态失败:', error)
+    // 在这里可以决定是否要通知用户轮询失败
+  }
+}
+
+
+// 显示版本详情
+const showVersionDetail = (versionIndex: number) => {
+  detailVersionIndex.value = versionIndex
+  showVersionDetailModal.value = true
+}
+
+// 关闭版本详情弹窗
+const closeVersionDetail = () => {
+  showVersionDetailModal.value = false
+}
+
+// 隐藏版本选择器，返回内容视图
+const hideVersionSelector = () => {
+  // Now controlled by computed property, but we can clear the generation result
+  chapterGenerationResult.value = null
+  selectedVersionIndex.value = 0
+}
+
+const selectChapter = (chapterNumber: number) => {
+  selectedChapterNumber.value = chapterNumber
+  chapterGenerationResult.value = null
+  selectedVersionIndex.value = 0
+  closeSidebar()
+}
+
+const generateChapter = async (chapterNumber: number) => {
+  if (!canGenerateChapter(chapterNumber) && !isChapterFailed(chapterNumber) && !hasChapterInProgress(chapterNumber)) {
+    globalAlert.showError('请按顺序生成章节，先完成前面的章节', '生成受限')
+    return
+  }
+
+  selectedChapterNumber.value = chapterNumber
+
+  try {
+    await novelStore.generateChapter(chapterNumber)
+    chapterGenerationResult.value = null
+    selectedVersionIndex.value = 0
+  } catch (error) {
+    if (isAbortError(error)) return
+    console.error('生成章节失败:', error)
+    globalAlert.showError(`生成章节失败: ${error instanceof Error ? error.message : '未知错误'}`, '生成失败')
+  }
+}
+
+const regenerateChapter = async () => {
+  if (selectedChapterNumber.value !== null) {
+    await generateChapter(selectedChapterNumber.value)
+  }
+}
+
+const selectVersion = async (versionIndex: number) => {
+  if (selectedChapterNumber.value === null || !availableVersions.value?.[versionIndex]?.content) {
+    return
+  }
+  if (!project.value?.id) return
+
+  isConfirmingVersion.value = true
+  try {
+    selectedVersionIndex.value = versionIndex
+    await novelStore.selectChapterVersion(selectedChapterNumber.value, versionIndex)
+    const updatedProject = await NovelAPI.confirmChapter(
+      project.value.id,
+      selectedChapterNumber.value
+    )
+    novelStore.setCurrentProject(updatedProject)
+    chapterGenerationResult.value = null
+    globalAlert.showSuccess('版本已确认', '操作成功')
+  } catch (error) {
+    console.error('选择章节版本失败:', error)
+    if (project.value?.chapters) {
+      const chapter = project.value.chapters.find((ch) => ch.chapter_number === selectedChapterNumber.value)
+      if (chapter) {
+        chapter.generation_status = 'waiting_for_confirm'
+      }
+    }
+    globalAlert.showError(`选择章节版本失败: ${error instanceof Error ? error.message : '未知错误'}`, '选择失败')
+  } finally {
+    isConfirmingVersion.value = false
+  }
+}
+
+// 从详情弹窗中选择版本
+const selectVersionFromDetail = async () => {
+  selectedVersionIndex.value = detailVersionIndex.value
+  await selectVersion(detailVersionIndex.value)
+  closeVersionDetail()
+}
+
+const confirmVersionSelection = async () => {
+  await selectVersion(selectedVersionIndex.value)
+}
+
+const openEditChapterModal = (chapter: ChapterOutline) => {
+  editingChapter.value = chapter
+  showEditChapterModal.value = true
+}
+
+const saveChapterChanges = async (updatedChapter: ChapterOutline) => {
+  try {
+    await novelStore.updateChapterOutline(updatedChapter)
+    globalAlert.showSuccess('章节大纲已更新', '保存成功')
+  } catch (error) {
+    console.error('更新章节大纲失败:', error)
+    globalAlert.showError(`更新章节大纲失败: ${error instanceof Error ? error.message : '未知错误'}`, '保存失败')
+  } finally {
+    showEditChapterModal.value = false
+  }
+}
+
+const evaluateChapter = async () => {
+  if (selectedChapterNumber.value === null) return
+  if (availableVersions.value.length < 2) {
+    globalAlert.showError('需要至少 2 个版本才能进行 AI 评审，请重新生成章节', '无法评审')
+    return
+  }
+
+  try {
+    await novelStore.evaluateChapter(selectedChapterNumber.value)
+
+    const chapter = project.value?.chapters.find((ch) => ch.chapter_number === selectedChapterNumber.value)
+    if (chapter?.evaluation) {
+      try {
+        const parsed = JSON.parse(chapter.evaluation)
+        if (typeof parsed.best_choice === 'number') {
+          selectedVersionIndex.value = Math.max(0, parsed.best_choice - 1)
+        }
+      } catch {
+        // ignore malformed evaluation payload
+      }
+    }
+
+    globalAlert.showSuccess('章节评审结果已生成', '评审成功')
+  } catch (error) {
+    if (isAbortError(error)) return
+    console.error('评审章节失败:', error)
+    globalAlert.showError(`评审章节失败: ${error instanceof Error ? error.message : '未知错误'}`, '评审失败')
+  }
+}
+
+const cancelChapterTask = () => {
+  if (selectedChapterNumber.value === null || !project.value) return
+  const chapterNumber = selectedChapterNumber.value
+  const projectId = project.value.id
+  const status = selectedChapter.value?.generation_status
+
+  if (status === 'evaluating' || evaluatingChapter.value === chapterNumber) {
+    if (typeof novelStore.cancelChapterEvaluation === 'function') {
+      novelStore.cancelChapterEvaluation(chapterNumber)
+    } else {
+      cancelAsyncTask({ kind: 'chapter_evaluate', projectId, chapterNumber })
+      writing.upsertChapterStatus(project.value, chapterNumber, 'waiting_for_confirm')
+      void novelClient.saveProject(project.value).catch(() => {})
+    }
+    globalAlert.showSuccess('已取消章节评审', '已取消')
+    return
+  }
+
+  if (typeof novelStore.cancelChapterGeneration === 'function') {
+    novelStore.cancelChapterGeneration(chapterNumber)
+  } else {
+    cancelAsyncTask({ kind: 'chapter_generate', projectId, chapterNumber })
+    if (status === 'generating') {
+      writing.upsertChapterStatus(project.value, chapterNumber, 'not_generated')
+      void novelClient.saveProject(project.value).catch(() => {})
+    }
+  }
+  globalAlert.showSuccess('已取消章节生成', '已取消')
+}
+
+const deleteChapter = async (chapterNumbers: number | number[]) => {
+  const numbersToDelete = Array.isArray(chapterNumbers) ? chapterNumbers : [chapterNumbers]
+  const confirmationMessage = numbersToDelete.length > 1
+    ? `您确定要删除选中的 ${numbersToDelete.length} 个章节吗？这个操作无法撤销。`
+    : `您确定要删除第 ${numbersToDelete[0]} 章吗？这个操作无法撤销。`
+
+  if (window.confirm(confirmationMessage)) {
+    try {
+      await novelStore.deleteChapter(numbersToDelete)
+      globalAlert.showSuccess('章节已删除', '操作成功')
+      // If the currently selected chapter was deleted, unselect it
+      if (selectedChapterNumber.value && numbersToDelete.includes(selectedChapterNumber.value)) {
+        selectedChapterNumber.value = null
+      }
+    } catch (error) {
+      console.error('删除章节失败:', error)
+      globalAlert.showError(`删除章节失败: ${error instanceof Error ? error.message : '未知错误'}`, '删除失败')
+    }
+  }
+}
+
+const generateOutline = async () => {
+  showGenerateOutlineModal.value = true
+}
+
+const editChapterContent = async (data: { chapterNumber: number, content: string }) => {
+  if (!project.value) return
+
+  try {
+    await novelStore.editChapterContent(project.value.id, data.chapterNumber, data.content)
+    globalAlert.showSuccess('章节内容已更新', '保存成功')
+  } catch (error) {
+    console.error('编辑章节内容失败:', error)
+    globalAlert.showError(`编辑章节内容失败: ${error instanceof Error ? error.message : '未知错误'}`, '保存失败')
+  }
+}
+
+const handleGenerateOutline = async (numChapters: number) => {
+  if (!project.value) return
+  try {
+    const startChapter = (project.value.blueprint?.chapter_outline?.length || 0) + 1
+    await novelStore.generateChapterOutline(startChapter, numChapters)
+    globalAlert.showSuccess('新的章节大纲已生成', '操作成功')
+  } catch (error) {
+    if (isAbortError(error)) {
+      globalAlert.showSuccess('已取消大纲生成', '已取消')
+      return
+    }
+    console.error('生成大纲失败:', error)
+    globalAlert.showError(`生成大纲失败: ${error instanceof Error ? error.message : '未知错误'}`, '生成失败')
+  }
+}
+
+function restoreActiveChapterSelection() {
+  const projectId = resolvedProjectId.value
+  if (!projectId || !project.value) return
+
+  const generating = getActiveChapterGeneration(projectId)
+  if (generating !== null) {
+    selectedChapterNumber.value = generating
+    return
+  }
+
+  const evaluating = getActiveChapterEvaluation(projectId)
+  if (evaluating !== null) {
+    selectedChapterNumber.value = evaluating
+    return
+  }
+
+  const inProgress = project.value.chapters.find((chapter) =>
+    ['generating', 'evaluating', 'selecting'].includes(chapter.generation_status)
+  )
+  if (inProgress) {
+    selectedChapterNumber.value = inProgress.chapter_number
+  }
+}
+
+onMounted(() => {
+  if (!props.embedded) document.body.classList.add('m3-novel')
+  void (async () => {
+    await loadProject()
+    const projectId = resolvedProjectId.value
+    if (projectId) {
+      await novelStore.reconcileStaleChapterTasks(projectId)
+      restoreActiveChapterSelection()
+    }
+  })()
+})
+
+watch(
+  () => resolvedProjectId.value,
+  (projectId) => {
+    if (!projectId) return
+    restoreActiveChapterSelection()
+  }
+)
+
+onUnmounted(() => {
+  if (!props.embedded) document.body.classList.remove('m3-novel')
+})
+</script>
+
+<style scoped>
+:global(body.m3-novel) {
+  color: var(--text);
+  font-family: var(--font-sans);
+}
+
+.m3-shell {
+  background: radial-gradient(1200px 600px at 15% -20%, color-mix(in srgb, var(--brand) 16%, transparent), transparent 60%),
+    radial-gradient(900px 420px at 85% 0%, color-mix(in srgb, var(--brand) 8%, transparent), transparent 55%),
+    linear-gradient(140deg, var(--bg) 0%, color-mix(in srgb, var(--brand) 6%, var(--bg)) 45%, var(--surface-soft) 100%);
+  color: var(--text);
+  font-family: var(--font-sans);
+  animation: m3-fade 0.6s ease-out both;
+}
+
+.writing-desk--embedded {
+  border-radius: 0;
+  background: transparent;
+  animation: none;
+}
+
+.wd-desk__main {
+  display: flex;
+  flex-direction: column;
+}
+
+.wd-desk__columns {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+}
+
+.wd-no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.wd-no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .m3-shell {
+    animation: none;
+  }
+}
+
+/* 自定义样式 */
+.line-clamp-1 {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.line-clamp-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* 自定义滚动条 */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--md-surface-container);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--md-outline);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--md-on-surface-variant);
+}
+
+/* 动画效果 */
+@keyframes m3-fade {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+</style>

@@ -1,0 +1,77 @@
+/* Page scroll layout inside ImmersiveShell — complements agent-arena.css */
+
+:root {
+  --arena-nav-height: 72px;
+  --arena-content-height: calc(100vh - var(--arena-nav-height));
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.page-view-host {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 100%;
+}
+
+.page-view-host__page {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 100%;
+}
+
+/* Viewport-lock pages (settings, detail, writing desk) */
+.arena-content:has(.portal-page--viewport-lock),
+.arena-content:has(.page--viewport-lock),
+.arena-content:has(.aa-subpage--viewport-lock) {
+  overflow: hidden;
+}
+
+.arena-content:has(.portal-page--viewport-lock) .page-view-host,
+.arena-content:has(.portal-page--viewport-lock) .page-view-host__page,
+.arena-content:has(.page--viewport-lock) .page-view-host,
+.arena-content:has(.page--viewport-lock) .page-view-host__page,
+.arena-content:has(.aa-subpage--viewport-lock) .page-view-host,
+.arena-content:has(.aa-subpage--viewport-lock) .page-view-host__page {
+  flex: 1 1 0;
+  min-height: 0;
+  height: 100%;
+  max-height: 100%;
+  overflow: hidden;
+}
+
+.portal-page--viewport-lock,
+.page--viewport-lock,
+.aa-subpage--viewport-lock {
+  flex: 1 1 0;
+  min-height: 0;
+  max-height: 100%;
+  overflow: hidden;
+}
+
+/* Flow pages: outer shell scrolls; inner aa-page-inner centers body (1280px) */
+.aa-subpage--flow-scroll {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.page-view-host__loading,
+.page-view-host__error {
+  flex: 1;
+  min-height: var(--arena-content-height);
+  display: grid;
+  place-content: center;
+  gap: 12px;
+  color: var(--shell-muted, #64748b);
+}

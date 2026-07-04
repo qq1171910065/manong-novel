@@ -1,0 +1,12 @@
+node_modules/
+out/
+dist/
+.DS_Store
+*.log
+.env
+backend/.env
+backend/storage/*.db
+backend/storage/**/*.db
+vendor/
+.dev-assets/
+tsconfig.web.tsbuildinfo

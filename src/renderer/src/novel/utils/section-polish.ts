@@ -1,0 +1,392 @@
+import type { AllSectionType } from '@renderer/services/novel/api'
+import type { Blueprint, Character, ChapterOutline, Relationship } from '@shared/novel/types'
+
+export type PolishableSectionKey =
+  | 'overview'
+  | 'world_setting'
+  | 'characters'
+  | 'relationships'
+  | 'chapter_outline'
+
+export interface SectionPolishContext {
+  section: PolishableSectionKey
+  sectionLabel: string
+  scope: string
+  currentContent: unknown
+}
+
+export interface SectionPolishApplyPayload {
+  entrySection: PolishableSectionKey
+  blueprintUpdates: Partial<Blueprint>
+  affectedSections: PolishableSectionKey[]
+}
+
+export const POLISHABLE_SECTION_KEYS: PolishableSectionKey[] = [
+  'overview',
+  'world_setting',
+  'characters',
+  'relationships',
+  'chapter_outline',
+]
+
+export const POLISH_SECTION_LABELS: Record<PolishableSectionKey, string> = {
+  overview: '项目概览',
+  world_setting: '世界设定',
+  characters: '主要角色',
+  relationships: '人物关系',
+  chapter_outline: '章节大纲',
+}
+
+const POLISH_META: Record<
+  PolishableSectionKey,
+  { label: string; scope: string }
+> = {
+  overview: {
+    label: '项目概览',
+    scope: '标题、类型、风格、基调、目标读者、核心摘要与完整梗概（可联动修改其他板块）',
+  },
+  world_setting: {
+    label: '世界设定',
+    scope: '核心规则、关键地点与阵营势力（可联动修改角色、大纲等）',
+  },
+  characters: {
+    label: '主要角色',
+    scope: '人物身份、性格、目标、能力与关系定位（可联动修改关系网、大纲等）',
+  },
+  relationships: {
+    label: '人物关系',
+    scope: '角色之间的联系、关系类型与描述（可联动修改角色、大纲等）',
+  },
+  chapter_outline: {
+    label: '章节大纲',
+    scope: '各章标题与情节摘要（可联动修改角色、世界观等）',
+  },
+}
+
+export function isPolishableSection(section: AllSectionType): section is PolishableSectionKey {
+  return (POLISHABLE_SECTION_KEYS as string[]).includes(section)
+}
+
+export function buildPolishContext(
+  section: PolishableSectionKey,
+  sectionData: Record<string, unknown>
+): SectionPolishContext | null {
+  const meta = POLISH_META[section]
+  let currentContent: unknown = null
+
+  switch (section) {
+    case 'overview':
+      currentContent = sectionData.overview ?? null
+      break
+    case 'world_setting':
+      currentContent = sectionData.world_setting ?? null
+      break
+    case 'characters':
+      currentContent = (sectionData.characters as { characters?: unknown })?.characters ?? sectionData.characters ?? null
+      break
+    case 'relationships':
+      currentContent = (sectionData.relationships as { relationships?: unknown })?.relationships ?? sectionData.relationships ?? null
+      break
+    case 'chapter_outline':
+      currentContent = (sectionData.chapter_outline as { chapter_outline?: unknown })?.chapter_outline ?? sectionData.chapter_outline ?? null
+      break
+    default:
+      return null
+  }
+
+  return {
+    section,
+    sectionLabel: meta.label,
+    scope: meta.scope,
+    currentContent,
+  }
+}
+
+const OVERVIEW_FIELDS = [
+  'title',
+  'genre',
+  'style',
+  'tone',
+  'target_audience',
+  'one_sentence_summary',
+  'full_synopsis',
+] as const
+
+function hasOverviewUpdates(updates: Partial<Blueprint>): boolean {
+  return OVERVIEW_FIELDS.some((key) => {
+    const value = updates[key]
+    return value !== undefined && value !== null && String(value).trim()
+  })
+}
+
+export function resolveAffectedSectionsFromUpdates(
+  updates: Partial<Blueprint>,
+  fallback?: PolishableSectionKey[]
+): PolishableSectionKey[] {
+  const sections: PolishableSectionKey[] = []
+  if (hasOverviewUpdates(updates)) sections.push('overview')
+  if (updates.world_setting !== undefined) sections.push('world_setting')
+  if (updates.characters !== undefined) sections.push('characters')
+  if (updates.relationships !== undefined) sections.push('relationships')
+  if (updates.chapter_outline !== undefined) sections.push('chapter_outline')
+  if (sections.length) return sections
+  return fallback?.length ? [...fallback] : []
+}
+
+function unwrapSectionArray<T>(
+  section: PolishableSectionKey,
+  value: unknown,
+  arrayKey: string
+): T[] {
+  if (Array.isArray(value)) return value as T[]
+  if (value && typeof value === 'object') {
+    const nested = (value as Record<string, unknown>)[arrayKey]
+    if (Array.isArray(nested)) return nested as T[]
+  }
+  throw new Error(`${POLISH_SECTION_LABELS[section]}数据格式错误`)
+}
+
+function mergeCharactersUpdate(
+  existing: Character[] | undefined,
+  incoming: unknown
+): Character[] {
+  const list = unwrapSectionArray<Character>('characters', incoming, 'characters')
+  if (!existing?.length) return list
+  if (list.length === existing.length) return list
+
+  const next = existing.map((item) => ({ ...item }))
+  for (const updated of list) {
+    const idx = next.findIndex(
+      (item) =>
+        (updated.id && item.id === updated.id) ||
+        (updated.name && item.name === updated.name)
+    )
+    if (idx >= 0) {
+      next[idx] = { ...next[idx], ...updated, id: next[idx].id || updated.id }
+    } else {
+      next.push(updated)
+    }
+  }
+  return next
+}
+
+function mergeRelationshipsUpdate(
+  existing: Relationship[] | undefined,
+  incoming: unknown
+): Relationship[] {
+  const list = unwrapSectionArray<Relationship>('relationships', incoming, 'relationships')
+  if (!existing?.length) return list
+  if (list.length === existing.length) return list
+
+  const next = existing.map((item) => ({ ...item }))
+  for (const updated of list) {
+    const idx = next.findIndex(
+      (item) =>
+        (updated.id && item.id === updated.id) ||
+        (updated.character_from === item.character_from &&
+          updated.character_to === item.character_to)
+    )
+    if (idx >= 0) {
+      next[idx] = { ...next[idx], ...updated, id: next[idx].id || updated.id }
+    } else {
+      next.push(updated)
+    }
+  }
+  return next
+}
+
+function mergeChapterOutlineUpdate(
+  existing: ChapterOutline[] | undefined,
+  incoming: unknown
+): ChapterOutline[] {
+  const list = unwrapSectionArray<ChapterOutline>('chapter_outline', incoming, 'chapter_outline')
+  if (!existing?.length) return list
+  if (list.length === existing.length) return list
+
+  const next = existing.map((item) => ({ ...item }))
+  for (const updated of list) {
+    const idx = next.findIndex((item) => item.chapter_number === updated.chapter_number)
+    if (idx >= 0) {
+      next[idx] = { ...next[idx], ...updated, id: next[idx].id || updated.id }
+    } else {
+      next.push(updated)
+    }
+  }
+  return next.sort((a, b) => a.chapter_number - b.chapter_number)
+}
+
+export function coalescePolishBlueprintUpdates(
+  existingBlueprint: Blueprint | undefined | null,
+  entrySection: PolishableSectionKey,
+  payload: { blueprint_updates?: unknown; section_update?: unknown }
+): Partial<Blueprint> {
+  const raw: Record<string, unknown> = {}
+
+  if (Array.isArray(payload.blueprint_updates)) {
+    if (entrySection === 'overview') {
+      throw new Error('概览修改格式错误')
+    }
+    raw[entrySection] = payload.blueprint_updates
+  } else if (payload.blueprint_updates && typeof payload.blueprint_updates === 'object') {
+    Object.assign(raw, payload.blueprint_updates as Record<string, unknown>)
+  } else if (payload.section_update !== undefined && payload.section_update !== null) {
+    if (
+      entrySection === 'overview' &&
+      typeof payload.section_update === 'object' &&
+      !Array.isArray(payload.section_update)
+    ) {
+      Object.assign(raw, payload.section_update as Record<string, unknown>)
+    } else {
+      raw[entrySection] = payload.section_update
+    }
+  }
+
+  const existing = existingBlueprint ?? {}
+  const patch: Partial<Blueprint> = {}
+
+  for (const key of OVERVIEW_FIELDS) {
+    const value = raw[key]
+    if (value !== undefined && value !== null && String(value).trim()) {
+      patch[key] = String(value)
+    }
+  }
+
+  if (raw.world_setting !== undefined) {
+    patch.world_setting = raw.world_setting as Blueprint['world_setting']
+  }
+  if (raw.characters !== undefined) {
+    patch.characters = mergeCharactersUpdate(existing.characters, raw.characters)
+  }
+  if (raw.relationships !== undefined) {
+    patch.relationships = mergeRelationshipsUpdate(existing.relationships, raw.relationships)
+  }
+  if (raw.chapter_outline !== undefined) {
+    patch.chapter_outline = mergeChapterOutlineUpdate(existing.chapter_outline, raw.chapter_outline)
+  }
+
+  return patch
+}
+
+export function normalizePolishBlueprintUpdates(
+  entrySection: PolishableSectionKey,
+  payload: { blueprint_updates?: unknown; section_update?: unknown; affected_sections?: unknown },
+  existingBlueprint?: Blueprint | null
+): Partial<Blueprint> {
+  return coalescePolishBlueprintUpdates(existingBlueprint, entrySection, payload)
+}
+
+export function normalizeAffectedSections(
+  entrySection: PolishableSectionKey,
+  payload: { affected_sections?: unknown; blueprint_updates?: unknown; section_update?: unknown }
+): PolishableSectionKey[] {
+  if (Array.isArray(payload.affected_sections)) {
+    const valid = payload.affected_sections.filter(
+      (s): s is PolishableSectionKey =>
+        typeof s === 'string' && (POLISHABLE_SECTION_KEYS as string[]).includes(s)
+    )
+    if (valid.length) return valid
+  }
+  const updates = normalizePolishBlueprintUpdates(entrySection, payload)
+  return resolveAffectedSectionsFromUpdates(updates, [entrySection])
+}
+
+export function buildBlueprintPatchFromSectionUpdate(
+  section: PolishableSectionKey,
+  sectionUpdate: unknown
+): Partial<Blueprint> {
+  if (!sectionUpdate || typeof sectionUpdate !== 'object') {
+    throw new Error('修改结果无效')
+  }
+
+  if (section === 'overview') {
+    const patch: Partial<Blueprint> = {}
+    for (const key of OVERVIEW_FIELDS) {
+      const value = (sectionUpdate as Record<string, unknown>)[key]
+      if (value !== undefined && value !== null && String(value).trim()) {
+        patch[key] = String(value)
+      }
+    }
+    if (!Object.keys(patch).length) throw new Error('修改结果为空')
+    return patch
+  }
+
+  if (section === 'world_setting') {
+    return { world_setting: sectionUpdate as Blueprint['world_setting'] }
+  }
+  if (section === 'characters') {
+    if (!Array.isArray(sectionUpdate)) throw new Error('角色数据格式错误')
+    return { characters: sectionUpdate as Blueprint['characters'] }
+  }
+  if (section === 'relationships') {
+    if (!Array.isArray(sectionUpdate)) throw new Error('关系数据格式错误')
+    return { relationships: sectionUpdate as Blueprint['relationships'] }
+  }
+  if (section === 'chapter_outline') {
+    if (!Array.isArray(sectionUpdate)) throw new Error('章节大纲格式错误')
+    return { chapter_outline: sectionUpdate as Blueprint['chapter_outline'] }
+  }
+
+  throw new Error('未知板块')
+}
+
+export function validateBlueprintUpdates(updates: Partial<Blueprint>): Partial<Blueprint> {
+  if (!updates || typeof updates !== 'object') {
+    throw new Error('修改结果无效')
+  }
+  const patch: Partial<Blueprint> = {}
+
+  for (const key of OVERVIEW_FIELDS) {
+    const value = updates[key]
+    if (value !== undefined && value !== null && String(value).trim()) {
+      patch[key] = String(value)
+    }
+  }
+
+  if (updates.world_setting !== undefined) {
+    patch.world_setting = updates.world_setting
+  }
+  if (updates.characters !== undefined) {
+    if (!Array.isArray(updates.characters)) throw new Error('角色数据格式错误')
+    if (!updates.characters.length) throw new Error('角色列表不能为空')
+    patch.characters = updates.characters
+  }
+  if (updates.relationships !== undefined) {
+    if (!Array.isArray(updates.relationships)) throw new Error('关系数据格式错误')
+    patch.relationships = updates.relationships
+  }
+  if (updates.chapter_outline !== undefined) {
+    if (!Array.isArray(updates.chapter_outline)) throw new Error('章节大纲格式错误')
+    patch.chapter_outline = updates.chapter_outline
+  }
+
+  if (!Object.keys(patch).length) throw new Error('修改结果为空')
+  return patch
+}
+
+export function resolveSectionReloadKeys(section: PolishableSectionKey): PolishableSectionKey[] {
+  if (section === 'overview') return ['overview']
+  return [section, 'overview']
+}
+
+export function resolveAllSectionReloadKeys(sections: PolishableSectionKey[]): PolishableSectionKey[] {
+  const keys = new Set<PolishableSectionKey>()
+  for (const section of sections) {
+    keys.add(section)
+    if (section !== 'overview') keys.add('overview')
+  }
+  return [...keys]
+}
+
+export function shouldOfferPolishMaterialize(aiMessage: string): boolean {
+  const text = aiMessage.trim()
+  if (!text) return false
+  if (/blueprint_updates/i.test(text)) return false
+  return (
+    /(改名|联动|关系网|人物蓝图|修改指令|将.{0,12}改为|调整为|更名为)/.test(text) ||
+    /已(经)?.{0,10}(修改|更新|替换|更换|联动|接收)/.test(text)
+  )
+}
+
+export function formatAffectedSectionLabels(sections: PolishableSectionKey[]): string {
+  return sections.map((s) => POLISH_SECTION_LABELS[s]).join('、')
+}

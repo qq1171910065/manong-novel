@@ -1,0 +1,1099 @@
+import conceptPrompt from '@shared/novel/prompts/concept.md?raw'
+import outlinePrompt from '@shared/novel/prompts/outline_generation.md?raw'
+import screenwritingPrompt from '@shared/novel/prompts/screenwriting.md?raw'
+import writingPrompt from '@shared/novel/prompts/writing_v2.md?raw'
+import evaluationPrompt from '@shared/novel/prompts/evaluation.md?raw'
+import extractionPrompt from '@shared/novel/prompts/extraction.md?raw'
+import optimizeDialoguePrompt from '@shared/novel/prompts/optimize_dialogue.md?raw'
+import optimizeEnvironmentPrompt from '@shared/novel/prompts/optimize_environment.md?raw'
+import optimizePsychologyPrompt from '@shared/novel/prompts/optimize_psychology.md?raw'
+import optimizeRhythmPrompt from '@shared/novel/prompts/optimize_rhythm.md?raw'
+import sectionPolishPrompt from '@shared/novel/prompts/section_polish.md?raw'
+import { formatGatewayContentFilterError, gatewayChatStream } from '@renderer/services/gateway-api'
+import type { GatewayTokenUsage } from '@renderer/services/gateway-api'
+import { projectStatsService } from '@renderer/services/project-stats-service'
+import { resolveProjectChatModelId, type ProjectModelPrefs } from './project-model'
+import {
+  parseLlmJsonObject,
+  pickBestLlmPayload,
+  resolveDisplayAiMessage,
+} from './json-utils'
+import {
+  extractOptionsFromMessage,
+  normalizeOptionLabel,
+  parseOptionText,
+} from '@renderer/novel/utils/chat-options'
+import type {
+  Blueprint,
+  BlueprintGenerationResponse,
+  Chapter,
+  ConverseResponse,
+  ConversationMessage,
+  NovelProject,
+  OptimizeResponse,
+  SectionPolishResponse,
+  SectionPolishMaterializeResponse,
+  UIControl,
+} from '@shared/novel/types'
+import type { SectionPolishContext } from '@renderer/novel/utils/section-polish'
+import {
+  coalescePolishBlueprintUpdates,
+  normalizeAffectedSections,
+} from '@renderer/novel/utils/section-polish'
+import {
+  CHAPTER_VERSION_STYLE_HINTS,
+  resolveChapterVersionCount,
+} from '@shared/novel/chapter-version-count'
+import { resolveWritingMode, SIMPLE_BLUEPRINT_SUPPLEMENT, SIMPLE_CONCEPT_SUPPLEMENT } from '@shared/novel/writing-mode'
+import {
+  applyUserAnswerToChecklist,
+  buildAutoCompletionMessage,
+  buildChecklistPromptSupplement,
+  isChecklistComplete,
+  detectChapterCountLoop,
+  forceCompleteChecklist,
+  mergeChecklistFromModel,
+  normalizeChecklist,
+  rebuildChecklistFromHistory,
+  requiredChecklistKeys,
+  resolvePendingTopicAfterResponse,
+  type ConceptChecklistKey,
+  type ConceptConversationState,
+} from '@shared/novel/concept-checklist'
+
+const STREAM_TIMEOUT_MS = 120_000
+const LONG_STREAM_TIMEOUT_MS = 1_800_000
+const STREAM_EMIT_INTERVAL_MS = 48
+
+export type ChatStreamStatus = 'pending' | 'streaming' | 'done'
+
+export interface ChatStreamHandlers {
+  onChunk?: (payload: { raw: string; display: string; status: ChatStreamStatus }) => void
+}
+
+export interface ConversationRequestOptions {
+  stream?: ChatStreamHandlers
+  signal?: AbortSignal
+}
+
+function createThrottledStreamEmitter(onEmit: (raw: string) => void) {
+  let buffer = ''
+  let timer: number | undefined
+  let scheduled = false
+
+  const flush = () => {
+    scheduled = false
+    if (timer) {
+      window.clearTimeout(timer)
+      timer = undefined
+    }
+    onEmit(buffer)
+  }
+
+  return {
+    push(chunk: string) {
+      buffer += chunk
+      if (scheduled) return
+      scheduled = true
+      timer = window.setTimeout(flush, STREAM_EMIT_INTERVAL_MS)
+    },
+    flush,
+    getBuffer: () => buffer,
+  }
+}
+
+/** 部分 New API 渠道不支持 system 角色，将 system prompt 合并进首条 user 消息。 */
+function buildGatewayMessages(
+  systemPrompt: string,
+  conversation: Array<{ role: string; content: string }>
+): Array<{ role: string; content: string }> {
+  const system = systemPrompt.trim()
+  const turns = conversation
+    .filter((m) => m && m.role && String(m.content ?? '').trim())
+    .map((m) => ({ role: String(m.role), content: String(m.content).trim() }))
+
+  if (!system) return turns
+  if (!turns.length) return [{ role: 'user', content: system }]
+
+  const [first, ...rest] = turns
+  if (first.role === 'user') {
+    return [{ role: 'user', content: `${system}\n\n---\n\n${first.content}` }, ...rest]
+  }
+
+  return [{ role: 'user', content: system }, first, ...rest]
+}
+
+export async function chat(
+  systemPrompt: string,
+  conversation: Array<{ role: string; content: string }>,
+  params?: {
+    temperature?: number
+    stream?: ChatStreamHandlers
+    timeoutMs?: number
+    project?: ProjectModelPrefs | null
+    statsProjectId?: string
+    statsKind?: 'ai' | 'chapter'
+    signal?: AbortSignal
+  }
+): Promise<string> {
+  const model = await resolveProjectChatModelId(params?.project)
+  const messages = buildGatewayMessages(systemPrompt, conversation)
+  const temperature = params?.temperature ?? 0.7
+  const streamHandlers = params?.stream
+  const timeoutMs = params?.timeoutMs ?? STREAM_TIMEOUT_MS
+
+  if (params?.signal?.aborted) {
+    throw new DOMException('The operation was aborted.', 'AbortError')
+  }
+
+  let cancelStream: (() => void) | undefined
+  let timedOut = false
+  let timeoutId: number | undefined
+  let abortListener: (() => void) | undefined
+
+  const resetTimeout = () => {
+    if (timeoutId) window.clearTimeout(timeoutId)
+    timeoutId = window.setTimeout(() => {
+      timedOut = true
+      cancelStream?.()
+      void window.api.cancelSSE()
+    }, timeoutMs)
+  }
+
+  const streamPromise = new Promise<{ content: string; reasoning: string; usage?: GatewayTokenUsage }>((resolve, reject) => {
+    let contentText = ''
+    let reasoningText = ''
+    let usage: GatewayTokenUsage | undefined
+    let streamStatus: ChatStreamStatus = streamHandlers ? 'pending' : 'done'
+    let settled = false
+
+    const settleAbort = () => {
+      if (settled) return
+      settled = true
+      timedOut = false
+      if (timeoutId) window.clearTimeout(timeoutId)
+      cancelStream?.()
+      void window.api.cancelSSE()
+      reject(new DOMException('The operation was aborted.', 'AbortError'))
+    }
+
+    if (params?.signal) {
+      abortListener = () => settleAbort()
+      params.signal.addEventListener('abort', abortListener, { once: true })
+    }
+
+    const emitStream = (raw: string) => {
+      if (!streamHandlers?.onChunk) return
+      streamHandlers.onChunk({
+        raw,
+        display: resolveDisplayAiMessage(raw),
+        status: streamStatus,
+      })
+    }
+
+    const throttled = createThrottledStreamEmitter((raw) => emitStream(raw))
+
+    const pushVisibleChunk = (chunk: string) => {
+      if (!chunk) return
+      resetTimeout()
+      throttled.push(chunk)
+      if (streamStatus === 'pending') streamStatus = 'streaming'
+    }
+
+    if (streamHandlers?.onChunk) {
+      emitStream('')
+    }
+
+    void gatewayChatStream(
+      model,
+      messages,
+      {
+        onChunk: (chunk) => {
+          contentText += chunk
+          pushVisibleChunk(chunk)
+        },
+        onReasoningChunk: (chunk) => {
+          reasoningText += chunk
+          if (!contentText.trim()) {
+            pushVisibleChunk(chunk)
+          }
+        },
+        onUsage: (u) => {
+          usage = { ...usage, ...u }
+        },
+        onEnd: () => {
+          throttled.flush()
+          if (settled) return
+          settled = true
+          if (streamHandlers?.onChunk) {
+            const finalRaw = pickBestLlmPayload(contentText, reasoningText)
+            streamHandlers.onChunk({
+              raw: finalRaw,
+              display: resolveDisplayAiMessage(finalRaw),
+              status: 'done',
+            })
+          }
+          resolve({ content: contentText, reasoning: reasoningText, usage })
+        },
+        onError: (err) => {
+          if (settled) return
+          settled = true
+          reject(new Error(formatGatewayContentFilterError(err)))
+        },
+      },
+      { temperature, timeoutMs }
+    )
+      .then((cancel) => {
+        cancelStream = cancel
+      })
+      .catch(reject)
+  })
+
+  resetTimeout()
+
+  try {
+    const { content, reasoning, usage } = await streamPromise
+    if (timeoutId) window.clearTimeout(timeoutId)
+    if (params?.signal && abortListener) {
+      params.signal.removeEventListener('abort', abortListener)
+    }
+    if (timedOut) {
+      throw new Error(`流式响应超时（${Math.round(timeoutMs / 1000)}s 内无数据）`)
+    }
+    const statsProjectId = params?.statsProjectId
+    if (statsProjectId) {
+      projectStatsService.recordAiCall(statsProjectId, usage)
+    }
+    return pickBestLlmPayload(content, reasoning)
+  } catch (error) {
+    if (timeoutId) window.clearTimeout(timeoutId)
+    if (params?.signal && abortListener) {
+      params.signal.removeEventListener('abort', abortListener)
+    }
+    if (timedOut) {
+      throw new Error(`流式响应超时（${Math.round(timeoutMs / 1000)}s 内无数据）`)
+    }
+    throw error
+  }
+}
+
+function countSubstantiveUserTurns(history: ConversationMessage[]): number {
+  return history.filter((m) => {
+    if (m.role !== 'user') return false
+    try {
+      const input = JSON.parse(m.content) as { value?: string | null }
+      return Boolean(String(input.value ?? '').trim())
+    } catch {
+      return m.content.trim().length > 0
+    }
+  }).length
+}
+
+const OPTIMIZE_PROMPTS = {
+  dialogue: optimizeDialoguePrompt,
+  environment: optimizeEnvironmentPrompt,
+  psychology: optimizePsychologyPrompt,
+  rhythm: optimizeRhythmPrompt,
+} as const
+
+function projectChatOpts(
+  project: NovelProject,
+  extra?: {
+    temperature?: number
+    stream?: ChatStreamHandlers
+    timeoutMs?: number
+    statsKind?: 'ai' | 'chapter'
+    signal?: AbortSignal
+  }
+) {
+  return {
+    project,
+    statsProjectId: project.id,
+    ...extra,
+  }
+}
+
+const JSON_RESPONSE_INSTRUCTION = `
+IMPORTANT: 你的回复必须是合法的 JSON 对象，并严格包含以下字段：
+{
+  "ai_message": "string",
+  "ui_control": {
+    "type": "single_choice | multiple_choice | text_input | info_display",
+    "options": [
+      {"id": "1", "label": "选项标题", "description": "选项具体说明（可选）"}
+    ],
+    "placeholder": "string"
+  },
+  "conversation_state": {},
+  "is_complete": false
+}
+ui_control 规则：
+- ai_message 中不要重复列出 A/B/C 选项文字，选项只放在 ui_control.options 里
+- 根据对话需要灵活决定 ui_control.type：开放性问题用 text_input；需要用户从若干方向中选一个用 single_choice；允许多选组合（如类型混搭、多重特质）用 multiple_choice
+- options 数量与内容应贴合当前问题，2-8 个均可，不要机械凑满固定数量；id 用简短序号即可
+- conversation_state.checklist 必须同步更新：用户已明确回答的项设为 true，禁止在后续轮次重复追问
+不要输出额外的文本或解释。
+`
+
+const SECTION_POLISH_JSON_INSTRUCTION = `
+IMPORTANT: 你的回复必须是合法的 JSON 对象，并严格包含以下字段：
+{
+  "ai_message": "string",
+  "ui_control": {
+    "type": "single_choice | multiple_choice | text_input | info_display",
+    "options": [{"id": "1", "label": "选项标题", "description": "选项具体说明（可选）"}],
+    "placeholder": "string"
+  },
+  "conversation_state": {},
+  "is_complete": false,
+  "ready_to_apply": false,
+  "blueprint_updates": null,
+  "affected_sections": []
+}
+规则：
+- 对话进行中：ready_to_apply 为 false，blueprint_updates 为 null，affected_sections 为 []
+- 默认 ui_control.type 为 text_input；仅在需要用户在少量方案间取舍或用户索要选项时用 single_choice（2–3 个选项）
+- 用户确认应用时：ready_to_apply 为 true，is_complete 为 true
+- blueprint_updates 为 Partial Blueprint，只含需变更的字段/板块（可跨板块）
+- affected_sections 列出本次变更涉及的板块标识
+不要输出额外的文本或解释。
+`
+
+const MATERIALIZE_POLISH_INSTRUCTION = `
+IMPORTANT: 仅输出合法 JSON 对象：
+{
+  "summary": "一句话说明将修改哪些板块",
+  "affected_sections": ["characters", "relationships"],
+  "blueprint_updates": { }
+}
+规则：
+- 根据对话中**已确认**的修改意图，基于当前全书蓝图生成 blueprint_updates
+- 保留角色 id、未提及字段；角色改名时输出**完整 characters 数组**
+- 若涉及关系网，输出**完整 relationships 数组**，同步 character_from / character_to 中的姓名
+- affected_sections 列出实际变更的板块
+- 不要输出 ready_to_apply、ai_message 等对话字段
+`
+
+function formatPolishHistoryForMaterialize(history: ConversationMessage[]): string {
+  return history
+    .slice(-16)
+    .map((item) => {
+      if (item.role === 'user') {
+        try {
+          const input = JSON.parse(item.content) as { value?: string | null }
+          return `用户：${input.value?.trim() || item.content}`
+        } catch {
+          return `用户：${item.content}`
+        }
+      }
+      try {
+        const parsed = JSON.parse(item.content) as { ai_message?: string }
+        return `助手：${parsed.ai_message?.trim() || item.content}`
+      } catch {
+        return `助手：${item.content}`
+      }
+    })
+    .join('\n\n')
+}
+
+function parseJsonBlock(text: string): Record<string, unknown> | null {
+  return parseLlmJsonObject(text)
+}
+
+function resolveAiMessage(raw: string, parsed: Record<string, unknown>): string {
+  return resolveDisplayAiMessage(
+    typeof parsed.ai_message === 'string' && parsed.ai_message.trim()
+      ? String(parsed.ai_message)
+      : raw
+  )
+}
+
+function normalizeChoiceOptions(options: UIControl['options']): UIControl['options'] {
+  if (!Array.isArray(options) || !options.length) return []
+  return options.map((option, idx) => {
+    const id = option.id || String(idx + 1)
+    const labelRaw = option.label || ''
+    const parsed = option.description
+      ? { label: normalizeOptionLabel(labelRaw), description: option.description.trim() }
+      : parseOptionText(labelRaw)
+    return { id, label: parsed.label, description: parsed.description }
+  })
+}
+
+function parseUiControl(raw: unknown, fallbackMessage: string): UIControl {
+  if (raw && typeof raw === 'object') {
+    const control = raw as UIControl
+    if (
+      (control.type === 'single_choice' || control.type === 'multiple_choice') &&
+      Array.isArray(control.options) &&
+      control.options.length
+    ) {
+      return {
+        type: control.type,
+        options: normalizeChoiceOptions(control.options),
+      }
+    }
+    if (control.type === 'text_input') {
+      return control
+    }
+  }
+  return buildUiControl(fallbackMessage)
+}
+
+function buildUiControl(message: string): UIControl {
+  const extracted = extractOptionsFromMessage(message)
+  if (extracted.length >= 2) {
+    return { type: 'single_choice', options: extracted }
+  }
+  return { type: 'text_input', placeholder: '请输入你的想法…' }
+}
+
+function autoFillRemainingChecklist(
+  checklist: ReturnType<typeof normalizeChecklist>,
+  answers: Record<string, string | undefined>,
+  mode: ReturnType<typeof resolveWritingMode>,
+  substantiveTurns: number
+) {
+  const required = requiredChecklistKeys(mode)
+  const incomplete = required.filter((key) => !checklist[key])
+  const chapterDone = checklist.chapter_count
+  if (chapterDone && substantiveTurns >= Math.max(4, required.length - 2) && incomplete.length > 0) {
+    for (const key of incomplete) {
+      checklist[key] = true
+      if (!answers[key]) answers[key] = '（对话中已确认）'
+    }
+  }
+  return { checklist, answers }
+}
+
+function mergeConceptStateFromHistory(
+  conversationState: Record<string, unknown>,
+  history: ConversationMessage[],
+  mode: ReturnType<typeof resolveWritingMode>
+): ConceptConversationState {
+  const conceptState = conversationState as ConceptConversationState
+  if (history.length <= 1) return conceptState
+
+  const rebuilt = rebuildChecklistFromHistory(history.slice(0, -1), mode)
+  const mergedChecklist = { ...rebuilt.checklist }
+  const stored = normalizeChecklist(conceptState.checklist)
+  for (const key of requiredChecklistKeys(mode)) {
+    if (stored[key]) mergedChecklist[key as ConceptChecklistKey] = true
+  }
+
+  return {
+    ...conceptState,
+    checklist: mergedChecklist,
+    checklist_answers: { ...rebuilt.answers, ...(conceptState.checklist_answers ?? {}) },
+    pending_topic: conceptState.pending_topic ?? rebuilt.pendingTopic ?? null,
+  }
+}
+
+function buildConceptCompletionResponse(
+  project: NovelProject,
+  history: ConversationMessage[],
+  conversationState: Record<string, unknown>,
+  checklist: ReturnType<typeof normalizeChecklist>,
+  answers: Record<string, string | undefined>
+): ConverseResponse {
+  const aiMessage = buildAutoCompletionMessage(answers)
+  const nextConversationState: Record<string, unknown> = {
+    ...conversationState,
+    checklist,
+    checklist_answers: answers,
+    pending_topic: null,
+    ready_for_blueprint: true,
+  }
+  const uiControl: UIControl = { type: 'text_input', placeholder: '对话已完成' }
+  const assistantPayload = JSON.stringify({
+    ai_message: aiMessage,
+    ui_control: uiControl,
+    conversation_state: nextConversationState,
+    is_complete: true,
+    ready_for_blueprint: true,
+  })
+  history.push({ role: 'assistant', content: assistantPayload })
+  project.conversation_history = history
+
+  return {
+    ai_message: aiMessage,
+    ui_control: uiControl,
+    conversation_state: nextConversationState,
+    is_complete: true,
+    ready_for_blueprint: true,
+  }
+}
+
+export async function converseConcept(
+  project: NovelProject,
+  userInput: { id?: string | null; value?: string | null } | null,
+  conversationState: Record<string, unknown> = {},
+  options?: ConversationRequestOptions
+): Promise<ConverseResponse> {
+  const history: ConversationMessage[] = [...(project.conversation_history || [])]
+  const formattedInput = userInput ?? { id: null, value: null }
+  const userContent = JSON.stringify(formattedInput)
+  history.push({ role: 'user', content: userContent })
+
+  const mode = resolveWritingMode(project)
+  const conceptState = mergeConceptStateFromHistory(conversationState, history, mode)
+  let { checklist, answers } = applyUserAnswerToChecklist(
+    conceptState,
+    formattedInput.value,
+    mode
+  )
+  const substantiveUserTurns = countSubstantiveUserTurns(history)
+  ;({ checklist, answers } = autoFillRemainingChecklist(checklist, answers, mode, substantiveUserTurns))
+
+  if (detectChapterCountLoop(history)) {
+    ;({ checklist, answers } = forceCompleteChecklist(checklist, answers, mode))
+  }
+
+  const checklistDone = isChecklistComplete(checklist, mode)
+  if (checklistDone && formattedInput.value) {
+    return buildConceptCompletionResponse(project, history, conversationState, checklist, answers)
+  }
+
+  const checklistSupplement = buildChecklistPromptSupplement(checklist, answers, mode)
+  const conceptSystem =
+    mode === 'simple' ? `${conceptPrompt}\n${SIMPLE_CONCEPT_SUPPLEMENT}` : conceptPrompt
+
+  const raw = await chat(
+    `${conceptSystem}\n${JSON_RESPONSE_INSTRUCTION}\n${checklistSupplement}`,
+    history.map((m) => ({ role: m.role, content: m.content })),
+    projectChatOpts(project, {
+      temperature: 0.8,
+      stream: options?.stream,
+      signal: options?.signal,
+    })
+  )
+
+  const parsed = parseJsonBlock(raw) || {}
+  const aiMessage = resolveAiMessage(raw, parsed)
+  let mergedChecklist = mergeChecklistFromModel(
+    checklist,
+    (parsed.conversation_state as ConceptConversationState | undefined)?.checklist
+  )
+  let mergedAnswers = { ...answers }
+  ;({ checklist: mergedChecklist, answers: mergedAnswers } = autoFillRemainingChecklist(
+    mergedChecklist,
+    mergedAnswers,
+    mode,
+    substantiveUserTurns
+  ))
+  if (detectChapterCountLoop(history)) {
+    ;({ checklist: mergedChecklist, answers: mergedAnswers } = forceCompleteChecklist(
+      mergedChecklist,
+      mergedAnswers,
+      mode
+    ))
+  }
+  const uiControl = parseUiControl(parsed.ui_control, aiMessage)
+  const pendingTopic = resolvePendingTopicAfterResponse(aiMessage, mergedChecklist, mode)
+  const allChecklistDone = isChecklistComplete(mergedChecklist, mode)
+
+  if (allChecklistDone) {
+    return buildConceptCompletionResponse(
+      project,
+      history,
+      conversationState,
+      mergedChecklist,
+      mergedAnswers
+    )
+  }
+
+  const nextConversationState: Record<string, unknown> = {
+    ...conversationState,
+    ...(parsed.conversation_state && typeof parsed.conversation_state === 'object'
+      ? (parsed.conversation_state as Record<string, unknown>)
+      : {}),
+    checklist: mergedChecklist,
+    checklist_answers: mergedAnswers,
+    pending_topic: pendingTopic,
+  }
+
+  const explicitlyComplete =
+    Boolean(parsed.is_complete) || Boolean(parsed.ready_for_blueprint) || checklistDone
+  const ready =
+    allChecklistDone ||
+    Boolean(nextConversationState.ready_for_blueprint) ||
+    (explicitlyComplete && substantiveUserTurns >= 1)
+
+  if (ready) {
+    nextConversationState.ready_for_blueprint = true
+  }
+
+  const assistantPayload = JSON.stringify({
+    ai_message: aiMessage,
+    ui_control: uiControl,
+    conversation_state: nextConversationState,
+    is_complete: ready,
+    ready_for_blueprint: ready,
+  })
+  history.push({ role: 'assistant', content: assistantPayload })
+  project.conversation_history = history
+
+  return {
+    ai_message: aiMessage,
+    ui_control: uiControl,
+    conversation_state: nextConversationState,
+    is_complete: ready,
+    ready_for_blueprint: ready,
+  }
+}
+
+function buildSectionPolishSystemPrompt(context: SectionPolishContext, project: NovelProject): string {
+  const blueprintJson = JSON.stringify(project.blueprint ?? {}, null, 2)
+  const entryContentJson = JSON.stringify(context.currentContent ?? {}, null, 2)
+  return `${sectionPolishPrompt}
+${SECTION_POLISH_JSON_INSTRUCTION}
+
+## Entry Section（用户入口 Tab）
+- 板块名称：${context.sectionLabel}
+- 板块标识：${context.section}
+- 当前关注范围：${context.scope}
+- 说明：用户从此 Tab 进入，但可按意图修改蓝图任意相关板块
+
+## 全书蓝图（修改基准，按意图增量更新）
+\`\`\`json
+${blueprintJson}
+\`\`\`
+
+## 入口 Tab 当前内容（优先关注）
+\`\`\`json
+${entryContentJson}
+\`\`\`
+`
+}
+
+export async function converseSectionPolish(
+  project: NovelProject,
+  context: SectionPolishContext,
+  userInput: { id?: string | null; value?: string | null } | null,
+  history: ConversationMessage[],
+  conversationState: Record<string, unknown> = {},
+  options?: ConversationRequestOptions
+): Promise<SectionPolishResponse> {
+  const nextHistory: ConversationMessage[] = [...history]
+  const formattedInput = userInput ?? { id: null, value: null }
+  const userContent = JSON.stringify(formattedInput)
+  nextHistory.push({ role: 'user', content: userContent })
+
+  const systemPrompt = buildSectionPolishSystemPrompt(context, project)
+  const raw = await chat(
+    systemPrompt,
+    nextHistory.map((m) => ({ role: m.role, content: m.content })),
+    projectChatOpts(project, {
+      temperature: 0.72,
+      stream: options?.stream,
+      signal: options?.signal,
+    })
+  )
+
+  const parsed = parseJsonBlock(raw) || {}
+  const aiMessage = resolveAiMessage(raw, parsed)
+  const uiControl = parseUiControl(parsed.ui_control, aiMessage)
+  const nextConversationState = {
+    ...conversationState,
+    ...(parsed.conversation_state && typeof parsed.conversation_state === 'object'
+      ? (parsed.conversation_state as Record<string, unknown>)
+      : {}),
+  }
+
+  const readyToApplyRaw = Boolean(parsed.ready_to_apply)
+  let blueprintUpdates =
+    parsed.blueprint_updates && typeof parsed.blueprint_updates === 'object'
+      ? (parsed.blueprint_updates as SectionPolishResponse['blueprint_updates'])
+      : undefined
+  const sectionUpdate = parsed.section_update ?? undefined
+  const affectedSections = Array.isArray(parsed.affected_sections)
+    ? (parsed.affected_sections as SectionPolishResponse['affected_sections'])
+    : undefined
+  let readyToApply = readyToApplyRaw
+
+  if (readyToApplyRaw) {
+    const coalesced = coalescePolishBlueprintUpdates(project.blueprint, context.section, {
+      blueprint_updates: blueprintUpdates,
+      section_update: sectionUpdate,
+    })
+    if (Object.keys(coalesced).length) {
+      blueprintUpdates = coalesced
+    } else {
+      readyToApply = false
+    }
+  }
+
+  let isComplete = Boolean(parsed.is_complete) || readyToApply
+  if (readyToApplyRaw && !readyToApply) {
+    isComplete = false
+  }
+
+  const assistantPayload = JSON.stringify({
+    ai_message: aiMessage,
+    ui_control: uiControl,
+    conversation_state: nextConversationState,
+    is_complete: isComplete,
+    ready_to_apply: readyToApply,
+    blueprint_updates: blueprintUpdates ?? null,
+    affected_sections: affectedSections ?? [],
+    section_update: sectionUpdate ?? null,
+  })
+  nextHistory.push({ role: 'assistant', content: assistantPayload })
+
+  return {
+    ai_message: aiMessage,
+    ui_control: uiControl,
+    conversation_state: { ...nextConversationState, polish_history: nextHistory },
+    is_complete: isComplete,
+    ready_to_apply: readyToApply,
+    blueprint_updates: blueprintUpdates,
+    affected_sections: affectedSections,
+    section_update: sectionUpdate,
+  }
+}
+
+export async function materializeSectionPolishUpdates(
+  project: NovelProject,
+  context: SectionPolishContext,
+  history: ConversationMessage[],
+  latestAiMessage: string,
+  options?: ConversationRequestOptions
+): Promise<SectionPolishMaterializeResponse> {
+  const blueprintJson = JSON.stringify(project.blueprint ?? {}, null, 2)
+  const historyText = formatPolishHistoryForMaterialize(history)
+  const systemPrompt = `${sectionPolishPrompt}
+${MATERIALIZE_POLISH_INSTRUCTION}
+
+## 任务
+对话助手已在自然语言中描述了修改方案，但尚未输出可写入的 blueprint_updates。
+请将下列对话中**已确认的修改**序列化为 blueprint_updates。
+
+## Entry Section
+- ${context.sectionLabel}（${context.section}）
+
+## 当前全书蓝图
+\`\`\`json
+${blueprintJson}
+\`\`\`
+`
+
+  const raw = await chat(
+    systemPrompt,
+    [
+      {
+        role: 'user',
+        content: [
+          '## 设定修改对话（最近轮次）',
+          historyText,
+          '',
+          '## 助手最新说明',
+          latestAiMessage.trim(),
+          '',
+          '请输出 JSON（summary、affected_sections、blueprint_updates）。',
+        ].join('\n'),
+      },
+    ],
+    projectChatOpts(project, {
+      temperature: 0.2,
+      stream: options?.stream,
+      signal: options?.signal,
+    })
+  )
+
+  const parsed = parseJsonBlock(raw) || {}
+  const coalesced = coalescePolishBlueprintUpdates(project.blueprint, context.section, {
+    blueprint_updates: parsed.blueprint_updates,
+  })
+  if (!Object.keys(coalesced).length) {
+    throw new Error('未能从对话生成可写入的修改数据，请补充更具体的修改说明后重试')
+  }
+
+  const affected = normalizeAffectedSections(context.section, {
+    affected_sections: parsed.affected_sections,
+    blueprint_updates: coalesced,
+  })
+
+  return {
+    summary:
+      typeof parsed.summary === 'string' && parsed.summary.trim()
+        ? parsed.summary.trim()
+        : '请确认以下设定修改是否应用',
+    blueprint_updates: coalesced,
+    affected_sections: affected,
+  }
+}
+
+export async function generateBlueprint(
+  project: NovelProject,
+  options?: { signal?: AbortSignal }
+): Promise<BlueprintGenerationResponse> {
+  const historyText = (project.conversation_history || [])
+    .map((m) => `${m.role}: ${m.content}`)
+    .join('\n\n')
+
+  const mode = resolveWritingMode(project)
+  const blueprintPrompt =
+    mode === 'simple' ? `${screenwritingPrompt}\n${SIMPLE_BLUEPRINT_SUPPLEMENT}` : screenwritingPrompt
+
+  const raw = await chat(
+    blueprintPrompt,
+    [
+      {
+        role: 'user',
+        content: `请根据以下灵感对话历史生成完整小说蓝图，严格按系统提示中的 JSON 结构输出，不要附加解释。\n\n${historyText}`,
+      },
+    ],
+    projectChatOpts(project, {
+      temperature: 0.3,
+      timeoutMs: LONG_STREAM_TIMEOUT_MS,
+      signal: options?.signal,
+    })
+  )
+
+  const parsed = parseJsonBlock(raw) || {}
+  const blueprint = parsed as Blueprint
+  if (!blueprint.title) blueprint.title = project.title
+  if (mode === 'simple') {
+    if (!blueprint.world_setting) blueprint.world_setting = {}
+    blueprint.world_setting.key_locations = []
+    blueprint.world_setting.factions = []
+    blueprint.relationships = []
+  }
+  project.blueprint = blueprint
+  project.title = blueprint.title || project.title
+
+  return {
+    blueprint,
+    ai_message: '蓝图已生成，你可以继续编辑或直接开始写作。',
+  }
+}
+
+function chapterOutlineEntry(project: NovelProject, chapterNumber: number) {
+  return project.blueprint?.chapter_outline?.find((c) => c.chapter_number === chapterNumber)
+}
+
+export function upsertChapterStatus(
+  project: NovelProject,
+  chapterNumber: number,
+  status: Chapter['generation_status']
+): Chapter {
+  const outline = chapterOutlineEntry(project, chapterNumber)
+  if (!Array.isArray(project.chapters)) project.chapters = []
+
+  const existing = project.chapters.find((c) => c.chapter_number === chapterNumber)
+  const chapter: Chapter = existing
+    ? { ...existing, generation_status: status }
+    : {
+        chapter_number: chapterNumber,
+        title: outline?.title || `第${chapterNumber}章`,
+        summary: outline?.summary || '',
+        content: null,
+        versions: [],
+        evaluation: null,
+        generation_status: status,
+        word_count: 0,
+      }
+
+  const idx = project.chapters.findIndex((c) => c.chapter_number === chapterNumber)
+  if (idx >= 0) project.chapters.splice(idx, 1, chapter)
+  else project.chapters.push(chapter)
+  project.chapters.sort((a, b) => a.chapter_number - b.chapter_number)
+  return chapter
+}
+
+export async function generateChapterContent(
+  project: NovelProject,
+  chapterNumber: number,
+  options?: { signal?: AbortSignal }
+): Promise<Chapter> {
+  const outline = chapterOutlineEntry(project, chapterNumber)
+  const totalChapters = project.blueprint?.chapter_outline?.length || project.chapters?.length || 1
+  const versionCount = resolveChapterVersionCount(outline, totalChapters)
+  const prior = (project.chapters || [])
+    .filter((c) => c.chapter_number < chapterNumber && c.content)
+    .slice(-2)
+    .map((c) => `第${c.chapter_number}章 ${c.title}\n${c.content}`)
+    .join('\n\n')
+
+  const versions: string[] = []
+  for (let i = 0; i < versionCount; i += 1) {
+    if (options?.signal?.aborted) {
+      throw new DOMException('The operation was aborted.', 'AbortError')
+    }
+    const styleHint = CHAPTER_VERSION_STYLE_HINTS[i % CHAPTER_VERSION_STYLE_HINTS.length]
+    const content = await chat(
+      writingPrompt,
+      [
+        {
+          role: 'user',
+          content: [
+            `书名：${project.title}`,
+            `蓝图摘要：${project.blueprint?.full_synopsis || project.initial_prompt}`,
+            `当前章节：第${chapterNumber}章 ${outline?.title || ''}`,
+            `章节纲要：${outline?.summary || '按蓝图推进'}`,
+            prior ? `前文参考：\n${prior}` : '',
+            versionCount > 1 ? `写作风格提示：${styleHint}` : '',
+            `请直接输出章节正文，不要输出 JSON 或解释。`,
+          ]
+            .filter(Boolean)
+            .join('\n\n'),
+        },
+      ],
+      projectChatOpts(project, {
+        temperature: 0.85,
+        timeoutMs: LONG_STREAM_TIMEOUT_MS,
+        signal: options?.signal,
+      })
+    )
+    versions.push(content)
+  }
+
+  const chapter: Chapter = {
+    chapter_number: chapterNumber,
+    title: outline?.title || `第${chapterNumber}章`,
+    summary: outline?.summary || '',
+    content: versions[0] || null,
+    versions,
+    evaluation: null,
+    generation_status: 'waiting_for_confirm',
+    word_count: versions[0]?.length ?? 0,
+  }
+
+  if (!Array.isArray(project.chapters)) project.chapters = []
+  const idx = project.chapters.findIndex((c) => c.chapter_number === chapterNumber)
+  if (idx >= 0) project.chapters.splice(idx, 1, chapter)
+  else project.chapters.push(chapter)
+  project.chapters.sort((a, b) => a.chapter_number - b.chapter_number)
+  projectStatsService.recordChapterComplete(project.id)
+  return chapter
+}
+
+export async function evaluateChapter(
+  project: NovelProject,
+  chapterNumber: number,
+  options?: { signal?: AbortSignal }
+): Promise<Chapter> {
+  const chapter = project.chapters.find((c) => c.chapter_number === chapterNumber)
+  const versions = (chapter?.versions || []).filter((version) => version?.trim())
+  if (!chapter) throw new Error('章节不存在')
+  if (versions.length < 2) {
+    throw new Error('需要至少 2 个版本才能进行 AI 评审，请重新生成章节')
+  }
+
+  const outline = chapterOutlineEntry(project, chapterNumber)
+  const completedChapters = (project.chapters || [])
+    .filter((item) => item.chapter_number < chapterNumber && item.content?.trim())
+    .map((item) => ({
+      chapter_number: item.chapter_number,
+      title: item.title,
+      summary: item.summary || '',
+      content_excerpt: item.content!.slice(0, 800),
+    }))
+
+  const payload = {
+    novel_blueprint: project.blueprint ?? {},
+    completed_chapters: completedChapters,
+    content_to_evaluate: {
+      chapter_number: chapterNumber,
+      chapter_title: outline?.title || chapter.title,
+      chapter_summary: outline?.summary || chapter.summary,
+      versions: versions.map((content, index) => ({
+        version: index + 1,
+        content,
+      })),
+    },
+  }
+
+  const raw = await chat(
+    evaluationPrompt,
+    [{ role: 'user', content: JSON.stringify(payload, null, 2) }],
+    projectChatOpts(project, {
+      temperature: 0.3,
+      timeoutMs: LONG_STREAM_TIMEOUT_MS,
+      signal: options?.signal,
+    })
+  )
+
+  const parsed = parseJsonBlock(raw)
+  chapter.evaluation = parsed ? JSON.stringify(parsed) : raw.trim()
+
+  if (parsed && typeof parsed.best_choice === 'number') {
+    const bestIndex = parsed.best_choice - 1
+    if (bestIndex >= 0 && bestIndex < versions.length) {
+      chapter.content = versions[bestIndex]
+      chapter.word_count = chapter.content.length
+    }
+  }
+
+  chapter.generation_status = 'waiting_for_confirm'
+  return chapter
+}
+
+export async function generateChapterOutline(
+  project: NovelProject,
+  startChapter: number,
+  numChapters: number,
+  options?: { signal?: AbortSignal }
+): Promise<NovelProject> {
+  const raw = await chat(
+    outlinePrompt,
+    [
+      {
+        role: 'user',
+        content: `基于以下蓝图，为第 ${startChapter} 章起连续 ${numChapters} 章生成 chapter_outline JSON 数组（chapter_number, title, summary）。\n${JSON.stringify(project.blueprint ?? {}, null, 2)}`,
+      },
+    ],
+    projectChatOpts(project, {
+      temperature: 0.6,
+      timeoutMs: LONG_STREAM_TIMEOUT_MS,
+      signal: options?.signal,
+    })
+  )
+
+  const parsed = parseJsonBlock(raw)
+  const outline = (parsed?.chapter_outline || parsed?.chapters || parsed) as unknown
+  if (Array.isArray(outline)) {
+    if (!project.blueprint) project.blueprint = {}
+    const existing = project.blueprint.chapter_outline || []
+    const merged = [...existing]
+    for (const item of outline) {
+      const entry = item as { chapter_number: number; title: string; summary: string }
+      const idx = merged.findIndex((c) => c.chapter_number === entry.chapter_number)
+      if (idx >= 0) merged[idx] = entry
+      else merged.push(entry)
+    }
+    project.blueprint.chapter_outline = merged.sort((a, b) => a.chapter_number - b.chapter_number)
+  }
+  return project
+}
+
+export async function optimizeChapter(
+  project: NovelProject,
+  chapterNumber: number,
+  dimension: keyof typeof OPTIMIZE_PROMPTS,
+  additionalNotes?: string
+): Promise<OptimizeResponse> {
+  const chapter = project.chapters.find((c) => c.chapter_number === chapterNumber)
+  if (!chapter?.content) throw new Error('章节内容为空')
+
+  const optimized = await chat(
+    OPTIMIZE_PROMPTS[dimension],
+    [
+      {
+        role: 'user',
+        content: `${chapter.content}\n\n补充说明：${additionalNotes || '无'}`,
+      },
+    ],
+    projectChatOpts(project, { temperature: 0.5 })
+  )
+
+  return {
+    optimized_content: optimized,
+    optimization_notes: `已完成 ${dimension} 维度优化`,
+    dimension,
+  }
+}
+
+export async function summarizeChapter(content: string): Promise<string> {
+  return await chat(extractionPrompt, [{ role: 'user', content }], { temperature: 0.2 })
+}

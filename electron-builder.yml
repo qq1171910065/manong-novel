@@ -1,0 +1,60 @@
+appId: com.mntools.arena
+productName: Manong Arena
+directories:
+  buildResources: build
+files:
+  - '!**/.vscode/*'
+  - '!src/*'
+  - '!scripts/**'
+  - '!electron.vite.config.{js,ts,mjs,cjs}'
+  - '!electron-builder.config.cjs'
+  - '!electron-builder.yml'
+  - '!{.eslintignore,.eslintrc.cjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
+  - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  - '!**/*.tsbuildinfo'
+  - '!docs/**'
+  - '!AGENTS.md'
+  - '!.tmp/**'
+  - '!.dev-assets/**'
+extraResources:
+  - from: build/
+    to: icons
+    filter:
+      - icon.ico
+      - icon.png
+  - from: src/bundled-assets/
+    to: bundled-assets
+    filter:
+      - '**/*'
+npmRebuild: false
+# Release 由 .github/workflows/release.yml 上传产物，不在 electron-builder 内自动 publish
+publish: null
+win:
+  executableName: arena
+  icon: icon.ico
+  target:
+    - nsis
+  sign: null
+  signAndEditExecutable: false
+nsis:
+  artifactName: ${name}-${version}-setup.${ext}
+  include: build/installer.nsh
+  shortcutName: ${productName}
+  uninstallDisplayName: ${productName}
+  createDesktopShortcut: always
+  installerIcon: icon.ico
+  uninstallerIcon: icon.ico
+mac:
+  icon: icon.icns
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    - NSCameraUsageDescription: Application requests access to the device's camera.
+    - NSMicrophoneUsageDescription: Application requests access to the device's microphone.
+    - NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
+    - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
+  notarize: false
+dmg:
+  artifactName: ${name}-${version}.${ext}
+electronDownload:
+  mirror: https://npmmirror.com/mirrors/electron/

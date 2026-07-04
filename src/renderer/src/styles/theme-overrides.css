@@ -1,0 +1,25 @@
+/* Ink-Jade theme — aligned with login-bg & app-icon branding */
+html {
+  --color-primary: #1f7a67;
+  --color-primary-deep: #0f4b44;
+  --color-accent-cyan: #8eb4a2;
+  --color-accent-indigo: #c5a059;
+  --brand: var(--color-primary);
+  --brand-strong: var(--color-primary-deep);
+  --brand-soft: rgba(31, 122, 103, 0.12);
+  --bg: #f5f5ed;
+  --bg-elevated: #eae2d1;
+  --surface: #fffcf7;
+  --surface-soft: #f5f5ed;
+  --line: #ddd5c4;
+  --line-strong: #c9bfa8;
+  --text: #142f2f;
+  --text-secondary: #3d5550;
+  --muted: #60766f;
+  --soft: #8a9a94;
+  --shell-sidebar-bg: var(--surface);
+  --shell-statusbar-bg: var(--surface-soft);
+  --shell-titlebar-bg: var(--surface);
+  --radius: 8px;
+  --radius-md: 12px;
+}

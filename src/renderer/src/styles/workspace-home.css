@@ -1,0 +1,170 @@
+/* Home / workspace page — body centered via aa-page-inner (Arena) */
+
+.workspace-home {
+  width: 100%;
+  padding-block: clamp(12px, 3vh, 28px) clamp(32px, 6vh, 64px);
+}
+
+.workspace-home__hero {
+  text-align: center;
+  margin-bottom: clamp(24px, 4vh, 36px);
+}
+
+.workspace-home__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 6px 14px;
+  border-radius: var(--control-radius-pill);
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: var(--text-2xs);
+  font-weight: 650;
+  letter-spacing: 0.04em;
+}
+
+.workspace-home__title {
+  margin: 0;
+  color: var(--text);
+  font-size: clamp(var(--text-h2), 4vw, var(--text-h1));
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+.workspace-home__desc {
+  margin: 10px auto 0;
+  max-width: 520px;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+
+.workspace-home__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+/* Buttons: see tokens.css (.workspace-home__btn shared with .arena-btn) */
+
+.workspace-home__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 18px;
+}
+
+.workspace-home__state {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 280px;
+  padding: 40px 24px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  box-shadow: 0 18px 40px rgba(100, 112, 190, 0.08);
+  text-align: center;
+}
+
+.workspace-home__state-icon {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  border-radius: var(--radius-lg);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--brand) 16%, transparent), color-mix(in srgb, var(--brand) 8%, transparent));
+  color: var(--brand);
+}
+
+.workspace-home__state-title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-lg);
+  font-weight: 650;
+}
+
+.workspace-home__state-desc {
+  margin: 0;
+  max-width: 360px;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+
+.workspace-home__utility-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 196px;
+  padding: 24px;
+  border-radius: var(--radius-lg);
+  border: 1px dashed color-mix(in srgb, var(--line) 80%, var(--brand) 20%);
+  background: color-mix(in srgb, var(--surface) 50%, transparent);
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    transform 0.18s ease,
+    border-color 0.18s ease,
+    background 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.workspace-home__utility-card:hover:not(:disabled) {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--brand) 35%, transparent);
+  background: var(--surface);
+  box-shadow: 0 14px 30px color-mix(in srgb, var(--brand) 10%, transparent);
+}
+
+.workspace-home__utility-card:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.workspace-home__utility-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-md);
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+.workspace-home__utility-card--import .workspace-home__utility-icon {
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+  color: var(--success);
+}
+
+.workspace-home__utility-label {
+  font-size: var(--text-base);
+  font-weight: var(--btn-font-weight);
+  color: var(--text);
+}
+
+.workspace-home__snackbar {
+  position: fixed;
+  left: 50%;
+  bottom: 72px;
+  z-index: 30;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 18px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--text) 92%, transparent);
+  color: var(--on-brand);
+  font-size: var(--text-sm);
+  box-shadow: 0 16px 40px color-mix(in srgb, var(--text) 24%, transparent);
+}
