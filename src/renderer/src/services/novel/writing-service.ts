@@ -40,6 +40,7 @@ import {
   coalescePolishBlueprintUpdates,
   normalizeAffectedSections,
 } from '@renderer/novel/utils/section-polish'
+import { cloneJson } from '@shared/clone-json'
 import {
   CHAPTER_VERSION_STYLE_HINTS,
   resolveChapterVersionCount,
@@ -368,10 +369,11 @@ IMPORTANT: 仅输出合法 JSON 对象：
 }
 规则：
 - 根据对话中**已确认**的修改或新增意图，基于当前全书蓝图生成 blueprint_updates
-- 保留角色 id、未提及字段；角色改名时输出**完整 characters 数组**
-- **新增角色/关系/章节**时：在对应数组中追加新条目（可只输出新增项，系统会合并）；保留原有条目不变
-- 若涉及关系网，输出**完整 relationships 数组**，同步 character_from / character_to 中的姓名
-- affected_sections 列出实际变更的板块
+- 修改前通读全书蓝图，带着全局一致性思维处理人物、关系、场景/地点的联动
+- 保留角色 id、未提及字段；角色改名时输出**完整 characters 数组**，并同步输出**完整 relationships 数组**（更新 character_from / character_to 中的姓名）
+- **新增角色/关系/章节/地点**时：在对应数组中追加新条目（可只输出新增项，系统会合并）；保留原有条目不变
+- 改地点/场景时联动检查 world_setting.key_locations 与相关 chapter_outline
+- affected_sections 必须列出所有实际变更的板块（含联动项），不可只列入入口 Tab
 - 不要输出 ready_to_apply、ai_message 等对话字段
 `
 
@@ -694,10 +696,11 @@ export async function converseSectionPolish(
   const parsed = parseJsonBlock(raw) || {}
   const aiMessage = resolveAiMessage(raw, parsed)
   const uiControl = parseUiControl(parsed.ui_control, aiMessage)
+  const safeConversationState = cloneJson(conversationState)
   const nextConversationState = {
-    ...conversationState,
+    ...safeConversationState,
     ...(parsed.conversation_state && typeof parsed.conversation_state === 'object'
-      ? (parsed.conversation_state as Record<string, unknown>)
+      ? cloneJson(parsed.conversation_state as Record<string, unknown>)
       : {}),
   }
 

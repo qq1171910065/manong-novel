@@ -215,6 +215,40 @@ function mergeChapterOutlineUpdate(
   return next.sort((a, b) => a.chapter_number - b.chapter_number)
 }
 
+function detectCharacterRenames(existing: Character[], merged: Character[]): Map<string, string> {
+  const renames = new Map<string, string>()
+  for (const updated of merged) {
+    if (!updated.id) continue
+    const old = existing.find((item) => item.id === updated.id)
+    const oldName = old?.name?.trim()
+    const newName = updated.name?.trim()
+    if (oldName && newName && oldName !== newName) {
+      renames.set(oldName, newName)
+    }
+  }
+  return renames
+}
+
+function syncRelationshipCharacterNames(
+  relationships: Relationship[] | undefined,
+  renames: Map<string, string>
+): Relationship[] | undefined {
+  if (!relationships?.length || !renames.size) return relationships
+  let changed = false
+  const next = relationships.map((rel) => {
+    const from = rel.character_from?.trim()
+    const to = rel.character_to?.trim()
+    const nextFrom = from && renames.has(from) ? renames.get(from)! : rel.character_from
+    const nextTo = to && renames.has(to) ? renames.get(to)! : rel.character_to
+    if (nextFrom !== rel.character_from || nextTo !== rel.character_to) {
+      changed = true
+      return { ...rel, character_from: nextFrom, character_to: nextTo }
+    }
+    return rel
+  })
+  return changed ? next : relationships
+}
+
 export function coalescePolishBlueprintUpdates(
   existingBlueprint: Blueprint | undefined | null,
   entrySection: PolishableSectionKey,
@@ -254,12 +288,31 @@ export function coalescePolishBlueprintUpdates(
   if (raw.world_setting !== undefined) {
     patch.world_setting = raw.world_setting as Blueprint['world_setting']
   }
+
+  let nextRelationships = existing.relationships
+  let characterRenames: Map<string, string> | null = null
+
   if (raw.characters !== undefined) {
     patch.characters = mergeCharactersUpdate(existing.characters, raw.characters)
+    characterRenames = detectCharacterRenames(existing.characters ?? [], patch.characters)
+    if (characterRenames.size) {
+      nextRelationships = syncRelationshipCharacterNames(nextRelationships, characterRenames)
+    }
   }
   if (raw.relationships !== undefined) {
-    patch.relationships = mergeRelationshipsUpdate(existing.relationships, raw.relationships)
+    nextRelationships = mergeRelationshipsUpdate(existing.relationships, raw.relationships)
+    if (characterRenames?.size) {
+      nextRelationships = syncRelationshipCharacterNames(nextRelationships, characterRenames)
+    }
   }
+  if (
+    nextRelationships !== undefined &&
+    nextRelationships !== existing.relationships &&
+    (raw.relationships !== undefined || raw.characters !== undefined)
+  ) {
+    patch.relationships = nextRelationships
+  }
+
   if (raw.chapter_outline !== undefined) {
     patch.chapter_outline = mergeChapterOutlineUpdate(existing.chapter_outline, raw.chapter_outline)
   }

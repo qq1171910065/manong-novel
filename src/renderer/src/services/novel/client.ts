@@ -1,5 +1,6 @@
 import { userInfoRef } from '@renderer/services/auth'
 import { isWebRuntime } from '@renderer/composables/useRuntime'
+import { cloneJson } from '@shared/clone-json'
 
 export function getNovelUserId(): string {
   const user = userInfoRef.value
@@ -25,7 +26,7 @@ export const novelClient = {
   ) =>
     unwrap(window.api.novelCreateProject(getNovelUserId(), { title, initialPrompt, writingMode })),
   saveProject: (project: import('@shared/novel/types').NovelProject) =>
-    unwrap(window.api.novelSaveProject(getNovelUserId(), project)),
+    unwrap(window.api.novelSaveProject(getNovelUserId(), cloneJson(project))),
   deleteProjects: (projectIds: string[]) =>
     unwrap(window.api.novelDeleteProjects(getNovelUserId(), projectIds)),
   getChapter: (projectId: string, chapterNumber: number) =>
