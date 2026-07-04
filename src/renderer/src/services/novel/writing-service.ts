@@ -67,6 +67,10 @@ import {
   sanitizeChapterContent,
 } from '@shared/novel/chapter-content-guard'
 import {
+  patchChapterGenProgress,
+  setChapterGenProgress,
+} from '@renderer/novel/composables/chapter-generation-progress'
+import {
   applyUserAnswerToChecklist,
   buildAutoCompletionMessage,
   buildChecklistPromptSupplement,
@@ -1080,53 +1084,97 @@ export function upsertChapterStatus(
 export async function generateChapterContent(
   project: NovelProject,
   chapterNumber: number,
-  options?: { signal?: AbortSignal }
+  options?: { signal?: AbortSignal; fastMode?: boolean }
 ): Promise<Chapter> {
   const outline = chapterOutlineEntry(project, chapterNumber)
   const writingMode = resolveWritingMode(project)
   const totalChapters = project.blueprint?.chapter_outline?.length || project.chapters?.length || 1
-  const versionCount = resolveChapterVersionCount(outline, totalChapters)
+  const versionCount = options?.fastMode
+    ? 1
+    : resolveChapterVersionCount(outline, totalChapters)
   const { priorEnding, priorSummary, priorContent } = buildPriorChapterContext(project, chapterNumber)
   const wordCountHint = formatWordCountPlanHint(outline, totalChapters, writingMode)
   const recentStats = formatRecentWordCountStats(
     buildRecentWordCountEntries(project, chapterNumber, writingMode)
   )
 
+  setChapterGenProgress({
+    projectId: project.id,
+    chapterNumber,
+    phase: 'starting',
+    versionIndex: 0,
+    versionTotal: versionCount,
+    chars: 0,
+    message: `准备生成第 ${chapterNumber} 章…`,
+    updatedAt: Date.now(),
+  })
+
   const versions: string[] = []
-  for (let i = 0; i < versionCount; i += 1) {
-    if (options?.signal?.aborted) {
-      throw new DOMException('The operation was aborted.', 'AbortError')
-    }
-    const styleHint = CHAPTER_VERSION_STYLE_HINTS[i % CHAPTER_VERSION_STYLE_HINTS.length]
-    const content = await chat(
-      writingPrompt,
-      [
-        {
-          role: 'user',
-          content: [
-            `书名：${project.title}`,
-            `蓝图摘要：${project.blueprint?.full_synopsis || project.initial_prompt}`,
-            `当前章节：第${chapterNumber}章 ${outline?.title || ''}`,
-            `章节纲要：${outline?.summary || '按蓝图推进'}`,
-            wordCountHint,
-            recentStats ? `近期章节字数（保持体量一致）：\n${recentStats}` : '',
-            `衔接要求：仅承接上一章结尾最后一拍，推进新信息；禁止复述上一章已写情节、对话或环境描写。`,
-            priorSummary ? `上一章摘要：${priorSummary}` : '',
-            priorEnding ? `上一章结尾片段（仅供衔接，禁止复述）：\n${priorEnding}` : '',
-            versionCount > 1 ? `写作风格提示：${styleHint}` : '',
-            `请直接输出章节正文，不要输出 JSON 或解释。`,
-          ]
-            .filter(Boolean)
-            .join('\n\n'),
-        },
-      ],
-      projectChatOpts(project, {
-        temperature: 0.85,
-        timeoutMs: LONG_STREAM_TIMEOUT_MS,
-        signal: options?.signal,
+  try {
+    for (let i = 0; i < versionCount; i += 1) {
+      if (options?.signal?.aborted) {
+        throw new DOMException('The operation was aborted.', 'AbortError')
+      }
+      const styleHint = CHAPTER_VERSION_STYLE_HINTS[i % CHAPTER_VERSION_STYLE_HINTS.length]
+      patchChapterGenProgress({
+        phase: 'writing',
+        versionIndex: i + 1,
+        versionTotal: versionCount,
+        chars: 0,
+        message:
+          versionCount > 1
+            ? `正在撰写第 ${chapterNumber} 章（版本 ${i + 1}/${versionCount}）…`
+            : `正在撰写第 ${chapterNumber} 章…`,
       })
-    )
-    versions.push(sanitizeChapterContent(content, priorContent))
+
+      let streamedChars = 0
+      const content = await chat(
+        writingPrompt,
+        [
+          {
+            role: 'user',
+            content: [
+              `书名：${project.title}`,
+              `蓝图摘要：${project.blueprint?.full_synopsis || project.initial_prompt}`,
+              `当前章节：第${chapterNumber}章 ${outline?.title || ''}`,
+              `章节纲要：${outline?.summary || '按蓝图推进'}`,
+              wordCountHint,
+              recentStats ? `近期章节字数（保持体量一致）：\n${recentStats}` : '',
+              `衔接要求：仅承接上一章结尾最后一拍，推进新信息；禁止复述上一章已写情节、对话或环境描写。`,
+              priorSummary ? `上一章摘要：${priorSummary}` : '',
+              priorEnding ? `上一章结尾片段（仅供衔接，禁止复述）：\n${priorEnding}` : '',
+              versionCount > 1 ? `写作风格提示：${styleHint}` : '',
+              `请直接输出章节正文，不要输出 JSON 或解释。`,
+            ]
+              .filter(Boolean)
+              .join('\n\n'),
+          },
+        ],
+        projectChatOpts(project, {
+          temperature: 0.85,
+          timeoutMs: LONG_STREAM_TIMEOUT_MS,
+          signal: options?.signal,
+          stream: {
+            onChunk: ({ raw }) => {
+              streamedChars = countChapterChars(raw)
+              patchChapterGenProgress({
+                phase: 'writing',
+                chars: streamedChars,
+                message:
+                  versionCount > 1
+                    ? `第 ${chapterNumber} 章版本 ${i + 1}/${versionCount}：已输出 ${streamedChars} 字…`
+                    : `第 ${chapterNumber} 章：已输出 ${streamedChars} 字…`,
+              })
+            },
+          },
+        })
+      )
+
+      patchChapterGenProgress({ phase: 'processing', message: `整理第 ${chapterNumber} 章正文…` })
+      versions.push(sanitizeChapterContent(content, priorContent))
+    }
+  } finally {
+    setChapterGenProgress(null)
   }
 
   const chapter: Chapter = {

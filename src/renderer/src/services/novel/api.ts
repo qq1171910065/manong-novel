@@ -304,14 +304,17 @@ export class NovelAPI {
   static async generateChapter(
     projectId: string,
     chapterNumber: number,
-    options?: { signal?: AbortSignal }
+    options?: { signal?: AbortSignal; fastMode?: boolean }
   ): Promise<NovelProject> {
     const project = await novelClient.getProject(projectId)
     writing.upsertChapterStatus(project, chapterNumber, 'generating')
     await novelClient.saveProject(project)
 
     try {
-      await writing.generateChapterContent(project, chapterNumber, { signal: options?.signal })
+      await writing.generateChapterContent(project, chapterNumber, {
+        signal: options?.signal,
+        fastMode: options?.fastMode,
+      })
       return novelClient.saveProject(project)
     } catch (error) {
       writing.upsertChapterStatus(

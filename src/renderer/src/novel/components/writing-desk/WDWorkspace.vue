@@ -419,6 +419,7 @@ const currentComponentProps = computed(() => {
   ) {
     return {
       chapterNumber: props.selectedChapterNumber,
+      projectId: props.project?.id,
       status:
         props.evaluatingChapter === props.selectedChapterNumber
           ? 'evaluating'

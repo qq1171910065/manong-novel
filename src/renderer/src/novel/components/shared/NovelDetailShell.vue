@@ -137,7 +137,7 @@
     />
 
     <BlueprintGeneratingOverlay
-      :show="showBlueprintGenerating || showImportParsing || autoWrite.isRunning.value"
+      :show="showGenerationOverlay"
       :progress="autoWriteOverlayProgress"
       :loading-text="autoWriteOverlayText"
       :description="autoWriteOverlayDescription"
@@ -485,10 +485,14 @@ const autoWriteOverlayText = computed(() => {
   return generationOverlay.value.loadingText.value
 })
 
+const showGenerationOverlay = computed(
+  () => showBlueprintGenerating.value || showImportParsing.value || autoWrite.isRunning.value
+)
+
 const autoWriteOverlayDescription = computed(() => {
   if (autoWrite.isRunning.value) {
     const current = autoWrite.progress.value
-    return `AI 接管创作：已完成 ${current.completedCount}/${current.totalCount} 章。每章将经历生成 → 评审（多版本时）→ 自动确认，然后继续下一章。`
+    return `AI 接管创作：已完成 ${current.completedCount}/${current.totalCount} 章。每章生成时会实时显示字数，可随时取消。`
   }
   return generationOverlayDescription.value
 })

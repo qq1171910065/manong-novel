@@ -15,7 +15,7 @@
         <div class="md-progress-linear-bar"></div>
       </div>
       <p class="md-body-small md-on-surface-variant text-left">
-        生成过程通常需要2分钟以上，请耐心等待。您可以随时离开此页面，生成完成后再回来查看。
+        {{ liveProgress ? '正在实时接收 AI 输出，字数会持续更新。' : '生成过程通常需要 1–3 分钟，请耐心等待。' }}
       </p>
       <button
         type="button"
@@ -31,17 +31,40 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Chapter } from '@renderer/services/novel/api'
+import { useChapterGenProgress } from '@renderer/novel/composables/chapter-generation-progress'
 
 interface Props {
   chapterNumber: number | null
   status: Chapter['generation_status'] | null
+  projectId?: string
 }
 
 const props = defineProps<Props>()
 
 defineEmits(['cancel'])
 
+const { activeProgress } = useChapterGenProgress()
+
+const liveProgress = computed(() => {
+  const live = activeProgress.value
+  if (!live) return null
+  if (props.projectId && live.projectId !== props.projectId) return null
+  if (props.chapterNumber !== null && live.chapterNumber !== props.chapterNumber) return null
+  return live
+})
+
 const statusText = computed(() => {
+  if (liveProgress.value?.message) {
+    return {
+      title: liveProgress.value.message,
+      line1: liveProgress.value.chars > 0 ? `已输出 ${liveProgress.value.chars} 字` : '正在连接 AI 模型…',
+      line2:
+        liveProgress.value.versionTotal > 1
+          ? `版本 ${liveProgress.value.versionIndex}/${liveProgress.value.versionTotal}`
+          : '内容生成中，请稍候…',
+    }
+  }
+
   switch (props.status) {
     case 'generating':
       return {

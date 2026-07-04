@@ -240,7 +240,10 @@ export const useNovelStore = defineStore('novel', () => {
     }
   }
 
-  async function generateChapter(chapterNumber: number): Promise<NovelProject> {
+  async function generateChapter(
+    chapterNumber: number,
+    options?: { signal?: AbortSignal; fastMode?: boolean }
+  ): Promise<NovelProject> {
     error.value = null
     try {
       if (!currentProject.value) {
@@ -253,11 +256,20 @@ export const useNovelStore = defineStore('novel', () => {
         throw new Error('该章节正在生成中')
       }
       const controller = registerAsyncTask(taskRef)
+      const linkedSignal = options?.signal
+      let unlinkAbort: (() => void) | undefined
+      if (linkedSignal) {
+        const onAbort = () => controller.abort()
+        if (linkedSignal.aborted) controller.abort()
+        else linkedSignal.addEventListener('abort', onAbort, { once: true })
+        unlinkAbort = () => linkedSignal.removeEventListener('abort', onAbort)
+      }
       writing.upsertChapterStatus(currentProject.value, chapterNumber, 'generating')
 
       try {
         const updatedProject = await NovelAPI.generateChapter(projectId, chapterNumber, {
           signal: controller.signal,
+          fastMode: options?.fastMode,
         })
         currentProject.value = updatedProject
         const chapter = updatedProject.chapters?.find((item) => item.chapter_number === chapterNumber)
@@ -277,6 +289,7 @@ export const useNovelStore = defineStore('novel', () => {
         }
         throw err
       } finally {
+        unlinkAbort?.()
         unregisterAsyncTask(taskRef)
       }
     } catch (err) {
@@ -296,7 +309,10 @@ export const useNovelStore = defineStore('novel', () => {
     void novelClient.saveProject(project).catch(() => {})
   }
 
-  async function evaluateChapter(chapterNumber: number): Promise<NovelProject> {
+  async function evaluateChapter(
+    chapterNumber: number,
+    options?: { signal?: AbortSignal }
+  ): Promise<NovelProject> {
     error.value = null
     try {
       if (!currentProject.value) {
@@ -308,6 +324,14 @@ export const useNovelStore = defineStore('novel', () => {
         throw new Error('该章节正在评审中')
       }
       const controller = registerAsyncTask(taskRef)
+      const linkedSignal = options?.signal
+      let unlinkAbort: (() => void) | undefined
+      if (linkedSignal) {
+        const onAbort = () => controller.abort()
+        if (linkedSignal.aborted) controller.abort()
+        else linkedSignal.addEventListener('abort', onAbort, { once: true })
+        unlinkAbort = () => linkedSignal.removeEventListener('abort', onAbort)
+      }
       writing.upsertChapterStatus(currentProject.value, chapterNumber, 'evaluating')
 
       try {
@@ -332,6 +356,7 @@ export const useNovelStore = defineStore('novel', () => {
         }
         throw err
       } finally {
+        unlinkAbort?.()
         unregisterAsyncTask(taskRef)
       }
     } catch (err) {
