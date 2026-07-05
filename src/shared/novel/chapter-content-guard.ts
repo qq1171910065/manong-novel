@@ -1,4 +1,4 @@
-import { countChapterChars } from './chapter-length-plan'
+import { countChapterChars, resolveChapterWordCountRange } from './chapter-length-plan'
 
 const SENTENCE_SPLIT = /(?<=[。！？!?…])/
 const MIN_LINE_DEDUPE = 6
@@ -267,7 +267,7 @@ export function sanitizeChapterContent(content: string, priorContent?: string | 
   let next = content.trim()
   if (!next) return next
 
-  for (let pass = 0; pass < 2; pass += 1) {
+  for (let pass = 0; pass < (countChapterChars(next) > 4200 ? 3 : 2); pass += 1) {
     next = dedupeRepeatedLines(next)
     next = dedupeIntraParagraphSentences(next)
     next = removeRepeatedClauses(next)
@@ -280,8 +280,58 @@ export function sanitizeChapterContent(content: string, priorContent?: string | 
   return next.trim()
 }
 
+export function hasRepeatedSentenceLoop(content: string): boolean {
+  const sentences = splitSentences(content)
+  const seen = new Map<string, number>()
+  for (const sentence of sentences) {
+    const key = normalizeBlock(sentence)
+    if (key.length < MIN_SENTENCE_DEDUPE) continue
+    const count = (seen.get(key) || 0) + 1
+    seen.set(key, count)
+    if (count >= 2) return true
+  }
+  return false
+}
+
 export function hasSevereRepetition(content: string, priorContent?: string | null): boolean {
-  return detectRepetitionIssues(content, priorContent).length >= 2
+  if (hasRepeatedSentenceLoop(content)) return true
+  return detectRepetitionIssues(content, priorContent).length >= 1
+}
+
+/** 超出硬上限时按段落/句子边界截断，保留章末钩子 */
+export function truncateChapterToMaxChars(content: string, maxChars: number): string {
+  const trimmed = content.trim()
+  if (!trimmed || countChapterChars(trimmed) <= maxChars) return trimmed
+
+  const paragraphs = splitParagraphs(trimmed)
+  let result = ''
+
+  for (const paragraph of paragraphs) {
+    const candidate = result ? `${result}\n\n${paragraph}` : paragraph
+    if (countChapterChars(candidate) <= maxChars) {
+      result = candidate
+      continue
+    }
+
+    if (!result) {
+      const sentences = splitSentences(paragraph)
+      for (const sentence of sentences) {
+        const next = result + sentence
+        if (countChapterChars(next) <= maxChars) result = next
+        else break
+      }
+    }
+    break
+  }
+
+  if (result.trim()) return result.trim()
+
+  let fallback = ''
+  for (const char of trimmed.replace(/\s+/g, '')) {
+    fallback += char
+    if (fallback.length >= maxChars) break
+  }
+  return fallback
 }
 
 export function formatRepetitionRewriteHint(content: string, priorContent?: string | null): string {
@@ -298,10 +348,29 @@ export function formatRepetitionRewriteHint(content: string, priorContent?: stri
 
 export function formatWordCountFeedback(actual: number, target: number): string | null {
   if (!target) return null
+  const { max } = resolveChapterWordCountRange(target)
+  if (actual > max) {
+    return `上一版 ${actual} 字，超过硬性上限 ${max} 字。请完全重写，删除所有重复段落，控制在 ${target} 字左右，不得超过 ${max} 字。`
+  }
   const ratio = actual / target
   if (ratio < 0.75) return `上一版仅 ${actual} 字，明显低于规划 ${target} 字，请补足情节与细节。`
-  if (ratio > 1.25) return `上一版达 ${actual} 字，明显高于规划 ${target} 字，请精简重复与枝节。`
+  if (ratio > 1.15) {
+    return `上一版 ${actual} 字，超出规划 ${target} 字。请重写并删减重复内容，控制在 ${target} 字左右（上限 ${max} 字）。`
+  }
   return null
+}
+
+export function buildChapterRewriteHint(
+  content: string,
+  target: number,
+  priorContent?: string | null
+): string {
+  const actual = countChapterChars(content)
+  const parts = [
+    formatRepetitionRewriteHint(content, priorContent),
+    formatWordCountFeedback(actual, target),
+  ].filter(Boolean)
+  return parts.join('\n')
 }
 
 export function summarizeContentGuard(content: string): { chars: number; paragraphCount: number } {

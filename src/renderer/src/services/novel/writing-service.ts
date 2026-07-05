@@ -62,15 +62,19 @@ import {
   countChapterChars,
   formatRecentWordCountStats,
   formatWordCountPlanHint,
+  resolveChapterGenerationMaxTokens,
+  resolveChapterMaxOutputChars,
+  resolveChapterStreamHardLimitChars,
   resolveChapterTargetWordCount,
 } from '@shared/novel/chapter-length-plan'
 import {
+  buildChapterRewriteHint,
   detectRepetitionIssues,
   extractBannedPhrases,
-  formatRepetitionRewriteHint,
   formatWordCountFeedback,
   hasSevereRepetition,
   sanitizeChapterContent,
+  truncateChapterToMaxChars,
 } from '@shared/novel/chapter-content-guard'
 import { extractSingleChapterContent } from './chapter-splitter'
 import {
@@ -186,6 +190,7 @@ export async function chat(
     stream?: ChatStreamHandlers
     timeoutMs?: number
     max_tokens?: number
+    maxOutputChars?: number
     project?: ProjectModelPrefs | null
     statsProjectId?: string
     statsKind?: 'ai' | 'chapter'
@@ -218,6 +223,7 @@ export async function chat(
 
   let cancelStream: (() => void) | undefined
   let timedOut = false
+  let outputLimitReached = false
   let timeoutId: number | undefined
   let abortListener: (() => void) | undefined
 
@@ -280,6 +286,15 @@ export async function chat(
       {
         onChunk: (chunk) => {
           contentText += chunk
+          if (
+            params?.maxOutputChars &&
+            countChapterChars(contentText) >= params.maxOutputChars &&
+            !outputLimitReached
+          ) {
+            outputLimitReached = true
+            cancelStream?.()
+            void window.api.cancelSSE()
+          }
           pushVisibleChunk(chunk)
         },
         onReasoningChunk: (chunk) => {
@@ -307,6 +322,20 @@ export async function chat(
         },
         onError: (err) => {
           if (settled) return
+          if (outputLimitReached && contentText.trim()) {
+            settled = true
+            throttled.flush()
+            if (streamHandlers?.onChunk) {
+              const finalRaw = pickBestLlmPayload(contentText, reasoningText)
+              streamHandlers.onChunk({
+                raw: finalRaw,
+                display: resolveDisplayAiMessage(finalRaw),
+                status: 'done',
+              })
+            }
+            resolve({ content: contentText, reasoning: reasoningText, usage })
+            return
+          }
           settled = true
           reject(new Error(formatGatewayContentFilterError(err)))
         },
@@ -379,6 +408,8 @@ function projectChatOpts(
     temperature?: number
     stream?: ChatStreamHandlers
     timeoutMs?: number
+    max_tokens?: number
+    maxOutputChars?: number
     statsKind?: 'ai' | 'chapter'
     signal?: AbortSignal
     pipelineStep?: PipelineStep
@@ -1592,14 +1623,29 @@ function normalizeGeneratedChapterContent(
 async function generateChapterDraft(
   project: NovelProject,
   userMessage: string,
-  options?: { signal?: AbortSignal; onStream?: (chars: number, preview: string) => void; pipelineLabel?: string }
+  options?: {
+    signal?: AbortSignal
+    onStream?: (chars: number, preview: string) => void
+    pipelineLabel?: string
+    targetWordCount?: number
+    temperature?: number
+  }
 ): Promise<string> {
   const prefs = getCreationWorkflowPrefs()
+  const maxTokens = options?.targetWordCount
+    ? resolveChapterGenerationMaxTokens(options.targetWordCount)
+    : undefined
+  const maxOutputChars = options?.targetWordCount
+    ? resolveChapterStreamHardLimitChars(options.targetWordCount)
+    : undefined
+
   return chat(
     writingPrompt,
     [{ role: 'user', content: userMessage }],
     projectChatOpts(project, {
-      temperature: 0.82,
+      temperature: options?.temperature ?? 0.78,
+      max_tokens: maxTokens,
+      maxOutputChars,
       timeoutMs: LONG_STREAM_TIMEOUT_MS,
       signal: options?.signal,
       pipelineStep: 'chapter_write',
@@ -1615,6 +1661,92 @@ async function generateChapterDraft(
         : undefined,
     })
   )
+}
+
+async function generatePolishedChapterVersion(input: {
+  project: NovelProject
+  chapterNumber: number
+  outline: ReturnType<typeof chapterOutlineEntry>
+  wordCountHint: string
+  recentStats: string
+  priorSummary: string
+  priorEnding: string
+  priorContent: string | null
+  styleHint?: string
+  targetWordCount: number
+  maxOutputChars: number
+  signal?: AbortSignal
+  versionCount: number
+  versionIndex: number
+  onStream?: (chars: number, preview: string) => void
+}): Promise<string> {
+  const buildMessage = (rewriteHint?: string) =>
+    buildChapterGenerationUserMessage({
+      project: input.project,
+      chapterNumber: input.chapterNumber,
+      outline: input.outline,
+      wordCountHint: input.wordCountHint,
+      recentStats: input.recentStats,
+      priorSummary: input.priorSummary,
+      priorEnding: input.priorEnding,
+      priorContent: input.priorContent,
+      styleHint: input.versionCount > 1 ? input.styleHint : undefined,
+      rewriteHint,
+    })
+
+  const pipelineLabel =
+    input.versionCount > 1
+      ? `撰写第 ${input.chapterNumber} 章（版本 ${input.versionIndex + 1}/${input.versionCount}）`
+      : `撰写第 ${input.chapterNumber} 章`
+
+  let content = await generateChapterDraft(input.project, buildMessage(), {
+    signal: input.signal,
+    pipelineLabel,
+    targetWordCount: input.targetWordCount,
+    onStream: input.onStream,
+  })
+
+  let normalized = normalizeGeneratedChapterContent(content, input.chapterNumber, input.priorContent)
+  if (normalized.multiChapterTruncated) {
+    patchChapterGenProgress({
+      phase: 'processing',
+      message: `检测到 AI 连续写了 ${normalized.detectedChapters} 章，已截取第 ${input.chapterNumber} 章…`,
+    })
+  }
+
+  let sanitized = normalized.content
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const charCount = countChapterChars(sanitized)
+    const needsFix =
+      hasSevereRepetition(sanitized, input.priorContent) ||
+      Boolean(formatWordCountFeedback(charCount, input.targetWordCount))
+
+    if (!needsFix) break
+
+    const rewriteHint = buildChapterRewriteHint(sanitized, input.targetWordCount, input.priorContent)
+    if (!rewriteHint) break
+
+    patchChapterGenProgress({
+      phase: 'writing',
+      message:
+        charCount > input.maxOutputChars
+          ? `输出 ${charCount} 字超限，正在重写第 ${input.chapterNumber} 章…`
+          : `检测到重复或字数偏离，正在重写第 ${input.chapterNumber} 章…`,
+    })
+
+    content = await generateChapterDraft(input.project, buildMessage(rewriteHint), {
+      signal: input.signal,
+      pipelineLabel: `重写第 ${input.chapterNumber} 章`,
+      targetWordCount: input.targetWordCount,
+      temperature: 0.65,
+    })
+    normalized = normalizeGeneratedChapterContent(content, input.chapterNumber, input.priorContent)
+    sanitized = normalized.content
+  }
+
+  sanitized = truncateChapterToMaxChars(sanitized, input.maxOutputChars)
+  return sanitized
 }
 
 function buildRecentWordCountEntries(
@@ -1715,7 +1847,10 @@ export async function generateChapterContent(
       })
 
       let streamedChars = 0
-      const userMessage = buildChapterGenerationUserMessage({
+      const targetWordCount = resolveChapterTargetWordCount(outline, totalChapters, writingMode)
+      const maxOutputChars = resolveChapterMaxOutputChars(targetWordCount)
+
+      const sanitized = await generatePolishedChapterVersion({
         project,
         chapterNumber,
         outline,
@@ -1725,14 +1860,11 @@ export async function generateChapterContent(
         priorEnding,
         priorContent,
         styleHint: versionCount > 1 ? styleHint : undefined,
-      })
-
-      let content = await generateChapterDraft(project, userMessage, {
+        targetWordCount,
+        maxOutputChars,
         signal: options?.signal,
-        pipelineLabel:
-          versionCount > 1
-            ? `撰写第 ${chapterNumber} 章（版本 ${i + 1}/${versionCount}）`
-            : `撰写第 ${chapterNumber} 章`,
+        versionCount,
+        versionIndex: i,
         onStream: (chars, preview) => {
           streamedChars = chars
           patchChapterGenProgress({
@@ -1747,71 +1879,11 @@ export async function generateChapterContent(
         },
       })
 
-      let normalized = normalizeGeneratedChapterContent(content, chapterNumber, priorContent)
-      if (normalized.multiChapterTruncated) {
-        patchChapterGenProgress({
-          phase: 'processing',
-          message: `检测到 AI 连续写了 ${normalized.detectedChapters} 章，已截取第 ${chapterNumber} 章…`,
-        })
-      }
-
-      let sanitized = normalized.content
-      if (hasSevereRepetition(sanitized, priorContent)) {
-        const rewriteHint = formatRepetitionRewriteHint(sanitized, priorContent)
-        if (rewriteHint) {
-          patchChapterGenProgress({
-            phase: 'writing',
-            message: `检测到重复片段，正在重写第 ${chapterNumber} 章…`,
-          })
-          content = await generateChapterDraft(
-            project,
-            buildChapterGenerationUserMessage({
-              project,
-              chapterNumber,
-              outline,
-              wordCountHint,
-              recentStats,
-              priorSummary,
-              priorEnding,
-              priorContent,
-              styleHint: versionCount > 1 ? styleHint : undefined,
-              rewriteHint,
-            }),
-            { signal: options?.signal }
-          )
-          normalized = normalizeGeneratedChapterContent(content, chapterNumber, priorContent)
-          sanitized = normalized.content
-        }
-      }
-
-      const targetWordCount = resolveChapterTargetWordCount(outline, totalChapters, writingMode)
-      const wordCountFeedback = formatWordCountFeedback(countChapterChars(sanitized), targetWordCount)
-      if (wordCountFeedback) {
-        patchChapterGenProgress({
-          phase: 'writing',
-          message: `字数偏离规划（${countChapterChars(sanitized)}/${targetWordCount}），正在调整第 ${chapterNumber} 章…`,
-        })
-        content = await generateChapterDraft(
-          project,
-          buildChapterGenerationUserMessage({
-            project,
-            chapterNumber,
-            outline,
-            wordCountHint,
-            recentStats,
-            priorSummary,
-            priorEnding,
-            priorContent,
-            styleHint: versionCount > 1 ? styleHint : undefined,
-            rewriteHint: wordCountFeedback,
-          }),
-          { signal: options?.signal }
-        )
-        normalized = normalizeGeneratedChapterContent(content, chapterNumber, priorContent)
-        sanitized = normalized.content
-      }
-
-      patchChapterGenProgress({ phase: 'processing', message: `整理第 ${chapterNumber} 章正文…` })
+      patchChapterGenProgress({
+        phase: 'processing',
+        chars: countChapterChars(sanitized),
+        message: `整理第 ${chapterNumber} 章正文（${countChapterChars(sanitized)} 字）…`,
+      })
       versions.push(sanitized)
     }
   } finally {

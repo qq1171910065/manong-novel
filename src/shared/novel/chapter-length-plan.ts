@@ -94,3 +94,20 @@ export function formatRecentWordCountStats(
     )
     .join('\n')
 }
+
+/** 单章输出硬上限（规划字数 + 容差） */
+export function resolveChapterMaxOutputChars(target: number): number {
+  return resolveChapterWordCountRange(target).max
+}
+
+/** 供 LLM max_tokens 使用（中文约 1 字 ≈ 1.5 token） */
+export function resolveChapterGenerationMaxTokens(target: number): number {
+  const maxChars = resolveChapterMaxOutputChars(target)
+  return Math.min(8192, Math.ceil(maxChars * 1.55))
+}
+
+/** 流式输出达到此字数后主动截断请求，避免模型失控续写 */
+export function resolveChapterStreamHardLimitChars(target: number): number {
+  const maxChars = resolveChapterMaxOutputChars(target)
+  return Math.ceil(maxChars * 1.08)
+}
