@@ -76,7 +76,7 @@
                 <h2 class="profile-section__title">{{ activeSectionMeta.label }}</h2>
                 <p class="profile-section__desc">{{ activeSectionMeta.description }}</p>
                 <p v-if="canOpenAiAssistant" class="detail-polish-hint">
-                  左侧「开始创作」会在后台按章节顺序自动生成并确认；进行中可点同一按钮暂停，任务可在状态栏查看。
+                  「开始创作」按章节顺序自动生成；可在「创作流水线」调整暂停确认、多版本评审等选项。进行中可暂停，并在写作台预览单章。
                 </p>
                 <p v-if="isImportPending" class="detail-import-hint">
                   已导入 {{ importedChapterCount }} 章。智能解析会逐批阅读全书并填充各 Tab，请耐心等待；解析完成前不可编辑。
@@ -232,6 +232,7 @@ import {
   LayoutGrid,
   History,
   BarChart3,
+  Workflow,
   PenLine,
   Pause,
   Sparkles,
@@ -272,6 +273,7 @@ import ChaptersSection from '@renderer/novel/components/novel-detail/ChaptersSec
 import EmotionCurveSection from '@renderer/novel/components/novel-detail/EmotionCurveSection.vue'
 import ForeshadowingSection from '@renderer/novel/components/novel-detail/ForeshadowingSection.vue'
 import ActivityLogSection from '@renderer/novel/components/novel-detail/ActivityLogSection.vue'
+import PipelineInspectorSection from '@renderer/novel/components/novel-detail/PipelineInspectorSection.vue'
 import StatsSection from '@renderer/novel/components/novel-detail/StatsSection.vue'
 import {
   activityLogService,
@@ -367,6 +369,7 @@ const analysisSections: NavSection[] = [
 
 const insightSections: NavSection[] = [
   { key: 'stats', label: '统计信息', description: '字数、阅读与 Token 消耗', icon: BarChart3 },
+  { key: 'pipeline', label: '创作流水线', description: 'AI 调用记录与流程设置', icon: Workflow },
   { key: 'activity_log', label: '操作记录', description: '修改、生成与阅读历史', icon: History },
 ]
 
@@ -406,6 +409,7 @@ const sectionComponents: Record<SectionKey, any> = {
   emotion_curve: EmotionCurveSection,
   foreshadowing: ForeshadowingSection,
   activity_log: ActivityLogSection,
+  pipeline: PipelineInspectorSection,
   stats: StatsSection,
 }
 
@@ -423,6 +427,7 @@ const sectionLoading = reactive<Record<SectionKey, boolean>>({
   emotion_curve: false,
   foreshadowing: false,
   activity_log: false,
+  pipeline: false,
   stats: false,
 })
 const sectionError = reactive<Record<SectionKey, string | null>>({
@@ -438,6 +443,7 @@ const sectionError = reactive<Record<SectionKey, string | null>>({
   emotion_curve: null,
   foreshadowing: null,
   activity_log: null,
+  pipeline: null,
   stats: null,
 })
 
@@ -503,7 +509,9 @@ const showGenerationOverlay = computed(
 
 const isCurrentProjectAutoWriteRunning = computed(() => autoWrite.isProjectActive(projectId))
 const isCurrentProjectAutoWritePaused = computed(() => autoWrite.isProjectPaused(projectId))
-const isWritingDeskLocked = computed(() => isCurrentProjectAutoWriteRunning.value)
+const isWritingDeskLocked = computed(
+  () => isCurrentProjectAutoWriteRunning.value && !isCurrentProjectAutoWritePaused.value
+)
 
 function resolveImportParseProgressPercent(progress: ImportParseProgress): number {
   switch (progress.phase) {
@@ -532,7 +540,10 @@ const isContentLocked = computed(() => isTxtImportLocked(novel.value))
 const importedChapterCount = computed(() => novel.value?.chapters?.length ?? 0)
 const primaryActionLabel = computed(() => {
   if (isCurrentProjectAutoWriteRunning.value) return '暂停创作'
-  if (isCurrentProjectAutoWritePaused.value) return '继续创作'
+  if (isCurrentProjectAutoWritePaused.value) {
+    if (autoWrite.pauseReason.value === 'chapter_confirm') return '确认并继续'
+    return '继续创作'
+  }
   if (showImportParsing.value) return '解析中...'
   if (isImportPending.value) return '智能解析'
   const project = novel.value
@@ -680,6 +691,7 @@ const isFillSection = computed(() =>
     'world_factions',
     'stats',
     'activity_log',
+    'pipeline',
     'emotion_curve',
     'foreshadowing',
   ].includes(activeSection.value)
@@ -709,13 +721,13 @@ const switchSection = (section: SectionKey) => {
   }
 }
 
-const loadInsightSection = (section: 'activity_log' | 'stats') => {
+const loadInsightSection = (section: 'activity_log' | 'stats' | 'pipeline') => {
   sectionLoading[section] = true
   sectionError[section] = null
   try {
     if (section === 'activity_log') {
       activityEntries.value = activityLogService.listByProject(projectId, 50)
-    } else {
+    } else if (section === 'stats') {
       projectStats.value = projectStatsService.get(projectId)
       if (!sectionData.chapters) {
         void loadSection('chapters')
@@ -731,10 +743,10 @@ const loadInsightSection = (section: 'activity_log' | 'stats') => {
 const loadSection = async (section: SectionKey, force = false) => {
   if (!projectId) return
 
-  const insightSections: SectionKey[] = ['activity_log', 'stats']
+  const insightSections: SectionKey[] = ['activity_log', 'stats', 'pipeline']
   if (insightSections.includes(section)) {
     if (section === 'activity_log' && !force && activityEntries.value.length) return
-    loadInsightSection(section as 'activity_log' | 'stats')
+    loadInsightSection(section as 'activity_log' | 'stats' | 'pipeline')
     return
   }
 
@@ -801,7 +813,9 @@ const goToWritingDesk = async () => {
   }
 
   if (isCurrentProjectAutoWritePaused.value) {
-    showWritingDeskModal.value = true
+    if (autoWrite.pauseReason.value === 'chapter_confirm') {
+      showWritingDeskModal.value = true
+    }
     void resumeAutoWritePipeline()
     return
   }
@@ -1204,6 +1218,8 @@ const componentProps = computed(() => {
       }
     case 'activity_log':
       return { entries: activityEntries.value }
+    case 'pipeline':
+      return { projectId }
     case 'stats':
       return {
         stats: projectStats.value,

@@ -9,6 +9,8 @@ import {
   unregisterAsyncTask,
 } from '@renderer/services/novel/async-task-registry'
 import { activityLogService } from '@renderer/services/activity-log-service'
+import { getCreationWorkflowPrefs } from '@renderer/services/creation-workflow-prefs'
+import { globalAlert } from '@renderer/novel/composables/useAlert'
 import { upsertBackgroundTask, getBackgroundTask } from '@renderer/services/background-task-service'
 import { useChapterGenProgress } from '@renderer/novel/composables/chapter-generation-progress'
 import {
@@ -23,12 +25,14 @@ import {
 } from '@renderer/novel/utils/auto-chapter-pipeline'
 
 export type AutoWriteRunResult = 'completed' | 'cancelled' | 'paused' | 'failed'
+export type AutoWritePauseReason = 'user' | 'chapter_confirm' | null
 
 function createAutoChapterPipeline() {
   const novelStore = useNovelStore()
   const { activeProgress: chapterGenProgress } = useChapterGenProgress()
   const isRunning = ref(false)
   const isPaused = ref(false)
+  const pauseReason = ref<AutoWritePauseReason>(null)
   const progress = ref<AutoWriteProgress>({ ...INITIAL_AUTO_WRITE_PROGRESS })
   let abortController: AbortController | null = null
   let activeProjectId = ''
@@ -47,6 +51,9 @@ function createAutoChapterPipeline() {
     const live = chapterGenProgress.value
     if (live && live.projectId === activeProjectId && live.message) {
       return live.message
+    }
+    if (progress.value.phase === 'waiting_confirm') {
+      return progress.value.message || '章节已生成，等待确认后继续'
     }
     if (progress.value.phase === 'done') return '全部章节已完成'
     if (progress.value.message) return progress.value.message
@@ -77,6 +84,7 @@ function createAutoChapterPipeline() {
 
   function resetProgress() {
     progress.value = { ...INITIAL_AUTO_WRITE_PROGRESS }
+    pauseReason.value = null
   }
 
   function ensureNotAborted() {
@@ -88,10 +96,15 @@ function createAutoChapterPipeline() {
     }
   }
 
-  function pause() {
+  function pause(reason: AutoWritePauseReason = 'user') {
     if (!isRunning.value || isPaused.value) return
     isPaused.value = true
-    setProgress({ message: '创作已暂停，点击「继续创作」恢复' })
+    pauseReason.value = reason
+    const message =
+      reason === 'chapter_confirm'
+        ? progress.value.message || '章节已生成，确认内容后可继续下一章'
+        : '创作已暂停，点击「继续创作」恢复'
+    setProgress({ message })
     syncBackgroundTask('paused')
     abortController?.abort()
     if (activeProjectId) {
@@ -105,6 +118,7 @@ function createAutoChapterPipeline() {
 
   function cancel() {
     isPaused.value = false
+    pauseReason.value = null
     abortController?.abort()
     if (activeProjectId) {
       cancelAsyncTask({ kind: 'auto_write', projectId: activeProjectId })
@@ -173,8 +187,31 @@ function createAutoChapterPipeline() {
     return project
   }
 
-  async function ensureChapterApproved(projectId: string, chapterNumber: number): Promise<void> {
+  async function confirmPendingChapter(projectId: string, chapterNumber: number, title: string) {
+    setProgress({
+      phase: 'confirming',
+      currentChapter: chapterNumber,
+      currentChapterTitle: title,
+      message: `正在确认第 ${chapterNumber} 章并继续下一章…`,
+    })
+
+    const confirmed = await NovelAPI.confirmChapter(projectId, chapterNumber)
+    novelStore.setCurrentProject(confirmed)
+    activityLogService.logChapterGenerated(
+      projectId,
+      confirmed.title || '未命名作品',
+      chapterNumber,
+      title,
+      { source: 'auto_write', autoConfirmed: true }
+    )
+  }
+
+  async function ensureChapterApproved(
+    projectId: string,
+    chapterNumber: number
+  ): Promise<'confirmed' | 'waiting_confirm'> {
     ensureNotAborted()
+    const prefs = getCreationWorkflowPrefs()
 
     let project = await prepareChapterForGeneration(projectId, chapterNumber)
     if (!project) throw new Error('项目加载失败')
@@ -197,7 +234,10 @@ function createAutoChapterPipeline() {
         currentChapterTitle: title,
         message: `正在生成第 ${chapterNumber} 章「${title}」…`,
       })
-      project = await novelStore.generateChapter(chapterNumber, { signal, fastMode: true })
+      project = await novelStore.generateChapter(chapterNumber, {
+        signal,
+        fastMode: !prefs.autoWriteMultiVersion,
+      })
       chapter = project.chapters?.find((item) => item.chapter_number === chapterNumber)
     }
 
@@ -219,9 +259,21 @@ function createAutoChapterPipeline() {
         })
         try {
           project = await novelStore.evaluateChapter(chapterNumber, { signal })
+          activityLogService.logChapterEvaluate(
+            projectId,
+            project.title || activeProjectTitle || '未命名作品',
+            chapterNumber,
+            title,
+            { source: 'auto_write', versionCount }
+          )
         } catch (error) {
           if (isAbortError(error)) throw error
           console.warn('[auto-write] evaluate failed, fallback to first version', error)
+          globalAlert.showAlert(
+            `第 ${chapterNumber} 章「${title}」评审失败，已自动选用版本 1。可在写作台查看正文后手动调整。`,
+            'info',
+            '评审跳过'
+          )
           if (!chapter.content?.trim() && chapter.versions?.[0]) {
             chapter.content = chapter.versions[0]
           }
@@ -237,21 +289,18 @@ function createAutoChapterPipeline() {
       throw new Error(`第 ${chapterNumber} 章内容为空，无法确认`)
     }
 
-    setProgress({
-      phase: 'confirming',
-      currentChapter: chapterNumber,
-      currentChapterTitle: title,
-      message: `正在确认第 ${chapterNumber} 章并继续下一章…`,
-    })
+    if (prefs.autoWritePauseBeforeConfirm) {
+      setProgress({
+        phase: 'waiting_confirm',
+        currentChapter: chapterNumber,
+        currentChapterTitle: title,
+        message: `第 ${chapterNumber} 章「${title}」已生成，请预览确认后继续`,
+      })
+      return 'waiting_confirm'
+    }
 
-    const confirmed = await NovelAPI.confirmChapter(projectId, chapterNumber)
-    novelStore.setCurrentProject(confirmed)
-    activityLogService.logChapterGenerated(
-      projectId,
-      confirmed.title || '未命名作品',
-      chapterNumber,
-      title
-    )
+    await confirmPendingChapter(projectId, chapterNumber, title)
+    return 'confirmed'
   }
 
   async function run(projectId: string, projectTitle = '未命名作品'): Promise<AutoWriteRunResult> {
@@ -260,7 +309,9 @@ function createAutoChapterPipeline() {
     }
 
     const resuming = isPaused.value && activeProjectId === projectId
+    const resumeAfterChapterConfirm = resuming && pauseReason.value === 'chapter_confirm'
     isPaused.value = false
+    pauseReason.value = null
     abortController = new AbortController()
     activeProjectId = projectId
     if (!resuming) {
@@ -282,6 +333,16 @@ function createAutoChapterPipeline() {
     })
 
     try {
+      if (resumeAfterChapterConfirm && progress.value.currentChapter !== null) {
+        const chapterNumber = progress.value.currentChapter
+        const title = progress.value.currentChapterTitle || resolveChapterTitle(
+          novelStore.currentProject!,
+          chapterNumber
+        )
+        await confirmPendingChapter(projectId, chapterNumber, title)
+        ensureNotAborted()
+      }
+
       await novelStore.loadProject(projectId, true)
       await novelStore.reconcileStaleChapterTasks(projectId)
       let project = novelStore.currentProject
@@ -334,7 +395,13 @@ function createAutoChapterPipeline() {
           return 'completed'
         }
 
-        await ensureChapterApproved(projectId, nextChapter)
+        const approval = await ensureChapterApproved(projectId, nextChapter)
+        if (approval === 'waiting_confirm') {
+          pause('chapter_confirm')
+          syncBackgroundTask('paused')
+          return 'paused'
+        }
+
         ensureNotAborted()
 
         await novelStore.loadProject(projectId, true)
@@ -376,6 +443,7 @@ function createAutoChapterPipeline() {
         if (progress.value.phase === 'done' || progress.value.phase === 'failed') {
           activeProjectId = ''
           activeProjectTitle = ''
+          pauseReason.value = null
         }
       }
       unregisterAsyncTask({ kind: 'auto_write', projectId })
@@ -385,6 +453,7 @@ function createAutoChapterPipeline() {
   return {
     isRunning,
     isPaused,
+    pauseReason,
     progress,
     progressPercent,
     statusMessage,

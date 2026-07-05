@@ -18,6 +18,7 @@ export type WritingModeSectionKey =
   | 'foreshadowing'
   | 'activity_log'
   | 'stats'
+  | 'pipeline'
 
 const SIMPLE_SECTIONS: ReadonlySet<WritingModeSectionKey> = new Set([
   'overview',
@@ -25,6 +26,7 @@ const SIMPLE_SECTIONS: ReadonlySet<WritingModeSectionKey> = new Set([
   'chapter_outline',
   'chapters',
   'stats',
+  'pipeline',
 ])
 
 export function resolveWritingMode(project?: { writing_mode?: WritingMode | null } | null): WritingMode {

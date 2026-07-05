@@ -34,9 +34,18 @@
       <!-- 灵感模式交互界面 -->
       <div
         v-else-if="!showBlueprintConfirmation && !showBlueprint && !showSectionPolishConfirmation"
-        class="novel-chat-panel fade-in"
-        :class="{ 'novel-chat-panel--polish': isPolishMode }"
+        class="inspiration-chat-layout fade-in"
+        :class="{ 'inspiration-chat-layout--polish': isPolishMode }"
       >
+        <ConceptChecklistPanel
+          v-if="!isPolishMode"
+          :mode="projectWritingMode"
+          :conversation-state="novelStore.currentConversationState"
+        />
+        <div
+          class="novel-chat-panel"
+          :class="{ 'novel-chat-panel--polish': isPolishMode }"
+        >
         <div
           class="novel-chat-panel__head"
           :class="{
@@ -161,6 +170,7 @@
             @choices-height="choicesOffset = $event"
           />
         </div>
+        </div>
       </div>
 
       <!-- 蓝图确认界面 -->
@@ -200,7 +210,8 @@
     <BlueprintGeneratingOverlay
       :show="showGeneratingOverlay"
       :progress="blueprintGen.progress.value"
-      :loading-text="blueprintGen.loadingText.value"
+      :loading-text="blueprintProgressMessage || blueprintGen.loadingText.value"
+      description="按步骤生成：整理设定清单 → 生成蓝图 JSON → 补全章节大纲"
       @cancel="cancelBlueprintGeneration"
     />
 
@@ -256,6 +267,7 @@ import BlueprintConfirmation from '@renderer/novel/components/BlueprintConfirmat
 import SectionPolishConfirmation from '@renderer/novel/components/SectionPolishConfirmation.vue'
 import BlueprintDisplay from '@renderer/novel/components/BlueprintDisplay.vue'
 import BlueprintGeneratingOverlay from '@renderer/novel/components/BlueprintGeneratingOverlay.vue'
+import ConceptChecklistPanel from '@renderer/novel/components/ConceptChecklistPanel.vue'
 import InspirationLoading from '@renderer/novel/components/InspirationLoading.vue'
 import GatewayModelPicker from '@renderer/components/settings/GatewayModelPicker.vue'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
@@ -275,6 +287,7 @@ import {
   type GatewayModelInfo,
 } from '@renderer/services/gateway-api'
 import { DEFAULT_SYSTEM_ROLE_MODEL_ID } from '@shared/gateway/constants'
+import { resolveWritingMode } from '@shared/novel/writing-mode'
 import { NButton, NModal } from '@renderer/ui'
 
 interface ChatMessage {
@@ -401,6 +414,10 @@ const confirmationMessage = ref('')
 const blueprintMessage = ref('')
 const chatArea = ref<HTMLElement>()
 const blueprintGen = useBlueprintGeneration()
+const blueprintProgressMessage = ref('')
+const projectWritingMode = computed(() =>
+  resolveWritingMode(novelStore.currentProject ?? undefined)
+)
 const showGeneratingOverlay = computed(() => {
   const projectId = novelStore.currentProject?.id
   return (
@@ -1236,8 +1253,16 @@ const handleGenerateBlueprint = async () => {
 
 const handleStartBlueprintGeneration = async () => {
   showBlueprintConfirmation.value = false
+  blueprintProgressMessage.value = ''
   try {
-    const response = await blueprintGen.run(() => novelStore.runBlueprintGeneration())
+    const response = await blueprintGen.run(() =>
+      novelStore.runBlueprintGeneration({
+        onProgress: (progress) => {
+          blueprintGen.setProgress(progress.percent)
+          blueprintProgressMessage.value = progress.message
+        },
+      })
+    )
     handleBlueprintGenerated(response)
   } catch (error) {
     if (isAbortError(error)) {
@@ -1357,6 +1382,24 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.inspiration-chat-layout {
+  display: flex;
+  gap: 0.75rem;
+  min-height: 0;
+  flex: 1;
+  height: 100%;
+}
+
+.inspiration-chat-layout--polish {
+  display: block;
+}
+
+.inspiration-chat-layout .novel-chat-panel {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
 .mt-3 {
   margin-top: 12px;
 }

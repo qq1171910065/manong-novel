@@ -73,6 +73,11 @@ import {
   patchChapterGenProgress,
   setChapterGenProgress,
 } from '@renderer/novel/composables/chapter-generation-progress'
+import { getCreationWorkflowPrefs } from '@renderer/services/creation-workflow-prefs'
+import {
+  pipelineLogService,
+  type PipelineStep,
+} from '@renderer/services/pipeline-log-service'
 import {
   buildConceptMaterialPromptSupplement,
   seedConceptChecklistFromMaterials,
@@ -169,6 +174,8 @@ export async function chat(
     statsProjectId?: string
     statsKind?: 'ai' | 'chapter'
     signal?: AbortSignal
+    pipelineStep?: PipelineStep
+    pipelineLabel?: string
   }
 ): Promise<string> {
   const model = await resolveProjectChatModelId(params?.project)
@@ -176,6 +183,18 @@ export async function chat(
   const temperature = params?.temperature ?? 0.7
   const streamHandlers = params?.stream
   const timeoutMs = params?.timeoutMs ?? STREAM_TIMEOUT_MS
+  const prefs = getCreationWorkflowPrefs()
+  const pipelineId =
+    prefs.enablePipelineLog && params?.statsProjectId && params?.pipelineStep
+      ? pipelineLogService.start({
+          projectId: params.statsProjectId,
+          step: params.pipelineStep,
+          label: params.pipelineLabel,
+          model,
+          systemPrompt,
+          userMessages: messages,
+        })
+      : null
 
   if (params?.signal?.aborted) {
     throw new DOMException('The operation was aborted.', 'AbortError')
@@ -299,11 +318,18 @@ export async function chat(
     if (statsProjectId) {
       projectStatsService.recordAiCall(statsProjectId, usage)
     }
-    return pickBestLlmPayload(content, reasoning)
+    const result = pickBestLlmPayload(content, reasoning)
+    if (pipelineId) {
+      pipelineLogService.finish(pipelineId, { response: result, usage })
+    }
+    return result
   } catch (error) {
     if (timeoutId) window.clearTimeout(timeoutId)
     if (params?.signal && abortListener) {
       params.signal.removeEventListener('abort', abortListener)
+    }
+    if (pipelineId) {
+      pipelineLogService.finish(pipelineId, { error })
     }
     if (timedOut) {
       throw new Error(`流式响应超时（${Math.round(timeoutMs / 1000)}s 内无数据）`)
@@ -339,6 +365,8 @@ function projectChatOpts(
     timeoutMs?: number
     statsKind?: 'ai' | 'chapter'
     signal?: AbortSignal
+    pipelineStep?: PipelineStep
+    pipelineLabel?: string
   }
 ) {
   return {
@@ -612,6 +640,8 @@ export async function converseConcept(
       temperature: 0.8,
       stream: options?.stream,
       signal: options?.signal,
+      pipelineStep: 'concept_converse',
+      pipelineLabel: '灵感对话',
     })
   )
 
@@ -959,6 +989,8 @@ ${blueprintJson}
       temperature: 0.2,
       stream: options?.stream,
       signal: options?.signal,
+      pipelineStep: 'section_polish_materialize',
+      pipelineLabel: '生成设定修改稿',
     })
   )
 
@@ -1034,10 +1066,21 @@ async function repairBlueprintOutline(
   }
 }
 
+export interface BlueprintGenerationProgress {
+  phase: 'preparing' | 'generating' | 'repairing_outline' | 'done'
+  message: string
+  percent: number
+}
+
 export async function generateBlueprint(
   project: NovelProject,
-  options?: { signal?: AbortSignal }
+  options?: { signal?: AbortSignal; onProgress?: (progress: BlueprintGenerationProgress) => void }
 ): Promise<BlueprintGenerationResponse> {
+  const report = (phase: BlueprintGenerationProgress['phase'], message: string, percent: number) => {
+    options?.onProgress?.({ phase, message, percent })
+  }
+
+  report('preparing', '整理灵感对话与设定清单…', 8)
   const historyText = (project.conversation_history || [])
     .map((m) => `${m.role}: ${m.content}`)
     .join('\n\n')
@@ -1059,6 +1102,8 @@ export async function generateBlueprint(
   const blueprintPrompt =
     mode === 'simple' ? `${screenwritingPrompt}\n${SIMPLE_BLUEPRINT_SUPPLEMENT}` : screenwritingPrompt
 
+  report('generating', 'AI 正在生成完整创作蓝图…', 25)
+
   const raw = await chat(
     blueprintPrompt,
     [
@@ -1071,8 +1116,12 @@ export async function generateBlueprint(
       temperature: 0.3,
       timeoutMs: LONG_STREAM_TIMEOUT_MS,
       signal: options?.signal,
+      pipelineStep: 'blueprint_generate',
+      pipelineLabel: '生成创作蓝图',
     })
   )
+
+  report('generating', '解析蓝图 JSON 并合并素材…', 55)
 
   const parsed = parseJsonBlock(raw) || {}
   const blueprint = normalizeBlueprintPayload(parsed)
@@ -1109,7 +1158,9 @@ export async function generateBlueprint(
     }
   }
 
+  report('repairing_outline', '检查并补全章节大纲…', 72)
   await repairBlueprintOutline(project, blueprint, options)
+  report('done', '蓝图生成完成', 96)
 
   project.blueprint = blueprint
   applyWordCountPlanToBlueprint(blueprint, mode)
@@ -1186,8 +1237,9 @@ function buildChapterGenerationUserMessage(input: {
 async function generateChapterDraft(
   project: NovelProject,
   userMessage: string,
-  options?: { signal?: AbortSignal; onStream?: (chars: number) => void }
+  options?: { signal?: AbortSignal; onStream?: (chars: number, preview: string) => void; pipelineLabel?: string }
 ): Promise<string> {
+  const prefs = getCreationWorkflowPrefs()
   return chat(
     writingPrompt,
     [{ role: 'user', content: userMessage }],
@@ -1195,10 +1247,14 @@ async function generateChapterDraft(
       temperature: 0.82,
       timeoutMs: LONG_STREAM_TIMEOUT_MS,
       signal: options?.signal,
+      pipelineStep: 'chapter_write',
+      pipelineLabel: options?.pipelineLabel || '撰写章节正文',
       stream: options?.onStream
         ? {
             onChunk: ({ raw }) => {
-              options.onStream?.(countChapterChars(raw))
+              const chars = countChapterChars(raw)
+              const preview = prefs.showStreamPreview ? raw.slice(-1200) : ''
+              options.onStream?.(chars, preview)
             },
           }
         : undefined,
@@ -1318,11 +1374,16 @@ export async function generateChapterContent(
 
       let content = await generateChapterDraft(project, userMessage, {
         signal: options?.signal,
-        onStream: (chars) => {
+        pipelineLabel:
+          versionCount > 1
+            ? `撰写第 ${chapterNumber} 章（版本 ${i + 1}/${versionCount}）`
+            : `撰写第 ${chapterNumber} 章`,
+        onStream: (chars, preview) => {
           streamedChars = chars
           patchChapterGenProgress({
             phase: 'writing',
             chars: streamedChars,
+            streamPreview: preview || undefined,
             message:
               versionCount > 1
                 ? `第 ${chapterNumber} 章版本 ${i + 1}/${versionCount}：已输出 ${streamedChars} 字…`
@@ -1435,6 +1496,8 @@ export async function evaluateChapter(
       temperature: 0.3,
       timeoutMs: LONG_STREAM_TIMEOUT_MS,
       signal: options?.signal,
+      pipelineStep: 'chapter_evaluate',
+      pipelineLabel: `评审第 ${chapterNumber} 章`,
     })
   )
 

@@ -161,7 +161,9 @@ export const useNovelStore = defineStore('novel', () => {
     }
   }
 
-  async function runBlueprintGeneration(): Promise<BlueprintGenerationResponse> {
+  async function runBlueprintGeneration(options?: {
+    onProgress?: (progress: import('@renderer/services/novel/writing-service').BlueprintGenerationProgress) => void
+  }): Promise<BlueprintGenerationResponse> {
     if (!currentProject.value) {
       throw new Error('?????????????')
     }
@@ -175,7 +177,10 @@ export const useNovelStore = defineStore('novel', () => {
       const response = await NovelAPI.generateBlueprint(projectId, {
         chat_model_id: currentProject.value.chat_model_id,
         image_model_id: currentProject.value.image_model_id,
-      }, { signal: controller.signal })
+      }, {
+        signal: controller.signal,
+        onProgress: options?.onProgress,
+      })
       currentProject.value = await NovelAPI.getNovel(projectId)
       return response
     } finally {

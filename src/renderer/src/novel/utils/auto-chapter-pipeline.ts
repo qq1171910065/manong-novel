@@ -5,6 +5,7 @@ export type AutoWritePhase =
   | 'generating'
   | 'evaluating'
   | 'confirming'
+  | 'waiting_confirm'
   | 'done'
   | 'failed'
 
@@ -57,7 +58,13 @@ export function resolveAutoWriteProgressPercent(progress: AutoWriteProgress): nu
   if (progress.phase === 'idle') return Math.max(0, base)
   const step = 100 / progress.totalCount
   const phaseOffset =
-    progress.phase === 'generating' ? step * 0.2 : progress.phase === 'evaluating' ? step * 0.65 : step * 0.9
+    progress.phase === 'generating'
+      ? step * 0.2
+      : progress.phase === 'evaluating'
+        ? step * 0.65
+        : progress.phase === 'waiting_confirm'
+          ? step * 0.85
+          : step * 0.9
   return Math.min(99, Math.round(base + phaseOffset))
 }
 

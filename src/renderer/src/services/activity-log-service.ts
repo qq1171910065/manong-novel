@@ -20,6 +20,7 @@ export interface ActivityLogEntry {
   kind: ActivityKind
   message: string
   detail?: string
+  meta?: Record<string, unknown>
   targetId?: string
   targetPath?: string
   createdAt: string
@@ -111,12 +112,19 @@ export const activityLogService = {
     })
   },
 
-  logChapterGenerated(projectId: string, projectTitle: string, chapterNumber: number, chapterTitle?: string): ActivityLogEntry {
+  logChapterGenerated(
+    projectId: string,
+    projectTitle: string,
+    chapterNumber: number,
+    chapterTitle?: string,
+    meta?: Record<string, unknown>
+  ): ActivityLogEntry {
     const chapterLabel = chapterTitle?.trim() || `第 ${chapterNumber} 章`
     return append({
       kind: 'chapter.generate',
       message: `生成了章节「${chapterLabel}」`,
       detail: projectTitle,
+      meta,
       targetId: projectId,
       targetPath: `/detail/${projectId}`,
     })
@@ -173,12 +181,19 @@ export const activityLogService = {
     })
   },
 
-  logChapterEvaluate(projectId: string, projectTitle: string, chapterNumber: number, chapterTitle?: string): ActivityLogEntry {
+  logChapterEvaluate(
+    projectId: string,
+    projectTitle: string,
+    chapterNumber: number,
+    chapterTitle?: string,
+    meta?: Record<string, unknown>
+  ): ActivityLogEntry {
     const chapterLabel = chapterTitle?.trim() || `第 ${chapterNumber} 章`
     return append({
       kind: 'chapter.evaluate',
       message: `评审了章节「${chapterLabel}」`,
       detail: projectTitle,
+      meta,
       targetId: projectId,
       targetPath: `/detail/${projectId}`,
     })

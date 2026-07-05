@@ -20,7 +20,7 @@ export type {
 } from '@shared/novel/types'
 
 export type AnalysisSectionType = 'emotion_curve' | 'foreshadowing'
-export type InsightSectionType = 'activity_log' | 'stats'
+export type InsightSectionType = 'activity_log' | 'stats' | 'pipeline'
 export type WorldViewSectionType = 'world_rules' | 'world_locations' | 'world_factions'
 export type AllSectionType =
   | NovelSectionType
@@ -288,11 +288,17 @@ export class NovelAPI {
   static async generateBlueprint(
     projectId: string,
     modelPrefs?: import('./project-model').ProjectModelPrefs | null,
-    options?: { signal?: AbortSignal }
+    options?: {
+      signal?: AbortSignal
+      onProgress?: (progress: import('./writing-service').BlueprintGenerationProgress) => void
+    }
   ): Promise<BlueprintGenerationResponse> {
     const project = await novelClient.getProject(projectId)
     applyProjectModelPrefs(project, modelPrefs)
-    const response = await writing.generateBlueprint(project, { signal: options?.signal })
+    const response = await writing.generateBlueprint(project, {
+      signal: options?.signal,
+      onProgress: options?.onProgress,
+    })
     await novelClient.saveProject(project)
     return response
   }
