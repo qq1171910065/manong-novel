@@ -1,4 +1,4 @@
-import { paginateChapterText } from '@renderer/services/reading-settings'
+import { paginateChapterText } from '@renderer/services/reading-pagination'
 
 export interface ReadingTtsVoiceOption {
   id: string

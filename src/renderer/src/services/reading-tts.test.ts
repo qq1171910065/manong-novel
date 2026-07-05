@@ -5,7 +5,7 @@ import {
   resolveStartSegmentIndex,
   splitChapterIntoTtsSegments,
 } from './reading-tts'
-import { paginateChapterText } from './reading-settings'
+import { paginateChapterText } from './reading-pagination'
 
 describe('splitChapterIntoTtsSegments', () => {
   it('splits paragraphs into readable segments', () => {
