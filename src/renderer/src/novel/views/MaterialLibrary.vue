@@ -51,7 +51,7 @@
               class="material-library-card material-library-card--interactive"
               :class="{ 'material-library-card--portrait': Boolean(getItemImageUrl(item)) }"
               :style="{ '--accent': config.accent }"
-              @click="openPreview(item)"
+              @click="openEdit(item)"
             >
               <div class="material-library-card__media">
                 <img v-if="getItemImageUrl(item)" :src="getItemImageUrl(item)!" :alt="item.title" />
@@ -67,7 +67,10 @@
                       show-favorite
                       :favorited="isFavorite(item.id)"
                       :show-delete="!isMaterialBuiltIn(item)"
+                      :show-duplicate="isMaterialBuiltIn(item)"
                       @preview="openPreview(item)"
+                      @edit="openEdit(item)"
+                      @duplicate="duplicateItem(item)"
                       @favorite="toggleFavorite(item.id)"
                       @delete="confirmRemoveItem(item)"
                     />
@@ -84,72 +87,43 @@
     <MaterialPreviewDialog
       :item="previewItem"
       :accent="config.accent"
+      editable
       @close="closePreview"
+      @edit="editFromPreview"
     />
 
-    <div v-if="showCreate" class="novel-dialog-overlay" @click.self="closeCreate">
-      <div class="novel-dialog material-library-dialog" role="dialog" :aria-labelledby="createDialogTitleId">
-        <div class="novel-dialog__head">
-          <div class="novel-dialog__icon">
-            <Plus :size="20" />
-          </div>
-          <div>
-            <h3 :id="createDialogTitleId" class="novel-dialog__title">{{ config.createLabel }}</h3>
-            <p class="text-muted" style="margin: 4px 0 0">保存后可在写作流程中直接引用</p>
-          </div>
-        </div>
-        <div class="novel-dialog__body material-library-form">
-          <label class="material-library-field">
-            <span>标题</span>
-            <input v-model="draft.title" type="text" class="field" placeholder="输入名称..." />
-          </label>
-          <label class="material-library-field">
-            <span>分类</span>
-            <ArenaSelect v-model="draft.category" :options="categoryOptions" variant="default" aria-label="分类" />
-          </label>
-          <label class="material-library-field">
-            <span>摘要</span>
-            <textarea
-              v-model="draft.summary"
-              class="field field-textarea"
-              rows="4"
-              placeholder="简要描述核心信息..."
-            />
-          </label>
-          <label class="material-library-field">
-            <span>标签（逗号分隔）</span>
-            <input v-model="draft.tags" type="text" class="field" placeholder="玄幻, 主角" />
-          </label>
-        </div>
-        <div class="novel-dialog__actions">
-          <button type="button" class="novel-btn novel-btn--text" @click="closeCreate">取消</button>
-          <button type="button" class="novel-btn novel-btn--primary" :disabled="!draft.title.trim()" @click="saveCreate">
-            保存
-          </button>
-        </div>
-      </div>
-    </div>
+    <MaterialLibraryEditModal
+      :show="showEditModal"
+      :type="editType"
+      :item-id="editItemId"
+      @close="closeEditModal"
+      @saved="onEditSaved"
+    />
   </NovelPageShell>
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { PenLine, Plus, Search, SlidersHorizontal, Users } from 'lucide-vue-next'
 import NovelPageShell from '@renderer/components/novel/NovelPageShell.vue'
 import ArenaSelect from '@renderer/components/common/ArenaSelect.vue'
 import MaterialPreviewDialog from '@renderer/novel/components/shared/MaterialPreviewDialog.vue'
+import MaterialLibraryEditModal from '@renderer/novel/components/shared/MaterialLibraryEditModal.vue'
 import MaterialLibraryCardMenu from '@renderer/novel/components/shared/MaterialLibraryCardMenu.vue'
 import { confirm } from '@renderer/composables/useAppDialog'
 import { route, navigate } from '@renderer/router'
 import {
+  buildMaterialListPath,
   getMaterialLibraryConfig,
   MATERIAL_LIBRARY_DEFAULT_PATH,
+  resolveMaterialEditParams,
   resolveMaterialLibraryType,
 } from '@renderer/data/material-library-config'
 import {
   materialLibraryService,
   isMaterialBuiltIn,
   type MaterialItem,
+  type MaterialLibraryType,
 } from '@renderer/services/novel/material-library-service'
 import {
   getMaterialLibraryPrefs,
@@ -160,28 +134,24 @@ import {
   getMaterialCardMeta,
   getMaterialImageUrl,
 } from '@renderer/services/novel/material-library-utils'
+import { globalAlert } from '@renderer/novel/composables/useAlert'
 
 const query = ref('')
 const sortBy = ref<'updated' | 'created' | 'name'>('updated')
 const activeFilter = ref('all')
-const showCreate = ref(false)
 const previewItem = ref<MaterialItem | null>(null)
 const prefsVersion = ref(0)
 const items = ref<MaterialItem[]>([])
+const editTarget = ref<{ type: MaterialLibraryType; itemId: string } | null>(null)
+
+const showEditModal = computed(() => editTarget.value !== null)
+const editType = computed(() => editTarget.value?.type ?? 'characters')
+const editItemId = computed(() => editTarget.value?.itemId ?? null)
 
 const libraryIconMap = {
   characters: Users,
   styles: PenLine,
 } as const
-
-const draft = reactive({
-  title: '',
-  summary: '',
-  tags: '',
-  category: '',
-})
-
-const createDialogTitleId = 'material-create-title'
 
 const libraryType = computed(() => resolveMaterialLibraryType(route.value.path))
 
@@ -197,12 +167,6 @@ const sortOptions = [
   { label: '最近创建', value: 'created' },
   { label: '名称排序', value: 'name' },
 ]
-
-const categoryOptions = computed(() =>
-  config.value.filters
-    .filter((filter) => !['all', 'favorites', 'recent'].includes(filter.id))
-    .map((filter) => ({ label: filter.label, value: filter.id }))
-)
 
 function filterItemsByQuery(list: MaterialItem[], q: string): MaterialItem[] {
   const normalized = q.trim().toLowerCase()
@@ -262,31 +226,31 @@ function toggleFavorite(id: string) {
 }
 
 function openCreate() {
-  draft.title = ''
-  draft.summary = ''
-  draft.tags = ''
-  draft.category = categoryOptions.value[0]?.value ?? ''
-  showCreate.value = true
+  if (!libraryType.value) return
+  editTarget.value = { type: libraryType.value, itemId: 'new' }
 }
 
-function closeCreate() {
-  showCreate.value = false
+function openEdit(item: MaterialItem) {
+  editTarget.value = { type: item.type as MaterialLibraryType, itemId: item.id }
 }
 
-function saveCreate() {
-  if (!libraryType.value || !draft.title.trim()) return
-  materialLibraryService.create({
-    type: libraryType.value,
-    title: draft.title,
-    summary: draft.summary,
-    tags: draft.tags
-      .split(/[,，]/)
-      .map((tag) => tag.trim())
-      .filter(Boolean),
-    payload: { category: draft.category, source: 'manual' },
-  })
+function closeEditModal() {
+  editTarget.value = null
+}
+
+function onEditSaved() {
   reloadItems()
-  closeCreate()
+}
+
+function duplicateItem(item: MaterialItem) {
+  const copy = materialLibraryService.duplicate(item.id)
+  if (!copy) {
+    globalAlert.showError('复制失败', '操作失败')
+    return
+  }
+  globalAlert.showSuccess(`已创建「${copy.title}」`, '复制成功')
+  reloadItems()
+  editTarget.value = { type: copy.type as MaterialLibraryType, itemId: copy.id }
 }
 
 function removeItem(id: string) {
@@ -326,9 +290,23 @@ function closePreview() {
   previewItem.value = null
 }
 
+function editFromPreview() {
+  if (!previewItem.value) return
+  const item = previewItem.value
+  closePreview()
+  openEdit(item)
+}
+
 watch(
   () => route.value.path,
   (path) => {
+    const editParams = resolveMaterialEditParams(path)
+    if (editParams) {
+      navigate(buildMaterialListPath(editParams.type))
+      editTarget.value = { type: editParams.type, itemId: editParams.id }
+      return
+    }
+
     const type = resolveMaterialLibraryType(path)
     if (!type) {
       navigate(MATERIAL_LIBRARY_DEFAULT_PATH)
@@ -342,40 +320,3 @@ watch(
   { immediate: true }
 )
 </script>
-
-<style scoped>
-.material-library-dialog {
-  width: min(480px, 100%);
-}
-
-.material-library-form {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.material-library-field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.material-library-field span {
-  color: var(--text-secondary);
-  font-size: var(--text-xs);
-  font-weight: 600;
-}
-
-.material-library-field :deep(.arena-select) {
-  width: 100%;
-}
-
-.material-library-field :deep(.arena-select__control) {
-  width: 100%;
-  height: var(--control-height);
-  padding: 0 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--surface);
-}
-</style>

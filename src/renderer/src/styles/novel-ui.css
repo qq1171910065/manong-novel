@@ -122,6 +122,40 @@
   border-color: color-mix(in srgb, var(--brand, #1f7a67) 35%, transparent);
 }
 
+.novel-form-surface .md-text-field-filled .md-textarea {
+  min-height: 96px;
+  border-radius: var(--md-radius-xs, 8px);
+}
+
+.novel-form-surface .md-text-field-filled .arena-select--default {
+  width: 100%;
+}
+
+/* Material library edit — tall form modal */
+.novel-modal__panel.material-edit-modal__panel {
+  width: min(720px, 94vw);
+  height: min(92vh, calc(100vh - 24px));
+  max-height: min(92vh, calc(100vh - 24px));
+}
+
+.novel-modal__panel.material-edit-modal__panel .novel-modal__body {
+  flex: 1 1 0 !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+  display: flex;
+  flex-direction: column;
+  padding: 0 22px 0;
+}
+
+.novel-modal__panel.material-edit-modal__panel .material-edit-modal__body-shell {
+  flex: 1 1 0 !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
 .novel-modal__foot--form {
   justify-content: flex-end;
   gap: 10px;

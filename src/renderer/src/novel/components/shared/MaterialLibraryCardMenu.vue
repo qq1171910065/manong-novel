@@ -1,24 +1,30 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { Eye, Heart, MoreVertical, Trash2 } from 'lucide-vue-next'
+import { Copy, Eye, Heart, MoreVertical, Pencil, Trash2 } from 'lucide-vue-next'
 
 withDefaults(
   defineProps<{
     favorited?: boolean
     showPreview?: boolean
     showFavorite?: boolean
+    showEdit?: boolean
+    showDuplicate?: boolean
     showDelete?: boolean
   }>(),
   {
     favorited: false,
     showPreview: true,
     showFavorite: false,
+    showEdit: true,
+    showDuplicate: false,
     showDelete: true,
   }
 )
 
 const emit = defineEmits<{
   preview: []
+  edit: []
+  duplicate: []
   favorite: []
   delete: []
 }>()
@@ -48,6 +54,16 @@ async function toggleMenu() {
 
 function closeMenu() {
   open.value = false
+}
+
+function onEdit() {
+  closeMenu()
+  emit('edit')
+}
+
+function onDuplicate() {
+  closeMenu()
+  emit('duplicate')
 }
 
 function onPreview() {
@@ -110,6 +126,26 @@ onBeforeUnmount(() => {
         role="menu"
         @click.stop
       >
+        <button
+          v-if="showEdit"
+          type="button"
+          class="material-library-card-menu__item"
+          role="menuitem"
+          @click="onEdit"
+        >
+          <Pencil :size="15" />
+          <span>编辑</span>
+        </button>
+        <button
+          v-if="showDuplicate"
+          type="button"
+          class="material-library-card-menu__item"
+          role="menuitem"
+          @click="onDuplicate"
+        >
+          <Copy :size="15" />
+          <span>复制为我的</span>
+        </button>
         <button
           v-if="showPreview"
           type="button"

@@ -9,13 +9,20 @@ import {
 } from '@renderer/services/novel/material-library-utils'
 import NovelPreviewDialog from './NovelPreviewDialog.vue'
 
-const props = defineProps<{
-  item: MaterialItem | null
-  accent?: string
-}>()
+const props = withDefaults(
+  defineProps<{
+    item: MaterialItem | null
+    accent?: string
+    editable?: boolean
+  }>(),
+  {
+    editable: false,
+  }
+)
 
 const emit = defineEmits<{
   close: []
+  edit: []
 }>()
 
 const imageUrl = computed(() => (props.item ? getMaterialImageUrl(props.item) : null))
@@ -59,6 +66,10 @@ const hasPortrait = computed(() => Boolean(imageUrl.value))
     <div v-if="item?.tags.length" class="material-preview-dialog__tags">
       <span v-for="tag in item.tags" :key="tag">{{ tag }}</span>
     </div>
+
+    <template v-if="editable && item" #footer>
+      <button type="button" class="novel-btn novel-btn--primary" @click="emit('edit')">编辑</button>
+    </template>
   </NovelPreviewDialog>
 </template>
 

@@ -12,6 +12,7 @@ const props = withDefaults(
     subtitle?: string
     bodyClass?: string
     footClass?: string
+    panelClass?: string
     maskClosable?: boolean
     showClose?: boolean
     autoMinWidth?: 'sm' | 'md' | 'lg'
@@ -38,22 +39,26 @@ const effectiveShowClose = computed(() =>
   isFormVariant.value ? false : props.showClose
 )
 
-const effectiveSize = computed(() =>
-  isFormVariant.value && props.size !== 'fullscreen' ? 'auto' : props.size
-)
+const effectiveSize = computed(() => {
+  if (props.size === 'fullscreen') return 'fullscreen'
+  if (isFormVariant.value && (props.size === 'lg' || props.size === 'xl')) return props.size
+  if (isFormVariant.value) return 'auto'
+  return props.size
+})
 
 const rootClass = computed(() => [
   'novel-modal',
   effectiveSize.value === 'fullscreen' ? 'novel-modal--fullscreen' : '',
 ])
 
-const panelClass = computed(() => [
+const panelClassList = computed(() => [
   'novel-modal__panel',
   `novel-modal__panel--${effectiveSize.value}`,
   isFormVariant.value ? 'novel-modal__panel--form' : '',
-  isFormVariant.value && props.autoMinWidth
+  isFormVariant.value && props.autoMinWidth && effectiveSize.value === 'auto'
     ? `novel-modal__panel--auto-${props.autoMinWidth}`
     : '',
+  props.panelClass,
 ])
 
 const mergedBodyClass = computed(() => [
@@ -97,7 +102,7 @@ onUnmounted(() => {
       >
         <div class="novel-modal__backdrop" @click="onBackdropClick" />
 
-        <div :class="panelClass" @click.stop>
+        <div :class="panelClassList" @click.stop>
           <button
             v-if="effectiveShowClose"
             type="button"

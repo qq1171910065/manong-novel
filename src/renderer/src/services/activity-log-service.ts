@@ -13,6 +13,7 @@ export type ActivityKind =
   | 'portrait.update'
   | 'image.generate'
   | 'material.create'
+  | 'material.update'
 
 export interface ActivityLogEntry {
   id: string
@@ -127,6 +128,16 @@ export const activityLogService = {
       kind: 'material.create',
       message: `创建了${label}「${title}」`,
       detail,
+      targetPath: MATERIAL_TYPE_PATH[type],
+    })
+  },
+
+  logMaterialUpdated(type: MaterialLibraryType, title: string, materialId?: string): ActivityLogEntry {
+    const label = MATERIAL_TYPE_LABEL[type]
+    return append({
+      kind: 'material.update',
+      message: `更新了${label}「${title}」`,
+      targetId: materialId,
       targetPath: MATERIAL_TYPE_PATH[type],
     })
   },

@@ -3,6 +3,7 @@ const PREFS_KEY = 'novel_material_library_prefs_v1'
 export interface MaterialLibraryPrefs {
   favoriteIds: string[]
   recentIds: string[]
+  autoEnrichOnSave?: boolean
 }
 
 function readPrefs(): MaterialLibraryPrefs {
@@ -13,6 +14,7 @@ function readPrefs(): MaterialLibraryPrefs {
     return {
       favoriteIds: Array.isArray(parsed.favoriteIds) ? parsed.favoriteIds : [],
       recentIds: Array.isArray(parsed.recentIds) ? parsed.recentIds : [],
+      autoEnrichOnSave: parsed.autoEnrichOnSave === true,
     }
   } catch {
     return { favoriteIds: [], recentIds: [] }
@@ -47,4 +49,12 @@ export function touchRecentMaterial(id: string): void {
   const prefs = readPrefs()
   const recentIds = [id, ...prefs.recentIds.filter((item) => item !== id)].slice(0, 24)
   writePrefs({ ...prefs, recentIds })
+}
+
+export function isMaterialAutoEnrichOnSave(): boolean {
+  return readPrefs().autoEnrichOnSave === true
+}
+
+export function setMaterialAutoEnrichOnSave(enabled: boolean): void {
+  writePrefs({ ...readPrefs(), autoEnrichOnSave: enabled })
 }

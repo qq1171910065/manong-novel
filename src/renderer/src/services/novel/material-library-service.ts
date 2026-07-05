@@ -123,6 +123,34 @@ export const materialLibraryService = {
     return true
   },
 
+  duplicate(id: string): MaterialItem | null {
+    const source = this.get(id)
+    if (!source || !isActiveType(source.type)) return null
+    const now = new Date().toISOString()
+    const payload = { ...(source.payload ?? {}) }
+    delete payload.builtIn
+    delete payload.blueprintAssetId
+    payload.source = 'duplicate'
+    if (source.payload?.builtIn) {
+      payload.duplicatedFrom = id
+    }
+
+    const suffix = source.title.includes('副本') ? '' : ' · 副本'
+    const item: MaterialItem = {
+      id: createId(),
+      type: source.type,
+      title: `${source.title.trim()}${suffix}`,
+      summary: source.summary,
+      tags: [...source.tags],
+      payload,
+      createdAt: now,
+      updatedAt: now,
+    }
+    writeAll([item, ...readAll()])
+    activityLogService.logMaterialCreated(source.type, item.title, '复制创建')
+    return item
+  },
+
   search(type: MaterialLibraryType, query: string): MaterialItem[] {
     const q = query.trim().toLowerCase()
     const list = this.list(type)

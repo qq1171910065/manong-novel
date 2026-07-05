@@ -107,3 +107,28 @@ export function resolveMaterialLibraryType(pathname: string): MaterialLibraryTyp
 export function getMaterialLibraryConfig(type: MaterialLibraryType): MaterialLibraryPageConfig {
   return MATERIAL_LIBRARY_CONFIG[type]
 }
+
+export function buildMaterialListPath(type: MaterialLibraryType): string {
+  return `/library/${type}`
+}
+
+export function buildMaterialEditPath(type: MaterialLibraryType, id: string): string {
+  return `/library/${type}/${id}`
+}
+
+export interface MaterialEditRouteParams {
+  type: MaterialLibraryType
+  id: string
+}
+
+export function resolveMaterialEditParams(pathname: string): MaterialEditRouteParams | null {
+  const match = pathname.match(/^\/library\/(characters|styles)\/([^/?]+)$/)
+  if (!match?.[1] || !match[2]) return null
+  const type = match[1] as MaterialLibraryType
+  if (!MATERIAL_LIBRARY_TYPES.includes(type)) return null
+  return { type, id: decodeURIComponent(match[2]) }
+}
+
+export function isMaterialEditPath(pathname: string): boolean {
+  return resolveMaterialEditParams(pathname) !== null
+}
