@@ -1,8 +1,10 @@
 import materialAiEditPrompt from '@shared/novel/prompts/material_library_ai_edit.md?raw'
 import materialFieldEditPrompt from '@shared/novel/prompts/material_library_field_edit.md?raw'
 import type { Character } from '@shared/novel/types'
+import { gatewayChatCompletion } from '@renderer/services/gateway-api'
 import { chat } from './writing-service'
-import { parseLlmJsonObject, pickBestLlmPayload } from './json-utils'
+import { extractAllLlmJsonObjects, parseLlmJsonObject, pickBestLlmPayload, removeThinkTags } from './json-utils'
+import { resolveProjectChatModelId } from './project-model'
 import type { MaterialLibraryType } from './material-library-service'
 import {
   applyMaterialAiPatch,
@@ -17,7 +19,10 @@ import {
 const MATERIAL_AI_TIMEOUT_MS = 180_000
 const FIELD_OPTIMIZE_MAX_TOKENS = 1500
 const FULL_EDIT_MAX_TOKENS = 2048
-const FIELD_OPTIMIZE_TEMPERATURE = 0.72
+const FIELD_OPTIMIZE_TEMPERATURE = 0.55
+const FIELD_OPTIMIZE_RETRY_TEMPERATURE = 0.35
+const JSON_RETRY_SUFFIX =
+  '\n\n【格式要求】只输出一行合法 JSON，键名必须是 value 和 explanation，不要代码块、不要前后说明。'
 
 const CHARACTER_FIELD_KEYS = new Set<MaterialFocusField>([
   'name',
@@ -137,8 +142,6 @@ function buildFieldOptimizeMessage(
     formContext,
     '',
     `优化要求：${instruction.trim()}`,
-    '',
-    '请严格只输出一行 JSON，格式为 {"value":"优化后的文本","explanation":"说明"}，不要代码块或其它文字。',
   ].join('\n')
 }
 
@@ -194,11 +197,20 @@ function buildPatchFromRoot(parsed: Record<string, unknown>): MaterialAiEditPatc
   return patch
 }
 
-function parseAiEditResponse(raw: string): { patch: MaterialAiEditPatch; explanation: string } | null {
+function parseAiEditResponseFromRaw(raw: string): { patch: MaterialAiEditPatch; explanation: string } | null {
+  for (const obj of extractAllLlmJsonObjects(raw)) {
+    const result = parseAiEditResponseFromObject(obj)
+    if (result) return result
+  }
   const payload = pickBestLlmPayload(raw, '')
   const parsed = parseLlmJsonObject(payload)
-  if (!parsed || typeof parsed !== 'object') return null
+  if (parsed) return parseAiEditResponseFromObject(parsed)
+  return null
+}
 
+function parseAiEditResponseFromObject(
+  parsed: Record<string, unknown>
+): { patch: MaterialAiEditPatch; explanation: string } | null {
   const explanation = extractExplanation(parsed, '已生成修改建议')
 
   const patchRaw = parsed.patch
@@ -207,7 +219,7 @@ function parseAiEditResponse(raw: string): { patch: MaterialAiEditPatch; explana
     if (Object.keys(directPatch).length || directPatch.payload) {
       return { patch: directPatch, explanation }
     }
-    return { patch: {}, explanation }
+    return null
   }
 
   const patchSource = patchRaw as Record<string, unknown>
@@ -233,9 +245,39 @@ function extractExplanation(parsed: Record<string, unknown> | null, fallback = '
   return fallback
 }
 
+function isPlaceholderFieldValue(value: string): boolean {
+  const trimmed = value.trim()
+  if (!trimmed) return true
+  const normalized = trimmed.replace(/\s+/g, '')
+  const blocked = [
+    '优化后的字段文本',
+    '优化后的文本',
+    '说明',
+    '1～2句说明',
+    '1-2句说明',
+    '此处填写',
+    '填写真实优化结果',
+    'example',
+    'placeholder',
+    '...',
+    '…',
+  ]
+  if (blocked.some((item) => normalized === item.replace(/\s+/g, ''))) return true
+  if (/^优化后的/.test(trimmed) && trimmed.length <= 16) return true
+  return false
+}
+
+function acceptFieldValue(value: string): string | null {
+  const trimmed = value.trim()
+  if (!trimmed || isPlaceholderFieldValue(trimmed)) return null
+  return trimmed
+}
+
 function extractStringValue(value: unknown): string {
-  if (typeof value === 'string') return value.trim()
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value).trim()
+  if (typeof value === 'string') return acceptFieldValue(value) ?? ''
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return acceptFieldValue(String(value)) ?? ''
+  }
   return ''
 }
 
@@ -295,6 +337,121 @@ function extractRegexStringField(raw: string, key: string): string | null {
   }
 }
 
+function parseFieldFromObject(
+  parsed: Record<string, unknown>,
+  field: MaterialFocusField,
+  type: MaterialLibraryType
+): { value: string; explanation: string } | null {
+  const explanation = extractExplanation(parsed)
+
+  if (parsed.value !== undefined) {
+    const value = field === 'tags' ? extractTagsText(parsed.value) : extractStringValue(parsed.value)
+    if (value) return { value, explanation }
+  }
+
+  for (const key of ['content', 'text', 'result', 'optimized_value', 'optimized', 'output']) {
+    if (parsed[key] !== undefined) {
+      const value = field === 'tags' ? extractTagsText(parsed[key]) : extractStringValue(parsed[key])
+      if (value) return { value, explanation }
+    }
+  }
+
+  const direct = readValueFromRecord(parsed, field)
+  if (direct) return { value: direct, explanation }
+
+  if (parsed.patch && typeof parsed.patch === 'object') {
+    const patchSource = parsed.patch as Record<string, unknown>
+    const patch: MaterialAiEditPatch = {}
+    if (typeof patchSource.title === 'string') patch.title = patchSource.title
+    if (typeof patchSource.summary === 'string') patch.summary = patchSource.summary
+    if (Array.isArray(patchSource.tags)) {
+      patch.tags = patchSource.tags.map((t) => String(t).trim()).filter(Boolean)
+    }
+    if (patchSource.payload && typeof patchSource.payload === 'object') {
+      patch.payload = patchSource.payload as Record<string, unknown>
+    }
+    const value = extractValueFromPatch(patch, field)
+    if (value) return { value, explanation }
+  }
+
+  if (parsed.payload && typeof parsed.payload === 'object') {
+    const value = extractValueFromPatch({ payload: parsed.payload as Record<string, unknown> }, field)
+    if (value) return { value, explanation }
+  }
+
+  if (type === 'characters' && parsed.character && typeof parsed.character === 'object') {
+    const value = readValueFromRecord(parsed.character as Record<string, unknown>, field)
+    if (value) return { value, explanation }
+  }
+
+  const directPatch = buildPatchFromRoot(parsed)
+  const patchValue = extractValueFromPatch(directPatch, field)
+  if (patchValue) return { value: patchValue, explanation }
+
+  return null
+}
+
+function parsePlainTextFieldResponse(
+  raw: string,
+  _field: MaterialFocusField
+): { value: string; explanation: string } | null {
+  const trimmed = removeThinkTags(raw).trim()
+  if (!trimmed || trimmed.startsWith('{') || trimmed.startsWith('[')) return null
+  if (/^(抱歉|对不起|无法|错误|请重试|AI\s)/i.test(trimmed)) return null
+  if (trimmed.length > 2000) return null
+
+  const lines = trimmed
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+  const body = lines.length > 1 && /^说明[：:]/i.test(lines[lines.length - 1] ?? '')
+    ? lines.slice(0, -1).join('\n')
+    : trimmed
+  const value = acceptFieldValue(body)
+  if (!value) return null
+
+  const explanationLine = lines.find((line) => /^说明[：:]/i.test(line))
+  return {
+    value,
+    explanation: explanationLine?.replace(/^说明[：:]\s*/i, '').trim() || '已优化字段内容',
+  }
+}
+
+async function requestMaterialAiText(input: {
+  systemPrompt: string
+  userContent: string
+  history?: Array<{ role: string; content: string }>
+  temperature: number
+  max_tokens: number
+}): Promise<string> {
+  const model = await resolveProjectChatModelId(null)
+  const messages = [
+    { role: 'system', content: input.systemPrompt.trim() },
+    ...(input.history ?? []),
+    { role: 'user', content: input.userContent },
+  ]
+
+  try {
+    const result = await gatewayChatCompletion(model, messages, {
+      temperature: input.temperature,
+      max_tokens: input.max_tokens,
+      timeoutMs: MATERIAL_AI_TIMEOUT_MS,
+    })
+    const raw = pickBestLlmPayload(result.content, result.reasoning ?? '')
+    if (raw.trim()) return raw
+  } catch {
+    /* fallback to stream */
+  }
+
+  const conversation = [...(input.history ?? []), { role: 'user', content: input.userContent }]
+  return chat(input.systemPrompt, conversation, {
+    temperature: input.temperature,
+    timeoutMs: MATERIAL_AI_TIMEOUT_MS,
+    max_tokens: input.max_tokens,
+    statsKind: 'ai',
+  })
+}
+
 function parseFieldOptimizeRegex(
   raw: string,
   field: MaterialFocusField
@@ -302,8 +459,11 @@ function parseFieldOptimizeRegex(
   const aliases = ['value', 'content', 'text', 'result', field]
   for (const key of aliases) {
     const value = extractRegexStringField(raw, key)
-    if (value) {
+    if (value && !isPlaceholderFieldValue(value)) {
       const explanation = extractRegexStringField(raw, 'explanation') || '已优化字段内容'
+      if (isPlaceholderFieldValue(explanation)) {
+        return { value, explanation: '已优化字段内容' }
+      }
       return { value, explanation }
     }
   }
@@ -316,61 +476,28 @@ function parseFieldOptimizeResponse(
   type: MaterialLibraryType
 ): { value: string; explanation: string } | null {
   const payload = pickBestLlmPayload(raw, '')
+
+  for (const obj of extractAllLlmJsonObjects(raw)) {
+    const parsed = parseFieldFromObject(obj, field, type)
+    if (parsed) return parsed
+  }
+
   const parsed = parseLlmJsonObject(payload)
-  const explanation = extractExplanation(parsed)
-
   if (parsed) {
-    if (parsed.value !== undefined) {
-      const value = field === 'tags' ? extractTagsText(parsed.value) : extractStringValue(parsed.value)
-      if (value) return { value, explanation }
-    }
-
-    for (const key of ['content', 'text', 'result', 'optimized_value', 'optimized']) {
-      if (parsed[key] !== undefined) {
-        const value = field === 'tags' ? extractTagsText(parsed[key]) : extractStringValue(parsed[key])
-        if (value) return { value, explanation }
-      }
-    }
-
-    const direct = readValueFromRecord(parsed, field)
-    if (direct) return { value: direct, explanation }
-
-    if (parsed.patch && typeof parsed.patch === 'object') {
-      const patchSource = parsed.patch as Record<string, unknown>
-      const patch: MaterialAiEditPatch = {}
-      if (typeof patchSource.title === 'string') patch.title = patchSource.title
-      if (typeof patchSource.summary === 'string') patch.summary = patchSource.summary
-      if (Array.isArray(patchSource.tags)) {
-        patch.tags = patchSource.tags.map((t) => String(t).trim()).filter(Boolean)
-      }
-      if (patchSource.payload && typeof patchSource.payload === 'object') {
-        patch.payload = patchSource.payload as Record<string, unknown>
-      }
-      const value = extractValueFromPatch(patch, field)
-      if (value) return { value, explanation }
-    }
-
-    if (parsed.payload && typeof parsed.payload === 'object') {
-      const value = extractValueFromPatch({ payload: parsed.payload as Record<string, unknown> }, field)
-      if (value) return { value, explanation }
-    }
-
-    if (type === 'characters' && parsed.character && typeof parsed.character === 'object') {
-      const value = readValueFromRecord(parsed.character as Record<string, unknown>, field)
-      if (value) return { value, explanation }
-    }
+    const fromObject = parseFieldFromObject(parsed, field, type)
+    if (fromObject) return fromObject
   }
 
   const regexParsed = parseFieldOptimizeRegex(payload, field)
   if (regexParsed) return regexParsed
 
-  const editParsed = parseAiEditResponse(raw)
+  const editParsed = parseAiEditResponseFromRaw(raw)
   if (editParsed) {
     const value = extractValueFromPatch(editParsed.patch, field)
     if (value) return { value, explanation: editParsed.explanation }
   }
 
-  return null
+  return parsePlainTextFieldResponse(payload, field)
 }
 
 function finalizeAiEditResult(
@@ -390,26 +517,35 @@ export async function runMaterialFieldOptimize(input: {
   instruction?: string
 }): Promise<MaterialAiEditResult> {
   const instruction = input.instruction?.trim() || buildFieldAiSuggestion(input.field)
-  const userContent = buildFieldOptimizeMessage(input.type, input.draft, input.field, instruction)
+  const baseUserContent = buildFieldOptimizeMessage(input.type, input.draft, input.field, instruction)
 
-  const raw = await chat(materialFieldEditPrompt, [{ role: 'user', content: userContent }], {
-    temperature: FIELD_OPTIMIZE_TEMPERATURE,
-    timeoutMs: MATERIAL_AI_TIMEOUT_MS,
-    max_tokens: FIELD_OPTIMIZE_MAX_TOKENS,
-    statsKind: 'ai',
-  })
+  const attempts = [
+    { temperature: FIELD_OPTIMIZE_TEMPERATURE, suffix: '' },
+    { temperature: FIELD_OPTIMIZE_RETRY_TEMPERATURE, suffix: JSON_RETRY_SUFFIX },
+  ]
 
-  const parsed = parseFieldOptimizeResponse(raw, input.field, input.type)
-  if (!parsed) {
+  let lastRaw = ''
+  for (const attempt of attempts) {
+    lastRaw = await requestMaterialAiText({
+      systemPrompt: materialFieldEditPrompt,
+      userContent: baseUserContent + attempt.suffix,
+      temperature: attempt.temperature,
+      max_tokens: FIELD_OPTIMIZE_MAX_TOKENS,
+    })
+
+    const parsed = parseFieldOptimizeResponse(lastRaw, input.field, input.type)
+    if (!parsed || isPlaceholderFieldValue(parsed.value)) continue
+
+    const patch = buildPatchForField(input.field, parsed.value)
+    if (!Object.keys(patch).length && !patch.payload) continue
+
+    return finalizeAiEditResult(input.draft, patch, parsed.explanation)
+  }
+
+  if (lastRaw.trim()) {
     throw new Error('AI 返回格式无法解析，请重试或换种说法')
   }
-
-  const patch = buildPatchForField(input.field, parsed.value)
-  if (!Object.keys(patch).length && !patch.payload) {
-    throw new Error('AI 未返回有效内容，请重试')
-  }
-
-  return finalizeAiEditResult(input.draft, patch, parsed.explanation)
+  throw new Error('AI 未返回内容，请检查网络或模型配置后重试')
 }
 
 export async function runMaterialAiEdit(input: {
@@ -420,21 +556,41 @@ export async function runMaterialAiEdit(input: {
   focusedField?: MaterialFocusField | null
 }): Promise<MaterialAiEditResult> {
   const userContent = buildUserMessage(input.type, input.draft, input.instruction, input.focusedField)
-  const conversation = [...(input.history ?? []), { role: 'user', content: userContent }]
 
-  const raw = await chat(materialAiEditPrompt, conversation, {
-    temperature: 0.55,
-    timeoutMs: MATERIAL_AI_TIMEOUT_MS,
-    max_tokens: FULL_EDIT_MAX_TOKENS,
-    statsKind: 'ai',
-  })
-
-  const parsed = parseAiEditResponse(raw)
-  if (!parsed) {
-    throw new Error('AI 返回格式无法解析，请换种说法重试')
+  if (input.focusedField) {
+    return runMaterialFieldOptimize({
+      type: input.type,
+      draft: input.draft,
+      field: input.focusedField,
+      instruction: input.instruction,
+    })
   }
 
-  return finalizeAiEditResult(input.draft, parsed.patch, parsed.explanation)
+  const attempts = [
+    { temperature: 0.55, suffix: '' },
+    { temperature: 0.35, suffix: JSON_RETRY_SUFFIX },
+  ]
+
+  let lastParsed: { patch: MaterialAiEditPatch; explanation: string } | null = null
+  for (const attempt of attempts) {
+    const raw = await requestMaterialAiText({
+      systemPrompt: materialAiEditPrompt,
+      userContent: userContent + attempt.suffix,
+      history: input.history,
+      temperature: attempt.temperature,
+      max_tokens: FULL_EDIT_MAX_TOKENS,
+    })
+
+    lastParsed = parseAiEditResponseFromRaw(raw)
+    if (lastParsed && (Object.keys(lastParsed.patch).length || lastParsed.patch.payload)) {
+      return finalizeAiEditResult(input.draft, lastParsed.patch, lastParsed.explanation)
+    }
+  }
+
+  if (lastParsed) {
+    return finalizeAiEditResult(input.draft, lastParsed.patch, lastParsed.explanation)
+  }
+  throw new Error('AI 返回格式无法解析，请换种说法重试')
 }
 
 export function buildFieldAiSuggestion(field: MaterialFocusField): string {

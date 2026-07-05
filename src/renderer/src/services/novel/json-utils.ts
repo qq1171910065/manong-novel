@@ -90,7 +90,60 @@ function tryParseJson(text: string): Record<string, unknown> | null {
   }
 }
 
+/** 从文本中提取所有可能的 JSON 对象（应对模型在 JSON 前后加说明的情况） */
+export function extractAllLlmJsonObjects(rawText: string): Record<string, unknown>[] {
+  const cleaned = removeThinkTags(rawText)
+  const text = unwrapMarkdownJson(cleaned)
+  const results: Record<string, unknown>[] = []
+  const seen = new Set<string>()
+
+  const pushObject = (obj: Record<string, unknown> | null) => {
+    if (!obj) return
+    const key = JSON.stringify(obj)
+    if (seen.has(key)) return
+    seen.add(key)
+    results.push(obj)
+  }
+
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] !== '{') continue
+
+    let depth = 0
+    let inString = false
+    let escape = false
+
+    for (let j = i; j < text.length; j += 1) {
+      const ch = text[j]
+      if (inString) {
+        if (escape) escape = false
+        else if (ch === '\\') escape = true
+        else if (ch === '"') inString = false
+        continue
+      }
+      if (ch === '"') {
+        inString = true
+        continue
+      }
+      if (ch === '{') depth += 1
+      else if (ch === '}') {
+        depth -= 1
+        if (depth === 0) {
+          const slice = text.slice(i, j + 1)
+          pushObject(tryParseJson(slice.trim()))
+          pushObject(tryParseJson(sanitizeJsonLikeText(slice.trim())))
+          break
+        }
+      }
+    }
+  }
+
+  return results
+}
+
 export function parseLlmJsonObject(rawText: string): Record<string, unknown> | null {
+  const objects = extractAllLlmJsonObjects(rawText)
+  if (objects.length) return objects[0]!
+
   const cleaned = removeThinkTags(rawText)
   const candidates = [cleaned, unwrapMarkdownJson(cleaned)]
 
@@ -151,10 +204,11 @@ export function resolveDisplayAiMessage(rawText: string): string {
 export function pickBestLlmPayload(content: string, reasoning: string): string {
   const candidates = [content.trim(), reasoning.trim()].filter(Boolean)
   for (const candidate of candidates) {
+    if (extractAllLlmJsonObjects(candidate).length) return candidate
     if (parseLlmJsonObject(candidate)) return candidate
   }
   for (const candidate of candidates) {
-    if (candidate.includes('ai_message')) return candidate
+    if (candidate.includes('ai_message') || candidate.includes('"value"')) return candidate
   }
-  return candidates[0] || ''
+  return candidates.join('\n\n') || ''
 }

@@ -34,24 +34,41 @@ export function buildCoverPrompt(context: NovelVisualContext): string {
     .join('')
 }
 
+export function buildCharacterPortraitDraft(
+  character: Pick<Character, 'name' | 'identity' | 'personality' | 'description' | 'abilities'>,
+  extras?: { summary?: string; tags?: string[]; title?: string; genre?: string; style?: string }
+): string {
+  const name = character.name?.trim() || extras?.title?.trim() || '角色'
+  const lines = [
+    `角色姓名：${name}`,
+    character.identity?.trim() ? `身份：${character.identity.trim()}` : '',
+    character.description?.trim() ? `外貌与形象：${character.description.trim()}` : '',
+    character.personality?.trim() ? `性格气质：${character.personality.trim()}` : '',
+    character.abilities?.trim() ? `能力特征：${character.abilities.trim()}` : '',
+    extras?.summary?.trim() ? `角色摘要：${extras.summary.trim()}` : '',
+    extras?.tags?.length ? `标签：${extras.tags.join('、')}` : '',
+    extras?.genre?.trim() ? `世界观类型：${extras.genre.trim()}` : '',
+    extras?.style?.trim() ? `画风参考：${extras.style.trim()}` : '',
+  ].filter(Boolean)
+  return lines.join('\n')
+}
+
 export function buildCharacterPortraitPrompt(
-  character: Pick<Character, 'name' | 'identity' | 'personality' | 'description'>,
+  character: Pick<Character, 'name' | 'identity' | 'personality' | 'description' | 'abilities'>,
   context?: Pick<NovelVisualContext, 'genre' | 'style'>
 ): string {
-  const name = character.name?.trim() || '角色'
-  const identity = character.identity?.trim()
-  const personality = character.personality?.trim() || character.description?.trim()
   const genre = context?.genre?.trim() || '奇幻'
   const style = context?.style?.trim() || '精细插画'
+  const draft = buildCharacterPortraitDraft(character, {
+    genre,
+    style,
+  })
   return [
-    `角色立绘：${name}。`,
-    identity ? `身份：${identity}。` : '',
-    personality ? `性格气质：${personality}。` : '',
-    `世界观类型：${genre}，画风：${style}。`,
-    '半身或胸像，背景简洁，面部清晰，高质量，无文字、无水印。',
-  ]
-    .filter(Boolean)
-    .join('')
+    draft,
+    '',
+    `绘画要求：严格依据以上全部角色信息绘制立绘，不得随意编造与设定冲突的外貌、服饰、年龄、种族或道具。`,
+    `构图：半身或胸像，背景简洁，面部清晰，画风 ${style}，高质量，无文字、无水印。`,
+  ].join('\n')
 }
 
 /** 用对话模型将草稿信息整理为可提交的绘图提示词 */
@@ -66,13 +83,18 @@ export async function analyzeImagePrompt(
   try {
     const model = await resolveProjectChatModelId(project)
     const label = kind === 'cover' ? '书籍封面' : '角色立绘'
+    const portraitRules =
+      kind === 'portrait'
+        ? '必须严格基于用户提供的全部角色信息生成提示词，不得随意添加与设定冲突的外貌、服饰、年龄、种族或道具。信息不足时只补充构图与画风，不要编造具体人设。'
+        : '根据用户提供的信息，输出适合文生图模型的提示词。'
     const result = await gatewayChatCompletion(
       model,
       [
         {
           role: 'system',
           content:
-            '你是专业的 AI 绘画提示词工程师。根据用户提供的信息，输出一段适合文生图模型的提示词。' +
+            '你是专业的 AI 绘画提示词工程师。' +
+            portraitRules +
             '可使用中文与英文关键词混合，描述画面主体、风格、构图、光影。' +
             '只输出提示词正文，不要解释，不要加引号或标题。',
         },
@@ -102,12 +124,19 @@ export async function generateCoverImage(
 }
 
 export async function generateCharacterPortrait(
-  character: Pick<Character, 'name' | 'identity' | 'personality' | 'description'>,
+  character: Pick<Character, 'name' | 'identity' | 'personality' | 'description' | 'abilities'>,
   context?: Pick<NovelVisualContext, 'genre' | 'style'>,
   promptOverride?: string,
-  project?: ProjectModelPrefs | null
+  project?: ProjectModelPrefs | null,
+  options?: { portraitDraft?: string; skipPromptRefine?: boolean }
 ): Promise<string> {
-  const prompt = promptOverride?.trim() || buildCharacterPortraitPrompt(character, context)
+  const baseDraft =
+    options?.portraitDraft?.trim() ||
+    promptOverride?.trim() ||
+    buildCharacterPortraitPrompt(character, context)
+  const prompt = options?.skipPromptRefine
+    ? baseDraft
+    : await analyzeImagePrompt('portrait', baseDraft, project)
   const model = await resolveProjectImageModelId(project)
   const dataUrl = await gatewayImageGenerate({ prompt, size: '1024x1024', model })
   return ensureLocalImageDataUrl(dataUrl)

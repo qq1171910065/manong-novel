@@ -796,6 +796,7 @@ export async function gatewayChatCompletion(
   const res = await gatewayFetch('chat/completions', {
     method: 'POST',
     body,
+    timeoutMs: params?.timeoutMs,
   })
   if (!res.ok) throw new Error(res.error || '对话失败')
   const data = res.data as {

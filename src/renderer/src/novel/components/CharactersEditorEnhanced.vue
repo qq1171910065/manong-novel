@@ -328,6 +328,7 @@ function characterPrompt(character: Character) {
     identity: character.identity ?? '',
     personality: character.personality ?? '',
     description: character.description ?? '',
+    abilities: character.abilities ?? '',
   });
 }
 

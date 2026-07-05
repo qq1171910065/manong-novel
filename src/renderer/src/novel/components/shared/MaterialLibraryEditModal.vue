@@ -29,7 +29,7 @@ import {
   setMaterialAutoEnrichOnSave,
 } from '@renderer/services/novel/material-library-prefs'
 import { activityLogService } from '@renderer/services/activity-log-service'
-import { buildCharacterPortraitPrompt, generateCharacterPortrait } from '@renderer/services/image-service'
+import { buildCharacterPortraitDraft, generateCharacterPortrait } from '@renderer/services/image-service'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
 
 const props = defineProps<{
@@ -277,7 +277,10 @@ async function generatePortrait() {
 
   portraitLoading.value = true
   try {
-    const prompt = buildCharacterPortraitPrompt(draft.value.character, {
+    const portraitDraft = buildCharacterPortraitDraft(draft.value.character, {
+      title: draft.value.title,
+      summary: draft.value.summary,
+      tags: draft.value.tags,
       genre: draft.value.genre || undefined,
       style: draft.value.style || undefined,
     })
@@ -287,7 +290,9 @@ async function generatePortrait() {
         genre: draft.value.genre || undefined,
         style: draft.value.style || undefined,
       },
-      prompt
+      undefined,
+      undefined,
+      { portraitDraft }
     )
     globalAlert.showSuccess('头像已生成', '生成成功')
   } catch (error) {
