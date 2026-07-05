@@ -8,6 +8,8 @@ import {
   mergeConceptBriefFromModel,
   enrichBlueprintFromConcept,
   buildFallbackRelationshipsFromConcept,
+  resolveBlueprintExpectedChapterCount,
+  parseExpectedChapterCount,
   resolveConceptBriefForDisplay,
   resolveFinalConceptAnswers,
   resolveFinalConceptBrief,
@@ -174,6 +176,43 @@ describe('enrichBlueprintFromConcept', () => {
     expect(enriched.title).toBe('谎言品尝师')
     expect(enriched.full_synopsis).toContain('品尝谎言')
     expect(enriched.one_sentence_summary).toContain('品尝谎言')
+  })
+})
+
+describe('parseExpectedChapterCount', () => {
+  it('不把 1万字 误判为 1 章', () => {
+    expect(parseExpectedChapterCount('大概 1 万字')).toBe(12)
+    expect(parseExpectedChapterCount('10万字长篇')).toBe(40)
+  })
+
+  it('识别明确章数', () => {
+    expect(parseExpectedChapterCount('20 章左右')).toBe(20)
+    expect(parseExpectedChapterCount('12-20章')).toBe(16)
+  })
+
+  it('忽略占位符', () => {
+    expect(parseExpectedChapterCount('（预期篇幅已在对话中确认）')).toBeNull()
+  })
+})
+
+describe('resolveBlueprintExpectedChapterCount', () => {
+  it('无明确章数时默认 12 章', () => {
+    expect(
+      resolveBlueprintExpectedChapterCount({
+        answers: { chapter_count: '（预期篇幅已在对话中确认）' },
+        mode: 'full',
+      })
+    ).toBe(12)
+  })
+
+  it('从概念综述提取章数', () => {
+    expect(
+      resolveBlueprintExpectedChapterCount({
+        answers: {},
+        conceptBrief: '中篇故事，规划 40 章完成主线',
+        mode: 'full',
+      })
+    ).toBe(40)
   })
 })
 

@@ -99,7 +99,7 @@ import {
   composeConceptBriefFromAnswers,
   mergeConceptBriefFromModel,
   normalizeChecklist,
-  parseExpectedChapterCount,
+  resolveBlueprintExpectedChapterCount,
   pruneDraftsForConfirmed,
   rebuildChecklistFromHistory,
   rebuildFullConceptStateFromHistory,
@@ -1158,29 +1158,35 @@ function normalizeBlueprintPayload(parsed: Record<string, unknown>): Blueprint {
   if (!Array.isArray(blueprint.relationships)) blueprint.relationships = []
 
   if (Array.isArray(blueprint.chapter_outline)) {
-    blueprint.chapter_outline = blueprint.chapter_outline
-      .map((item, index) => {
-        const chapterNumber =
-          typeof item?.chapter_number === 'number' && item.chapter_number > 0
-            ? item.chapter_number
-            : index + 1
-        return {
-          ...item,
-          chapter_number: chapterNumber,
-          title: String(item?.title ?? '').trim(),
-          summary: String(item?.summary ?? '').trim(),
-        }
-      })
-      .filter((item) => item.title || item.summary)
+    blueprint.chapter_outline = blueprint.chapter_outline.map((item, index) => {
+      const chapterNumber =
+        typeof item?.chapter_number === 'number' && item.chapter_number > 0
+          ? item.chapter_number
+          : index + 1
+      const title = String(item?.title ?? '').trim()
+      const summary = String(item?.summary ?? '').trim()
+      return {
+        ...item,
+        chapter_number: chapterNumber,
+        title: title || `第${chapterNumber}章`,
+        summary: summary || `第 ${chapterNumber} 章情节（待 AI 补全摘要）`,
+      }
+    })
   }
 
   return blueprint
 }
 
+function getOutlineChapterTarget(blueprint: Blueprint): number {
+  const list = blueprint.chapter_outline ?? []
+  if (!list.length) return 0
+  const maxNumber = list.reduce((max, item) => Math.max(max, item.chapter_number ?? 0), 0)
+  return Math.max(maxNumber, list.length)
+}
+
 function countUsableChapterOutline(blueprint: Blueprint | null | undefined): number {
-  const list = blueprint?.chapter_outline
-  if (!Array.isArray(list)) return 0
-  return list.filter((item) => Boolean(item?.title?.trim() || item?.summary?.trim())).length
+  if (!blueprint) return 0
+  return getOutlineChapterTarget(blueprint)
 }
 
 function needsOutlineRepair(blueprint: Blueprint, expected: number): boolean {
@@ -1238,10 +1244,16 @@ async function repairBlueprintOutline(
   const rebuilt = rebuildChecklistFromHistory(project.conversation_history ?? [], mode)
   const expected =
     options?.expectedChapters ??
-    parseExpectedChapterCount(
-      resolveFinalConceptAnswers(rebuilt.checklist, rebuilt.answers, rebuilt.drafts, mode).chapter_count
-    ) ??
-    12
+    resolveBlueprintExpectedChapterCount({
+      answers: resolveFinalConceptAnswers(
+        rebuilt.checklist,
+        rebuilt.answers,
+        rebuilt.drafts,
+        mode
+      ),
+      conceptBrief: options?.conceptBrief,
+      mode,
+    })
 
   if (!needsOutlineRepair(blueprint, expected)) return
 
@@ -1381,10 +1393,12 @@ export async function generateBlueprint(
     conceptBrief
   )
   const materialContext = buildConceptMaterialPromptSupplement(project)
-  const expectedChapters =
-    parseExpectedChapterCount(finalizedAnswers.chapter_count) ??
-    parseExpectedChapterCount(rebuilt.answers.chapter_count) ??
-    12
+  const expectedChapters = resolveBlueprintExpectedChapterCount({
+    answers: finalizedAnswers,
+    conceptBrief,
+    conversationText: historyText,
+    mode,
+  })
 
   const blueprintUserContent = [
     conceptSupplement.trim(),
@@ -1472,16 +1486,14 @@ export async function generateBlueprint(
     onProgress: (message, percent) => report('repairing_outline', message, percent),
   })
 
-  const usableBeforeEnsure = countUsableChapterOutline(blueprint)
-  if (usableBeforeEnsure < expectedChapters) {
-    report(
-      'repairing_outline',
-      `补齐章节至 ${expectedChapters} 章（当前 ${usableBeforeEnsure} 章）…`,
-      88
-    )
-    ensureChapterOutlineCount(blueprint, expectedChapters)
-    project.blueprint = blueprint
-  }
+  const usableBeforeEnsure = getOutlineChapterTarget(blueprint)
+  report(
+    'repairing_outline',
+    `对齐章节至 ${expectedChapters} 章（当前 ${usableBeforeEnsure} 章）…`,
+    88
+  )
+  ensureChapterOutlineCount(blueprint, expectedChapters)
+  project.blueprint = blueprint
 
   report('done', '蓝图生成完成', 96)
 

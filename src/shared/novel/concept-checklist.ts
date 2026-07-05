@@ -645,8 +645,9 @@ export function buildAutoCompletionMessage(answers: ConceptChecklistAnswers): st
 export function parseExpectedChapterCount(raw: string | null | undefined): number | null {
   const text = String(raw ?? '').trim()
   if (!text) return null
+  if (/已在对话中确认/.test(text)) return null
 
-  const rangeMatch = text.match(/(\d+)\s*[-~～至到]\s*(\d+)\s*章?/)
+  const rangeMatch = text.match(/(\d+)\s*[-~～至到]\s*(\d+)\s*章/)
   if (rangeMatch) {
     const low = parseInt(rangeMatch[1], 10)
     const high = parseInt(rangeMatch[2], 10)
@@ -661,16 +662,27 @@ export function parseExpectedChapterCount(raw: string | null | undefined): numbe
     if (Number.isFinite(count)) return Math.min(800, Math.max(1, count))
   }
 
-  const nums = text.match(/\d+/g)
-  if (nums?.length === 1) {
-    const count = parseInt(nums[0], 10)
-    if (Number.isFinite(count)) return Math.min(800, Math.max(1, count))
+  const wanMatch = text.match(/(\d+(?:\.\d+)?)\s*万\s*字/)
+  if (wanMatch) {
+    const chars = parseFloat(wanMatch[1]) * 10000
+    if (chars <= 50000) return 12
+    if (chars <= 200000) return 40
+    return 120
   }
-  if (nums && nums.length >= 2) {
-    const low = parseInt(nums[0], 10)
-    const high = parseInt(nums[1], 10)
-    if (Number.isFinite(low) && Number.isFinite(high)) {
-      return Math.min(800, Math.max(1, Math.round((low + high) / 2)))
+  if (/(\d+)\s*千字/.test(text)) return 5
+
+  if (/章|篇|卷/.test(text)) {
+    const nums = text.match(/\d+/g)
+    if (nums?.length === 1) {
+      const count = parseInt(nums[0], 10)
+      if (Number.isFinite(count)) return Math.min(800, Math.max(1, count))
+    }
+    if (nums && nums.length >= 2) {
+      const low = parseInt(nums[0], 10)
+      const high = parseInt(nums[1], 10)
+      if (Number.isFinite(low) && Number.isFinite(high)) {
+        return Math.min(800, Math.max(1, Math.round((low + high) / 2)))
+      }
     }
   }
 
@@ -680,6 +692,43 @@ export function parseExpectedChapterCount(raw: string | null | undefined): numbe
   if (/长篇/.test(text)) return 120
 
   return null
+}
+
+function isExplicitSingleChapter(raw: string | null | undefined): boolean {
+  const text = String(raw ?? '').trim()
+  if (!text) return false
+  return (
+    /^(单章|仅\s*1\s*章|一共\s*1\s*章|只写\s*1\s*章)/.test(text) ||
+    /^1\s*章(?:节)?(?:左右|以内)?$/.test(text)
+  )
+}
+
+/** 综合概念/对话推断蓝图应有章数（避免把「1万字」误判为 1 章） */
+export function resolveBlueprintExpectedChapterCount(options: {
+  answers: ConceptChecklistAnswers
+  conceptBrief?: string
+  conversationText?: string
+  mode?: WritingMode
+}): number {
+  const defaultCount = 12
+  const sources = [
+    options.answers.chapter_count,
+    options.conceptBrief,
+    options.conversationText,
+  ]
+
+  let best: number | null = null
+  for (const raw of sources) {
+    const parsed = parseExpectedChapterCount(raw)
+    if (parsed === null) continue
+    if (parsed === 1 && !isExplicitSingleChapter(raw)) continue
+    if (best === null || parsed > best) best = parsed
+  }
+
+  if (best !== null && best > 1) return best
+  if (best === 1 && isExplicitSingleChapter(options.answers.chapter_count)) return 1
+
+  return defaultCount
 }
 
 /** 用灵感对话概念补全蓝图缺失字段（解析失败或模型漏填时的兜底） */
@@ -851,7 +900,11 @@ export function buildBlueprintConceptSupplement(
     .filter((key) => checklist[key] || answers[key])
     .map((key) => `- ${CONCEPT_CHECKLIST_LABELS[key]}：${answers[key]?.trim() || '（对话中已确认）'}`)
 
-  const expectedChapters = parseExpectedChapterCount(answers.chapter_count)
+  const expectedChapters = resolveBlueprintExpectedChapterCount({
+    answers,
+    conceptBrief: brief,
+    mode,
+  })
   const chapterRequirement = expectedChapters
     ? `chapter_outline 必须包含 ${expectedChapters} 章（chapter_number 从 1 连续到 ${expectedChapters}），每章必须有 title、summary、target_word_count。`
     : '必须输出完整 chapter_outline（每章含 title、summary、target_word_count），数量与对话中确认的篇幅一致。'
