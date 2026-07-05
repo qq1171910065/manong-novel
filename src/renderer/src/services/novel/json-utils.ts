@@ -5,7 +5,6 @@ export function removeThinkTags(rawText: string): string {
   return rawText
     .replace(/<think>[\s\S]*?<\/redacted_thinking>/gi, '')
     .replace(/<thinking>[\s\S]*?<\/thinking>/gi, '')
-    .replace(/`[\s\S]*?`/gi, '')
     .replace(/[\s\S]*?<\/think>/gi, '')
     .trim()
 }
@@ -192,6 +191,68 @@ export function parseChapterOutlineFromLlm(rawText: string): unknown[] | null {
         if (slice) return slice
       }
     }
+  }
+
+  return null
+}
+
+function unwrapNestedBlueprintRecord(obj: Record<string, unknown>): Record<string, unknown> {
+  for (const key of ['blueprint', 'data', 'result', 'novel_blueprint'] as const) {
+    const nested = obj[key]
+    if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+      return nested as Record<string, unknown>
+    }
+  }
+  return obj
+}
+
+function scoreBlueprintCandidate(obj: Record<string, unknown>): number {
+  const target = unwrapNestedBlueprintRecord(obj)
+  let score = 0
+  if (typeof target.title === 'string' && target.title.trim()) score += 15
+  if (typeof target.full_synopsis === 'string' && target.full_synopsis.trim()) score += 25
+  if (typeof target.one_sentence_summary === 'string' && target.one_sentence_summary.trim()) score += 8
+  if (Array.isArray(target.characters)) score += 10 + Math.min(target.characters.length, 10)
+  if (Array.isArray(target.chapter_outline)) score += 15 + Math.min(target.chapter_outline.length, 50)
+  if (target.world_setting && typeof target.world_setting === 'object') score += 5
+  if (typeof target.genre === 'string' && target.genre.trim()) score += 3
+  return score
+}
+
+/** 从 LLM 回复中解析完整蓝图 JSON（选取最像蓝图的候选对象） */
+export function parseBlueprintFromLlm(rawText: string): Record<string, unknown> | null {
+  const payload = pickBestLlmPayload(rawText, '')
+  const cleaned = removeThinkTags(payload)
+  const candidates: Record<string, unknown>[] = []
+  const seen = new Set<string>()
+
+  const pushCandidate = (obj: Record<string, unknown> | null | undefined) => {
+    if (!obj) return
+    const unwrapped = unwrapNestedBlueprintRecord(obj)
+    const key = JSON.stringify(unwrapped)
+    if (seen.has(key)) return
+    seen.add(key)
+    candidates.push(unwrapped)
+  }
+
+  for (const obj of extractAllLlmJsonObjects(cleaned)) pushCandidate(obj)
+  pushCandidate(parseLlmJsonObject(cleaned))
+  pushCandidate(parseLlmJsonObject(unwrapMarkdownJson(cleaned)))
+
+  let best: Record<string, unknown> | null = null
+  let bestScore = -1
+  for (const obj of candidates) {
+    const score = scoreBlueprintCandidate(obj)
+    if (score > bestScore) {
+      bestScore = score
+      best = obj
+    }
+  }
+
+  if (best && bestScore > 0) return best
+
+  for (const obj of candidates) {
+    if (obj.title || obj.full_synopsis || obj.chapter_outline) return obj
   }
 
   return null

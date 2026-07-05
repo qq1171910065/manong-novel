@@ -682,6 +682,78 @@ export function parseExpectedChapterCount(raw: string | null | undefined): numbe
   return null
 }
 
+/** 用灵感对话概念补全蓝图缺失字段（解析失败或模型漏填时的兜底） */
+export function enrichBlueprintFromConcept(
+  blueprint: Record<string, unknown>,
+  options: {
+    projectTitle?: string
+    conceptBrief?: string
+    answers: ConceptChecklistAnswers
+    mode: WritingMode
+  }
+): Record<string, unknown> {
+  const result = { ...blueprint }
+  const brief = options.conceptBrief?.trim()
+  const answers = options.answers
+  const titleFromBrief = brief?.match(/(?:暂定书名|书名)[：:]\s*(.+)/)?.[1]?.trim()
+
+  if (!String(result.title ?? '').trim()) {
+    result.title =
+      answers.working_title?.trim() || titleFromBrief || options.projectTitle?.trim() || '未命名作品'
+  }
+  if (!String(result.full_synopsis ?? '').trim()) {
+    result.full_synopsis = brief || composeConceptBriefFromAnswers(answers, options.mode)
+  }
+  if (!String(result.one_sentence_summary ?? '').trim()) {
+    result.one_sentence_summary =
+      answers.spark?.trim() || brief?.split(/\n+/).find((line) => line.trim())?.slice(0, 160) || ''
+  }
+  if (!String(result.genre ?? '').trim()) result.genre = answers.genre_tone?.trim() || ''
+  if (!String(result.style ?? '').trim()) result.style = answers.prose_style?.trim() || ''
+  if (!String(result.tone ?? '').trim()) result.tone = answers.genre_tone?.trim() || ''
+  if (!String(result.target_audience ?? '').trim()) result.target_audience = '通用读者'
+
+  if (!Array.isArray(result.characters) || result.characters.length === 0) {
+    const characters: Record<string, string>[] = []
+    if (answers.protagonist?.trim()) {
+      characters.push({
+        name: '主角',
+        identity: answers.protagonist.trim(),
+        personality: '',
+        goals: answers.central_conflict?.trim() || '',
+        abilities: '',
+        relationship_to_protagonist: '主角',
+      })
+    }
+    if (answers.antagonist?.trim()) {
+      characters.push({
+        name: '对立面',
+        identity: answers.antagonist.trim(),
+        personality: '',
+        goals: '',
+        abilities: '',
+        relationship_to_protagonist: '主要对立力量',
+      })
+    }
+    if (characters.length) result.characters = characters
+  }
+
+  const ws =
+    result.world_setting && typeof result.world_setting === 'object'
+      ? ({ ...(result.world_setting as Record<string, unknown>) } as Record<string, unknown>)
+      : ({} as Record<string, unknown>)
+  if (!String(ws.core_rules ?? '').trim()) {
+    ws.core_rules = answers.core_theme?.trim() || answers.genre_tone?.trim() || ''
+  }
+  if (!Array.isArray(ws.key_locations)) ws.key_locations = []
+  if (!Array.isArray(ws.factions)) ws.factions = []
+  result.world_setting = ws
+
+  if (!Array.isArray(result.relationships)) result.relationships = []
+
+  return result
+}
+
 /** 蓝图生成时注入的结构化设定摘要 */
 export function buildBlueprintConceptSupplement(
   checklist: ConceptChecklist,

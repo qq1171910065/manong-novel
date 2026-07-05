@@ -6,6 +6,7 @@ import {
   isRefinedConceptAnswer,
   mergeChecklistAnswersFromModel,
   mergeConceptBriefFromModel,
+  enrichBlueprintFromConcept,
   resolveConceptBriefForDisplay,
   resolveFinalConceptAnswers,
   resolveFinalConceptBrief,
@@ -155,5 +156,22 @@ describe('resolveFinalConceptBrief', () => {
       'full'
     )
     expect(brief).toContain('品尝谎言')
+  })
+})
+
+describe('enrichBlueprintFromConcept', () => {
+  it('用概念综述补全标题与梗概', () => {
+    const enriched = enrichBlueprintFromConcept(
+      {},
+      {
+        projectTitle: '项目名',
+        conceptBrief: '赛博朋克侦探能品尝谎言的冒险故事',
+        answers: { working_title: '谎言品尝师', spark: '侦探能品尝谎言' },
+        mode: 'full',
+      }
+    )
+    expect(enriched.title).toBe('谎言品尝师')
+    expect(enriched.full_synopsis).toContain('品尝谎言')
+    expect(enriched.one_sentence_summary).toContain('品尝谎言')
   })
 })

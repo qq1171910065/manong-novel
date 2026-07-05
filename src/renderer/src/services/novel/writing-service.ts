@@ -15,6 +15,7 @@ import type { GatewayTokenUsage } from '@renderer/services/gateway-api'
 import { projectStatsService } from '@renderer/services/project-stats-service'
 import { resolveProjectChatModelId, type ProjectModelPrefs } from './project-model'
 import {
+  parseBlueprintFromLlm,
   parseChapterOutlineFromLlm,
   parseLlmJsonObject,
   pickBestLlmPayload,
@@ -88,6 +89,7 @@ import {
   buildAutoCompletionMessage,
   buildBlueprintConceptSupplement,
   buildChecklistPromptSupplement,
+  enrichBlueprintFromConcept,
   isChecklistComplete,
   detectChapterCountLoop,
   forceCompleteChecklist,
@@ -1091,14 +1093,87 @@ ${blueprintJson}
   }
 }
 
+function formatConversationHistoryForBlueprint(
+  history: ConversationMessage[]
+): string {
+  return history
+    .map((msg) => {
+      if (msg.role === 'user') {
+        try {
+          const input = JSON.parse(msg.content) as { value?: string | null }
+          const value = String(input.value ?? '').trim()
+          return value ? `用户：${value}` : ''
+        } catch {
+          return msg.content.trim() ? `用户：${msg.content.trim()}` : ''
+        }
+      }
+      if (msg.role === 'assistant') {
+        try {
+          const payload = JSON.parse(msg.content) as { ai_message?: string }
+          const text = payload.ai_message?.trim()
+          return text ? `助手：${text}` : ''
+        } catch {
+          return msg.content.trim() ? `助手：${msg.content.trim()}` : ''
+        }
+      }
+      return ''
+    })
+    .filter(Boolean)
+    .join('\n\n')
+}
+
 function normalizeBlueprintPayload(parsed: Record<string, unknown>): Blueprint {
   const blueprint = { ...parsed } as Blueprint
   if (!Array.isArray(blueprint.chapter_outline)) {
-    const alt = parsed.chapters ?? parsed.outline
+    const alt = parsed.chapters ?? parsed.outline ?? parsed.chapter_outlines
     if (Array.isArray(alt)) {
       blueprint.chapter_outline = alt as Blueprint['chapter_outline']
     }
   }
+
+  const ws = { ...(blueprint.world_setting || {}) } as Record<string, unknown>
+  if (Array.isArray(ws.core_rules)) {
+    ws.core_rules = ws.core_rules.map(String).join('\n')
+  }
+  if (typeof ws.core_rules !== 'string') {
+    ws.core_rules = ws.core_rules ? String(ws.core_rules) : ''
+  }
+  if (Array.isArray(ws.key_locations)) {
+    ws.key_locations = ws.key_locations.map((loc) =>
+      typeof loc === 'string' ? { name: loc, description: '' } : loc
+    )
+  } else {
+    ws.key_locations = []
+  }
+  if (Array.isArray(ws.factions)) {
+    ws.factions = ws.factions.map((f) =>
+      typeof f === 'string' ? { name: f, description: '' } : f
+    )
+  } else {
+    ws.factions = []
+  }
+  blueprint.world_setting = ws as Blueprint['world_setting']
+
+  if (!Array.isArray(blueprint.characters)) blueprint.characters = []
+  if (!Array.isArray(blueprint.relationships)) blueprint.relationships = []
+
+  if (Array.isArray(blueprint.chapter_outline)) {
+    blueprint.chapter_outline = blueprint.chapter_outline
+      .map((item, index) => {
+        const chapterNumber =
+          typeof item?.chapter_number === 'number' && item.chapter_number > 0
+            ? item.chapter_number
+            : index + 1
+        return {
+          ...item,
+          chapter_number: chapterNumber,
+          title: String(item?.title ?? '').trim(),
+          summary: String(item?.summary ?? '').trim(),
+        }
+      })
+      .filter((item) => item.title || item.summary)
+  }
+
   return blueprint
 }
 
@@ -1117,7 +1192,8 @@ function needsOutlineRepair(blueprint: Blueprint, expected: number): boolean {
 function buildOutlineGenerationPayload(
   project: NovelProject,
   startChapter: number,
-  numChapters: number
+  numChapters: number,
+  conceptBrief?: string
 ): Record<string, unknown> {
   const blueprint = project.blueprint ?? {}
   const { chapter_outline: _ignored, ...rest } = blueprint
@@ -1125,8 +1201,22 @@ function buildOutlineGenerationPayload(
     (item) => item?.title?.trim() || item?.summary?.trim()
   )
 
+  const novelBlueprint: Record<string, unknown> = existingOutline.length
+    ? { ...rest, chapter_outline: existingOutline }
+    : { ...rest }
+
+  if (!String(novelBlueprint.full_synopsis ?? '').trim() && conceptBrief?.trim()) {
+    novelBlueprint.full_synopsis = conceptBrief.trim()
+  }
+  if (!String(novelBlueprint.title ?? '').trim() && project.title?.trim()) {
+    novelBlueprint.title = project.title.trim()
+  }
+  if (!String(novelBlueprint.one_sentence_summary ?? '').trim() && conceptBrief?.trim()) {
+    novelBlueprint.one_sentence_summary = conceptBrief.split(/\n+/)[0]?.slice(0, 160) || ''
+  }
+
   return {
-    novel_blueprint: existingOutline.length ? { ...rest, chapter_outline: existingOutline } : rest,
+    novel_blueprint: novelBlueprint,
     wait_to_generate: {
       start_chapter: startChapter,
       num_chapters: numChapters,
@@ -1139,6 +1229,7 @@ async function repairBlueprintOutline(
   blueprint: Blueprint,
   options?: {
     signal?: AbortSignal
+    conceptBrief?: string
     onProgress?: (message: string, percent: number) => void
   }
 ): Promise<void> {
@@ -1168,10 +1259,16 @@ async function repairBlueprintOutline(
       percent
     )
 
-    const added = await generateChapterOutline(project, startChapter, batchSize, options)
+    const added = await generateChapterOutline(project, startChapter, batchSize, {
+      signal: options?.signal,
+      conceptBrief: options?.conceptBrief,
+    })
     let after = countUsableChapterOutline(project.blueprint)
     if (after <= before && batchSize > 3) {
-      await generateChapterOutline(project, startChapter, 3, options)
+      await generateChapterOutline(project, startChapter, 3, {
+        signal: options?.signal,
+        conceptBrief: options?.conceptBrief,
+      })
       after = countUsableChapterOutline(project.blueprint)
     }
     if (added <= 0 && after <= before) {
@@ -1186,6 +1283,26 @@ async function repairBlueprintOutline(
   if (Array.isArray(project.blueprint.chapter_outline)) {
     blueprint.chapter_outline = project.blueprint.chapter_outline
   }
+}
+
+function buildFallbackChapterOutline(blueprint: Blueprint, expected: number): Blueprint['chapter_outline'] {
+  const synopsis = blueprint.full_synopsis?.trim() || blueprint.one_sentence_summary?.trim() || ''
+  const sentences = synopsis.split(/[。！？\n]+/).map((part) => part.trim()).filter((part) => part.length >= 4)
+  const titleBase = blueprint.title?.trim() || '故事'
+  const chapters: NonNullable<Blueprint['chapter_outline']> = []
+
+  for (let i = 1; i <= expected; i += 1) {
+    const snippet = sentences[(i - 1) % Math.max(sentences.length, 1)] || ''
+    chapters.push({
+      chapter_number: i,
+      title: i === 1 ? `${titleBase}·开端` : i === expected ? `${titleBase}·终章` : `${titleBase}·第${i}章`,
+      summary:
+        snippet ||
+        `第 ${i} 章：承接前文，推进「${titleBase}」主线，展开新的冲突与人物成长。`,
+      target_word_count: 3500,
+    })
+  }
+  return chapters
 }
 
 export interface BlueprintGenerationProgress {
@@ -1203,9 +1320,7 @@ export async function generateBlueprint(
   }
 
   report('preparing', '整理灵感对话与设定清单…', 8)
-  const historyText = (project.conversation_history || [])
-    .map((m) => `${m.role}: ${m.content}`)
-    .join('\n\n')
+  const historyText = formatConversationHistoryForBlueprint(project.conversation_history ?? [])
 
   const mode = resolveWritingMode(project)
   const rebuilt = rebuildChecklistFromHistory(project.conversation_history ?? [], mode)
@@ -1216,19 +1331,27 @@ export async function generateBlueprint(
     mode
   )
   const conceptState = rebuildFullConceptStateFromHistory(project.conversation_history ?? [], mode)
+  const conceptBrief = conceptState.concept_brief?.trim()
   const conceptSupplement = buildBlueprintConceptSupplement(
     rebuilt.checklist,
     finalizedAnswers,
     mode,
-    conceptState.concept_brief
+    conceptBrief
   )
   const materialContext = buildConceptMaterialPromptSupplement(project)
+  const expectedChapters =
+    parseExpectedChapterCount(finalizedAnswers.chapter_count) ??
+    parseExpectedChapterCount(rebuilt.answers.chapter_count) ??
+    12
 
   const blueprintUserContent = [
     conceptSupplement.trim(),
     materialContext.trim(),
-    '请根据以下灵感对话历史生成完整小说蓝图，严格按系统提示中的 JSON 结构输出，不要附加解释。必须包含 full_synopsis 与完整 chapter_outline。',
-    historyText,
+    `请根据灵感对话生成完整小说蓝图 JSON。硬性要求：
+- title、one_sentence_summary、full_synopsis 均不可为空
+- chapter_outline 必须包含 ${expectedChapters} 章（chapter_number 从 1 到 ${expectedChapters}），每章含 title、summary、target_word_count
+- 仅输出 JSON 对象，不要附加解释或 markdown 代码块`,
+    historyText ? `## 灵感对话摘要\n${historyText}` : '',
   ]
     .filter(Boolean)
     .join('\n\n')
@@ -1257,9 +1380,16 @@ export async function generateBlueprint(
 
   report('generating', '解析蓝图 JSON 并合并素材…', 55)
 
-  const parsed = parseJsonBlock(raw) || {}
-  const blueprint = normalizeBlueprintPayload(parsed)
-  if (!blueprint.title) blueprint.title = project.title
+  const parsed = parseBlueprintFromLlm(raw)
+  const blueprint = normalizeBlueprintPayload(
+    enrichBlueprintFromConcept(parsed ?? {}, {
+      projectTitle: project.title,
+      conceptBrief,
+      answers: finalizedAnswers,
+      mode,
+    })
+  )
+  if (!blueprint.title?.trim()) blueprint.title = project.title
   if (mode === 'simple') {
     if (!blueprint.world_setting) blueprint.world_setting = {}
     blueprint.world_setting.key_locations = []
@@ -1295,8 +1425,16 @@ export async function generateBlueprint(
   report('repairing_outline', '检查并补全章节大纲…', 72)
   await repairBlueprintOutline(project, blueprint, {
     signal: options?.signal,
+    conceptBrief,
     onProgress: (message, percent) => report('repairing_outline', message, percent),
   })
+
+  if (countUsableChapterOutline(blueprint) === 0) {
+    report('repairing_outline', '正在根据故事梗概生成基础章节大纲…', 88)
+    blueprint.chapter_outline = buildFallbackChapterOutline(blueprint, expectedChapters)
+    project.blueprint = blueprint
+  }
+
   report('done', '蓝图生成完成', 96)
 
   project.blueprint = blueprint
@@ -1657,9 +1795,14 @@ export async function generateChapterOutline(
   project: NovelProject,
   startChapter: number,
   numChapters: number,
-  options?: { signal?: AbortSignal }
+  options?: { signal?: AbortSignal; conceptBrief?: string }
 ): Promise<number> {
-  const payload = buildOutlineGenerationPayload(project, startChapter, numChapters)
+  const payload = buildOutlineGenerationPayload(
+    project,
+    startChapter,
+    numChapters,
+    options?.conceptBrief
+  )
   const raw = await chat(
     outlinePrompt,
     [
