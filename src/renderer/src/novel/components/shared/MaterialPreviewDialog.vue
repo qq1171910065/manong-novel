@@ -33,11 +33,11 @@ const hasPortrait = computed(() => Boolean(imageUrl.value))
     :accent="accent"
     :title-id="item ? `material-preview-${item.id}` : undefined"
     aria-label="物料预览"
-    :show-hero="true"
+    :show-hero="hasPortrait"
     :hero-portrait="hasPortrait"
     @close="emit('close')"
   >
-    <template #hero>
+    <template v-if="hasPortrait" #hero>
       <div
         class="novel-preview-dialog__hero"
         :class="{ 'is-portrait': hasPortrait }"

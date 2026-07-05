@@ -29,15 +29,7 @@
           <div class="nd-timeline__card">
             <div class="nd-timeline__head">
               <h3 class="nd-timeline__title nd-item-title">{{ chapter.title || `第${chapter.chapter_number}章` }}</h3>
-              <div class="nd-timeline__head-actions">
-                <SubmitToLibraryButton
-                  v-if="editable"
-                  compact
-                  label="存入情节库"
-                  :handler="() => submitChapter(chapter)"
-                />
-                <span class="nd-timeline__index">#{{ chapter.chapter_number }}</span>
-              </div>
+              <span class="nd-timeline__index">#{{ chapter.chapter_number }}</span>
             </div>
             <DetailEmptyState
               v-if="!chapter.summary"
@@ -83,7 +75,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { ChapterOutline } from '@shared/novel/types'
-import SubmitToLibraryButton from '@renderer/novel/components/shared/SubmitToLibraryButton.vue'
 import NovelPreviewDialog from '@renderer/novel/components/shared/NovelPreviewDialog.vue'
 import ChapterOutlineFormModal from './ChapterOutlineFormModal.vue'
 import DetailEditableZone from './DetailEditableZone.vue'
@@ -92,7 +83,6 @@ import DetailEmptyState from './DetailEmptyState.vue'
 import ListPagination from '@renderer/components/shared/ListPagination.vue'
 import { useListPagination } from '@renderer/composables/useListPagination'
 import { NovelAPI } from '@renderer/services/novel/api'
-import { submitPlotToLibrary } from '@renderer/services/novel/material-library-submit'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
 
 import type { ProjectModelPrefs } from '@renderer/services/novel/project-model'
@@ -201,28 +191,6 @@ async function deleteChapter(index: number) {
     emit('asset-saved', 'chapter_outline')
   } catch (error) {
     globalAlert.showError(error instanceof Error ? error.message : '删除失败', '删除章节失败')
-  }
-}
-
-async function submitChapter(chapter: ChapterOutline) {
-  if (!props.editable || !props.projectId) return
-  const index = chapterIndex(chapter)
-  if (index < 0) return
-  const list = [...props.outline]
-  const target = list[index]
-  if (!target) return
-  try {
-    const { item, asset } = await submitPlotToLibrary(target, 'chapter', {
-      projectId: props.projectId,
-      projectTitle: props.projectTitle,
-      project: props.projectModel,
-    })
-    list[index] = asset as ChapterOutline
-    await NovelAPI.updateBlueprint(props.projectId, { chapter_outline: list })
-    emit('asset-saved', 'chapter_outline')
-    globalAlert.showSuccess(`「${item.title}」已存入情节库`, '提交成功')
-  } catch (error) {
-    globalAlert.showError(error instanceof Error ? error.message : '提交失败', '存入物料库失败')
   }
 }
 

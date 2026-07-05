@@ -156,7 +156,7 @@ export function restoreMainWindowToHome(): void {
   if (!win || win.isDestroyed()) {
     win = createMainWindow()
   } else {
-    void win.webContents.executeJavaScript(`window.location.hash = '/workspace'`)
+    void win.webContents.executeJavaScript(`window.location.hash = '/home'`)
   }
   if (!win.isVisible()) win.show()
   win.focus()
@@ -239,7 +239,7 @@ export function createMainWindow(): BrowserWindow {
     closeDatabase()
   })
 
-  const home = appConfig?.defaultHomePath || '/workspace'
+  const home = appConfig?.defaultHomePath || '/home'
   loadRenderer(mainWindow, home)
   return mainWindow
 }

@@ -174,6 +174,7 @@ import { useCreateNovelProject } from '@renderer/novel/composables/useCreateNove
 import type { NovelProjectSummary } from '@renderer/services/novel/api'
 import { NovelAPI } from '@renderer/services/novel/api'
 import type { WritingMode } from '@shared/novel/types'
+import type { CreateProjectMaterialSelection } from '@renderer/novel/composables/useCreateNovelProject'
 
 const router = useRouter()
 const novelStore = useNovelStore()
@@ -186,9 +187,9 @@ const projectToDelete = ref<NovelProjectSummary | null>(null)
 const isDeleting = ref(false)
 const deleteMessage = ref<{ type: 'success' | 'error'; text: string } | null>(null)
 
-const handleCreateWithMode = async (mode: WritingMode) => {
+const handleCreateWithMode = async (mode: WritingMode, materials: CreateProjectMaterialSelection) => {
   try {
-    const project = await createWithMode(mode, { onCreated: loadProjects })
+    const project = await createWithMode(mode, { materials, onCreated: loadProjects })
     if (project) router.push(`/detail/${project.id}`)
   } catch (error) {
     console.error('创建项目失败:', error)

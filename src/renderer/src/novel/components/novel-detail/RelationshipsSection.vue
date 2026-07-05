@@ -52,9 +52,6 @@
               </div>
             </div>
             <p class="nd-rel-card__desc">{{ popover.relation.description || '暂无关系描述' }}</p>
-            <div v-if="editable && popover.index !== null" class="nd-rel-card__foot">
-              <SubmitToLibraryButton compact label="存入情节库" :handler="() => submitRelationship(popover!.index!)" />
-            </div>
           </template>
 
           <template v-else-if="popover.kind === 'node'">
@@ -128,13 +125,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { Character, Relationship } from '@shared/novel/types'
-import SubmitToLibraryButton from '@renderer/novel/components/shared/SubmitToLibraryButton.vue'
 import NovelPreviewDialog from '@renderer/novel/components/shared/NovelPreviewDialog.vue'
 import DetailEmptyState from './DetailEmptyState.vue'
 import RelationshipGraphChart from './RelationshipGraphChart.vue'
 import RelationshipFormModal from './RelationshipFormModal.vue'
 import { NovelAPI } from '@renderer/services/novel/api'
-import { submitPlotToLibrary } from '@renderer/services/novel/material-library-submit'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
 import { randomUUID } from '@renderer/utils/id'
 
@@ -459,26 +454,6 @@ async function deleteRelationship(index: number) {
     emit('asset-saved', 'relationships')
   } catch (error) {
     globalAlert.showError(error instanceof Error ? error.message : '删除失败', '删除关系失败')
-  }
-}
-
-async function submitRelationship(index: number) {
-  if (!props.editable || !props.projectId) return
-  const list = [...relationships.value]
-  const relation = list[index]
-  if (!relation) return
-  try {
-    const { item, asset } = await submitPlotToLibrary(relation, 'relationship', {
-      projectId: props.projectId,
-      projectTitle: props.projectTitle,
-      project: props.projectModel,
-    })
-    list[index] = asset as Relationship
-    await NovelAPI.updateBlueprint(props.projectId, { relationships: list })
-    emit('asset-saved', 'relationships')
-    globalAlert.showSuccess(`「${item.title}」已存入情节库`, '提交成功')
-  } catch (error) {
-    globalAlert.showError(error instanceof Error ? error.message : '提交失败', '存入情节库失败')
   }
 }
 

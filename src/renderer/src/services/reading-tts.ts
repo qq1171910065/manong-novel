@@ -15,7 +15,6 @@ export const READING_TTS_VOICES: ReadingTtsVoiceOption[] = [
   { id: '冰糖', label: '冰糖（女声）' },
   { id: '茉莉', label: '茉莉（女声）' },
   { id: '苏打', label: '苏打（男声）' },
-  { id: '白桦', label: '白桦（男声）' },
 ]
 
 export const READING_TTS_STYLES: ReadingTtsStyleOption[] = [
@@ -33,11 +32,6 @@ export const READING_TTS_STYLES: ReadingTtsStyleOption[] = [
     id: 'calm',
     label: '轻柔舒缓',
     instruction: '用轻柔舒缓的语调朗读以下内容，语速偏慢，适合放松聆听。',
-  },
-  {
-    id: 'fast',
-    label: '紧凑快读',
-    instruction: '用自然清晰的中文语调朗读以下内容，语速偏快，节奏紧凑。',
   },
 ]
 

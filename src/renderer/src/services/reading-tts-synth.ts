@@ -2,9 +2,10 @@ import { gatewayTtsSynthesize } from '@renderer/services/gateway-api'
 import { settingsService } from '@renderer/services/app-settings'
 import {
   buildTtsCacheKey,
-  getTtsCachedAudio,
-  setTtsCachedAudio,
+  getSessionTtsAudio,
+  setSessionTtsAudio,
 } from '@renderer/services/reading-tts-cache'
+import { normalizeTtsAudioBuffer } from '@renderer/services/reading-tts-audio'
 import { resolveTtsStyleInstruction } from '@renderer/services/reading-tts'
 
 export interface TtsSynthOptions {
@@ -14,7 +15,7 @@ export interface TtsSynthOptions {
   model?: string
 }
 
-/** 合成单段 TTS 并写入 IndexedDB 缓存，返回音频 buffer */
+/** 合成单段 TTS，仅缓存在当前阅读会话内存中 */
 export async function synthesizeTtsSegmentToCache(options: TtsSynthOptions): Promise<ArrayBuffer | null> {
   const text = options.text.trim()
   if (!text) return null
@@ -27,8 +28,14 @@ export async function synthesizeTtsSegmentToCache(options: TtsSynthOptions): Pro
     model,
   })
 
-  const cached = await getTtsCachedAudio(cacheKey)
-  if (cached) return cached
+  const cached = getSessionTtsAudio(cacheKey)
+  if (cached) {
+    try {
+      return normalizeTtsAudioBuffer(cached)
+    } catch {
+      /* resynth below */
+    }
+  }
 
   const buffer = await gatewayTtsSynthesize({
     text,
@@ -36,6 +43,7 @@ export async function synthesizeTtsSegmentToCache(options: TtsSynthOptions): Pro
     styleInstruction: resolveTtsStyleInstruction(options.styleId),
     model,
   })
-  await setTtsCachedAudio(cacheKey, buffer)
-  return buffer
+  const normalized = normalizeTtsAudioBuffer(buffer)
+  setSessionTtsAudio(cacheKey, normalized)
+  return normalized
 }

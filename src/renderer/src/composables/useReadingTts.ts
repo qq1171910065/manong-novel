@@ -1,5 +1,6 @@
 import { computed, ref, shallowRef, watch, type Ref } from 'vue'
 import { synthesizeTtsSegmentToCache } from '@renderer/services/reading-tts-synth'
+import { TtsSessionPlayer } from '@renderer/services/reading-tts-audio'
 import {
   splitChapterIntoTtsSegments,
   type ReadingTtsStyleOption,
@@ -18,12 +19,7 @@ export interface UseReadingTtsOptions {
   getStyleId: () => string
 }
 
-interface CachedAudio {
-  url: string
-  audio: HTMLAudioElement
-}
-
-const PRELOAD_AHEAD = 2
+const PRELOAD_AHEAD = 4
 
 export const READING_TTS_PRELOAD_AHEAD = PRELOAD_AHEAD
 
@@ -34,14 +30,19 @@ export function useReadingTts(options: UseReadingTtsOptions) {
   const segments = shallowRef<string[]>([])
   const segmentElements = shallowRef<Array<HTMLElement | null>>([])
 
-  const cache = new Map<number, CachedAudio>()
-  let activeAudio: HTMLAudioElement | null = null
+  let sessionPlayer: TtsSessionPlayer | null = null
+  const pendingLoads = new Map<number, Promise<boolean>>()
   let generationToken = 0
 
   const isActive = computed(() => status.value !== 'idle')
   const isPlaying = computed(() => status.value === 'playing')
   const isPaused = computed(() => status.value === 'paused')
   const isLoading = computed(() => status.value === 'loading')
+
+  function getPlayer(): TtsSessionPlayer {
+    if (!sessionPlayer) sessionPlayer = new TtsSessionPlayer()
+    return sessionPlayer
+  }
 
   function setSegmentElement(index: number, element: HTMLElement | null) {
     const next = segmentElements.value.slice()
@@ -55,27 +56,17 @@ export function useReadingTts(options: UseReadingTtsOptions) {
     currentSegmentIndex.value = -1
   }
 
-  function revokeCache() {
-    for (const item of cache.values()) {
-      item.audio.pause()
-      URL.revokeObjectURL(item.url)
+  async function disposePlayer() {
+    pendingLoads.clear()
+    if (sessionPlayer) {
+      await sessionPlayer.dispose()
+      sessionPlayer = null
     }
-    cache.clear()
-  }
-
-  function stopActiveAudio() {
-    if (!activeAudio) return
-    activeAudio.onended = null
-    activeAudio.onerror = null
-    activeAudio.pause()
-    activeAudio.currentTime = 0
-    activeAudio = null
   }
 
   function resetPlaybackState() {
     generationToken += 1
-    stopActiveAudio()
-    revokeCache()
+    void disposePlayer()
     currentSegmentIndex.value = -1
     errorMessage.value = ''
     status.value = 'idle'
@@ -86,38 +77,33 @@ export function useReadingTts(options: UseReadingTtsOptions) {
     return typeof value === 'function' ? value() : value.value
   }
 
-  async function synthesizeSegment(index: number, token: number): Promise<CachedAudio | null> {
-    const text = segments.value[index]
-    if (!text?.trim()) return null
+  async function loadSegment(index: number, token: number): Promise<boolean> {
+    if (index < 0 || index >= segments.value.length) return false
+    const player = getPlayer()
+    if (player.isReady(index)) return true
 
-    const voice = options.getVoice()
-    const styleId = options.getStyleId()
-    const buffer = await synthesizeTtsSegmentToCache({ text, voice, styleId })
-    if (!buffer || token !== generationToken) return null
+    const pending = pendingLoads.get(index)
+    if (pending) return pending
 
-    const blob = new Blob([buffer], { type: 'audio/wav' })
-    const url = URL.createObjectURL(blob)
-    const audio = new Audio(url)
-    audio.preload = 'auto'
-    return { url, audio }
-  }
+    const task = (async () => {
+      const text = segments.value[index]
+      if (!text?.trim()) return false
 
-  async function ensureSegmentReady(index: number, token: number): Promise<CachedAudio | null> {
-    if (index < 0 || index >= segments.value.length) return null
-    const cached = cache.get(index)
-    if (cached) return cached
+      const voice = options.getVoice()
+      const styleId = options.getStyleId()
+      const buffer = await synthesizeTtsSegmentToCache({ text, voice, styleId })
+      if (!buffer || token !== generationToken) return false
 
+      await player.loadSegment(index, buffer)
+      player.dropSegmentsBefore(index)
+      return player.isReady(index)
+    })()
+
+    pendingLoads.set(index, task)
     try {
-      const created = await synthesizeSegment(index, token)
-      if (!created || token !== generationToken) {
-        if (created) URL.revokeObjectURL(created.url)
-        return null
-      }
-      cache.set(index, created)
-      return created
-    } catch (error) {
-      if (token !== generationToken) return null
-      throw error
+      return await task
+    } finally {
+      if (pendingLoads.get(index) === task) pendingLoads.delete(index)
     }
   }
 
@@ -125,8 +111,18 @@ export function useReadingTts(options: UseReadingTtsOptions) {
     for (let offset = 1; offset <= PRELOAD_AHEAD; offset += 1) {
       const target = fromIndex + offset
       if (target >= segments.value.length) break
-      if (cache.has(target)) continue
-      void ensureSegmentReady(target, token).catch(() => {
+      if (getPlayer().isReady(target) || pendingLoads.has(target)) continue
+      void loadSegment(target, token).catch(() => {
+        /* preload failures are non-fatal */
+      })
+    }
+  }
+
+  function warmPreload(fromIndex: number, token: number) {
+    const end = Math.min(segments.value.length - 1, fromIndex + PRELOAD_AHEAD)
+    for (let i = fromIndex; i <= end; i += 1) {
+      if (getPlayer().isReady(i) || pendingLoads.has(i)) continue
+      void loadSegment(i, token).catch(() => {
         /* preload failures are non-fatal */
       })
     }
@@ -157,6 +153,7 @@ export function useReadingTts(options: UseReadingTtsOptions) {
       return
     }
 
+    warmPreload(0, token)
     await playSegment(0, token)
   }
 
@@ -167,29 +164,26 @@ export function useReadingTts(options: UseReadingTtsOptions) {
       return
     }
 
-    status.value = 'loading'
+    const player = getPlayer()
+    const alreadyReady = player.isReady(index)
+
     currentSegmentIndex.value = index
     notifySegmentChange(index)
 
-    try {
-      const cached = await ensureSegmentReady(index, token)
-      if (!cached || token !== generationToken) return
+    if (!alreadyReady) {
+      status.value = 'loading'
+    }
 
-      stopActiveAudio()
-      activeAudio = cached.audio
-      activeAudio.currentTime = 0
-      activeAudio.onended = () => {
-        if (token !== generationToken) return
-        void playSegment(index + 1, token)
-      }
-      activeAudio.onerror = () => {
-        if (token !== generationToken) return
-        status.value = 'error'
-        errorMessage.value = '音频播放失败'
-      }
+    try {
+      const ready = await loadSegment(index, token)
+      if (!ready || token !== generationToken) return
 
       schedulePreload(index, token)
-      await activeAudio.play()
+
+      await player.play(index, () => {
+        if (token !== generationToken) return
+        void playSegment(index + 1, token)
+      })
       if (token !== generationToken) return
       status.value = 'playing'
     } catch (error) {
@@ -206,19 +200,24 @@ export function useReadingTts(options: UseReadingTtsOptions) {
 
     const token = generationToken
     const safeIndex = Math.min(Math.max(fromIndex, 0), segments.value.length - 1)
+
+    status.value = 'loading'
+    warmPreload(safeIndex, token)
+    await loadSegment(safeIndex, token)
+    if (token !== generationToken) return
     await playSegment(safeIndex, token)
   }
 
   function pause() {
     if (status.value !== 'playing') return
-    activeAudio?.pause()
+    getPlayer().pause()
     status.value = 'paused'
   }
 
   function resume() {
-    if (status.value !== 'paused' || !activeAudio) return
-    void activeAudio
-      .play()
+    if (status.value !== 'paused') return
+    void getPlayer()
+      .play(currentSegmentIndex.value)
       .then(() => {
         status.value = 'playing'
       })
@@ -247,9 +246,11 @@ export function useReadingTts(options: UseReadingTtsOptions) {
   }
 
   watch(
-    () => [options.getVoice(), options.getStyleId()] as const,
-    () => {
+    [() => options.getVoice(), () => options.getStyleId()],
+    ([voice, styleId], previous) => {
       if (!isActive.value) return
+      const [prevVoice, prevStyleId] = previous ?? []
+      if (voice === prevVoice && styleId === prevStyleId) return
       const resumeIndex = Math.max(currentSegmentIndex.value, 0)
       void start(resumeIndex)
     }

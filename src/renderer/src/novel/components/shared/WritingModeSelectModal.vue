@@ -1,21 +1,25 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { Feather, Layers } from 'lucide-vue-next'
 import NovelModalShell from '@renderer/novel/components/shared/NovelModalShell.vue'
+import CreateProjectMaterialPicker from '@renderer/novel/components/shared/CreateProjectMaterialPicker.vue'
+import type { CreateProjectMaterialSelection } from '@renderer/services/novel/material-library-apply'
 import type { WritingMode } from '@shared/novel/types'
 import { WRITING_MODE_DESCRIPTIONS } from '@shared/novel/writing-mode'
 
-defineProps<{
+const props = defineProps<{
   show: boolean
   creating?: boolean
 }>()
 
 const emit = defineEmits<{
   close: []
-  confirm: [mode: WritingMode]
+  confirm: [mode: WritingMode, materials: CreateProjectMaterialSelection]
 }>()
 
 const selectedMode = ref<WritingMode>('simple')
+const selectedStyleId = ref<string | null>(null)
+const selectedCharacterIds = ref<string[]>([])
 
 const modeOptions: Array<{
   id: WritingMode
@@ -25,8 +29,21 @@ const modeOptions: Array<{
   { id: 'full', icon: Layers },
 ]
 
+watch(
+  () => props.show,
+  (open) => {
+    if (!open) return
+    selectedMode.value = 'simple'
+    selectedStyleId.value = null
+    selectedCharacterIds.value = []
+  }
+)
+
 function onConfirm() {
-  emit('confirm', selectedMode.value)
+  emit('confirm', selectedMode.value, {
+    styleMaterialId: selectedStyleId.value,
+    characterMaterialIds: [...selectedCharacterIds.value],
+    })
 }
 </script>
 
@@ -35,9 +52,9 @@ function onConfirm() {
     :show="show"
     size="auto"
     auto-min-width="lg"
-    title="选择书写模式"
-    subtitle="不同模式会决定详情页功能与 AI 生成策略，创建后暂不支持切换"
-    aria-label="选择书写模式"
+    title="开始创作"
+    subtitle="选择书写模式，并可选用角色库与文风库中的预设"
+    aria-label="开始创作"
     @close="emit('close')"
   >
     <div class="writing-mode-select">
@@ -65,6 +82,13 @@ function onConfirm() {
       </button>
     </div>
 
+    <CreateProjectMaterialPicker
+      v-model:style-id="selectedStyleId"
+      v-model:character-ids="selectedCharacterIds"
+      :active="show"
+      :disabled="creating"
+    />
+
     <template #footer>
       <button type="button" class="novel-btn novel-btn--text" :disabled="creating" @click="emit('close')">
         取消
@@ -84,14 +108,14 @@ function onConfirm() {
 <style scoped>
 :deep(.novel-modal__panel--auto) {
   width: min(920px, 92vw);
-  min-height: 380px;
+  max-height: min(92vh, 900px);
 }
 
 :deep(.novel-modal__panel--auto .novel-modal__body) {
-  flex: 0 1 auto;
-  min-height: auto;
-  overflow-y: visible;
-  padding: 12px 24px 28px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 24px 24px;
 }
 
 .writing-mode-select {
@@ -108,7 +132,7 @@ function onConfirm() {
   align-items: flex-start;
   gap: 16px;
   width: 100%;
-  min-height: 300px;
+  min-height: 240px;
   padding: 24px 26px 28px;
   border: 1px solid var(--border);
   border-radius: 18px;

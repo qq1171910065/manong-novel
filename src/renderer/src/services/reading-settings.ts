@@ -19,6 +19,8 @@ export interface ReadingSettings {
   alwaysOnTop: boolean
   autoTurn: boolean
   autoTurnSeconds: number
+  autoScroll: boolean
+  autoScrollSpeed: number
   bossKeyEnabled: boolean
   bossKeyAccelerator: string
   ttsVoice: string
@@ -36,44 +38,55 @@ export const READING_DEFAULTS: ReadingSettings = {
   alwaysOnTop: false,
   autoTurn: false,
   autoTurnSeconds: 12,
+  autoScroll: false,
+  autoScrollSpeed: 45,
   bossKeyEnabled: true,
   bossKeyAccelerator: 'Control+Shift+H',
   ttsVoice: READING_TTS_DEFAULT_VOICE,
   ttsStyle: READING_TTS_DEFAULT_STYLE,
 }
 
+function normalizeSettings(parsed: Partial<ReadingSettings>): ReadingSettings {
+  return {
+    ...READING_DEFAULTS,
+    ...parsed,
+    interactionMode:
+      parsed.interactionMode === 'scroll' || parsed.interactionMode === 'page'
+        ? parsed.interactionMode
+        : READING_DEFAULTS.interactionMode,
+    fontSize: clamp(Number(parsed.fontSize) || READING_DEFAULTS.fontSize, 14, 28),
+    lineHeight: clamp(Number(parsed.lineHeight) || READING_DEFAULTS.lineHeight, 1.4, 2.4),
+    opacity: clamp(Number(parsed.opacity) || READING_DEFAULTS.opacity, 0.55, 1),
+    autoTurnSeconds: clamp(Number(parsed.autoTurnSeconds) || READING_DEFAULTS.autoTurnSeconds, 5, 120),
+    autoScroll: parsed.autoScroll ?? READING_DEFAULTS.autoScroll,
+    autoScrollSpeed: clamp(
+      Number(parsed.autoScrollSpeed) || READING_DEFAULTS.autoScrollSpeed,
+      15,
+      120
+    ),
+    bossKeyEnabled: parsed.bossKeyEnabled ?? READING_DEFAULTS.bossKeyEnabled,
+    bossKeyAccelerator:
+      typeof parsed.bossKeyAccelerator === 'string' && parsed.bossKeyAccelerator.trim()
+        ? parsed.bossKeyAccelerator.trim()
+        : READING_DEFAULTS.bossKeyAccelerator,
+    ttsVoice:
+      typeof parsed.ttsVoice === 'string' &&
+      READING_TTS_VOICES.some((item) => item.id === parsed.ttsVoice)
+        ? parsed.ttsVoice
+        : READING_DEFAULTS.ttsVoice,
+    ttsStyle:
+      typeof parsed.ttsStyle === 'string' &&
+      READING_TTS_STYLES.some((item) => item.id === parsed.ttsStyle)
+        ? parsed.ttsStyle
+        : READING_DEFAULTS.ttsStyle,
+  }
+}
+
 function readSettings(): ReadingSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return { ...READING_DEFAULTS }
-    const parsed = JSON.parse(raw) as Partial<ReadingSettings>
-    return {
-      ...READING_DEFAULTS,
-      ...parsed,
-      interactionMode:
-        parsed.interactionMode === 'scroll' || parsed.interactionMode === 'page'
-          ? parsed.interactionMode
-          : READING_DEFAULTS.interactionMode,
-      fontSize: clamp(Number(parsed.fontSize) || READING_DEFAULTS.fontSize, 14, 28),
-      lineHeight: clamp(Number(parsed.lineHeight) || READING_DEFAULTS.lineHeight, 1.4, 2.4),
-      opacity: clamp(Number(parsed.opacity) || READING_DEFAULTS.opacity, 0.55, 1),
-      autoTurnSeconds: clamp(Number(parsed.autoTurnSeconds) || READING_DEFAULTS.autoTurnSeconds, 5, 120),
-      bossKeyEnabled: parsed.bossKeyEnabled ?? READING_DEFAULTS.bossKeyEnabled,
-      bossKeyAccelerator:
-        typeof parsed.bossKeyAccelerator === 'string' && parsed.bossKeyAccelerator.trim()
-          ? parsed.bossKeyAccelerator.trim()
-          : READING_DEFAULTS.bossKeyAccelerator,
-      ttsVoice:
-        typeof parsed.ttsVoice === 'string' &&
-        READING_TTS_VOICES.some((item) => item.id === parsed.ttsVoice)
-          ? parsed.ttsVoice
-          : READING_DEFAULTS.ttsVoice,
-      ttsStyle:
-        typeof parsed.ttsStyle === 'string' &&
-        READING_TTS_STYLES.some((item) => item.id === parsed.ttsStyle)
-          ? parsed.ttsStyle
-          : READING_DEFAULTS.ttsStyle,
-    }
+    return normalizeSettings(JSON.parse(raw) as Partial<ReadingSettings>)
   } catch {
     return { ...READING_DEFAULTS }
   }
@@ -88,8 +101,8 @@ export const readingSettingsService = {
     return readSettings()
   },
 
-  save(partial: Partial<ReadingSettings>): ReadingSettings {
-    const next = { ...readSettings(), ...partial }
+  save(partial: Partial<ReadingSettings>, base?: ReadingSettings): ReadingSettings {
+    const next = normalizeSettings({ ...(base ?? readSettings()), ...partial })
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
     return next
   },

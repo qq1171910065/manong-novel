@@ -66,6 +66,7 @@
                     <MaterialLibraryCardMenu
                       show-favorite
                       :favorited="isFavorite(item.id)"
+                      :show-delete="!isMaterialBuiltIn(item)"
                       @preview="openPreview(item)"
                       @favorite="toggleFavorite(item.id)"
                       @delete="confirmRemoveItem(item)"
@@ -133,7 +134,7 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { BookMarked, Globe2, PenLine, Plus, Search, SlidersHorizontal, Users } from 'lucide-vue-next'
+import { PenLine, Plus, Search, SlidersHorizontal, Users } from 'lucide-vue-next'
 import NovelPageShell from '@renderer/components/novel/NovelPageShell.vue'
 import ArenaSelect from '@renderer/components/common/ArenaSelect.vue'
 import MaterialPreviewDialog from '@renderer/novel/components/shared/MaterialPreviewDialog.vue'
@@ -147,6 +148,7 @@ import {
 } from '@renderer/data/material-library-config'
 import {
   materialLibraryService,
+  isMaterialBuiltIn,
   type MaterialItem,
 } from '@renderer/services/novel/material-library-service'
 import {
@@ -169,8 +171,6 @@ const items = ref<MaterialItem[]>([])
 
 const libraryIconMap = {
   characters: Users,
-  world: Globe2,
-  plots: BookMarked,
   styles: PenLine,
 } as const
 
@@ -204,16 +204,21 @@ const categoryOptions = computed(() =>
     .map((filter) => ({ label: filter.label, value: filter.id }))
 )
 
+function filterItemsByQuery(list: MaterialItem[], q: string): MaterialItem[] {
+  const normalized = q.trim().toLowerCase()
+  if (!normalized) return list
+  return list.filter((item) => {
+    const haystack = [item.title, item.summary, ...item.tags].join(' ').toLowerCase()
+    return haystack.includes(normalized)
+  })
+}
+
 const categoryCounts = computed(() => {
   void prefsVersion.value
+  const searchable = filterItemsByQuery(items.value, query.value)
   const counts: Record<string, number> = {}
   for (const filter of config.value.filters) {
-    counts[filter.id] = items.value.filter((item) => {
-      if (!materialLibraryService.search(config.value.type, query.value).some((entry) => entry.id === item.id)) {
-        return false
-      }
-      return filter.match(item)
-    }).length
+    counts[filter.id] = searchable.filter((item) => filter.match(item)).length
   }
   return counts
 })
@@ -221,7 +226,7 @@ const categoryCounts = computed(() => {
 const filteredItems = computed(() => {
   void prefsVersion.value
   const filter = config.value.filters.find((entry) => entry.id === activeFilter.value) ?? config.value.filters[0]
-  let list = materialLibraryService.search(config.value.type, query.value).filter((item) => filter.match(item))
+  let list = filterItemsByQuery(items.value, query.value).filter((item) => filter.match(item))
 
   if (activeFilter.value === 'recent') {
     const order = new Map(getMaterialLibraryPrefs().recentIds.map((id, index) => [id, index]))
@@ -290,6 +295,7 @@ function removeItem(id: string) {
 }
 
 async function confirmRemoveItem(item: MaterialItem) {
+  if (isMaterialBuiltIn(item)) return
   const accepted = await confirm({
     title: '确认删除',
     message: `确定要删除「${item.title}」吗？`,

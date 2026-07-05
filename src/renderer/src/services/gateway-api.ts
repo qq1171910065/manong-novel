@@ -1,3 +1,4 @@
+import { normalizeTtsAudioBuffer } from '@renderer/services/reading-tts-audio'
 import { getRuntimeConfig } from '@renderer/composables/runtime-config'
 import { portalApi } from './portal-api'
 import { ensureLocalImageDataUrl } from './image-storage'
@@ -559,77 +560,68 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
   }
 }
 
-function isWavBuffer(buffer: ArrayBuffer): boolean {
-  if (buffer.byteLength < 12) return false
-  return new DataView(buffer).getUint32(0, false) === 0x52494646
-}
-
-function isLikelyMp3(buffer: ArrayBuffer): boolean {
-  if (buffer.byteLength < 3) return false
-  const bytes = new Uint8Array(buffer)
-  if (bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) return true
-  return bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0
-}
-
-function pcm16LeToWav(pcm: ArrayBuffer, sampleRate = 24000, channels = 1): ArrayBuffer {
-  const pcmBytes = new Uint8Array(pcm)
-  const dataSize = pcmBytes.length
-  const blockAlign = channels * 2
-  const byteRate = sampleRate * blockAlign
-  const wav = new ArrayBuffer(44 + dataSize)
-  const view = new DataView(wav)
-  const bytes = new Uint8Array(wav)
-
-  const writeTag = (offset: number, tag: string) => {
-    for (let i = 0; i < tag.length; i++) bytes[offset + i] = tag.charCodeAt(i)
+function decodeBase64AudioField(value: unknown): ArrayBuffer | null {
+  if (typeof value !== 'string' || !value.trim()) return null
+  try {
+    return base64ToArrayBuffer(value)
+  } catch {
+    return null
   }
-
-  writeTag(0, 'RIFF')
-  view.setUint32(4, 36 + dataSize, true)
-  writeTag(8, 'WAVE')
-  writeTag(12, 'fmt ')
-  view.setUint32(16, 16, true)
-  view.setUint16(20, 1, true)
-  view.setUint16(22, channels, true)
-  view.setUint32(24, sampleRate, true)
-  view.setUint32(28, byteRate, true)
-  view.setUint16(32, blockAlign, true)
-  view.setUint16(34, 16, true)
-  writeTag(36, 'data')
-  view.setUint32(40, dataSize, true)
-  bytes.set(pcmBytes, 44)
-  return wav
 }
 
-function normalizeTtsAudioBuffer(buffer: ArrayBuffer): ArrayBuffer {
-  if (buffer.byteLength < 2) {
-    throw new Error('语音数据无效或过小，请检查网关 TTS 配置')
-  }
-  if (isWavBuffer(buffer) || isLikelyMp3(buffer)) return buffer
-  if (buffer.byteLength % 2 === 0) return pcm16LeToWav(buffer)
-  throw new Error('语音数据格式无法识别，请确认网关 TTS 返回 WAV 或 PCM')
+function decodeGatewayAudioObject(value: unknown): ArrayBuffer | null {
+  if (!value || typeof value !== 'object') return null
+  const obj = value as Record<string, unknown>
+  return (
+    decodeBase64AudioField(obj.data) ??
+    decodeBase64AudioField(obj.b64) ??
+    decodeBase64AudioField(obj.base64) ??
+    decodeBase64AudioField(obj.audio)
+  )
 }
 
 function decodeGatewayAudio(data: unknown): ArrayBuffer | null {
   if (!data || typeof data !== 'object') return null
   const root = data as Record<string, unknown>
+
+  const rootDataAudio = decodeBase64AudioField(root.data) ?? decodeGatewayAudioObject(root.data)
+  if (rootDataAudio) return rootDataAudio
+
+  const rootAudio =
+    decodeBase64AudioField(root.audio) ??
+    decodeGatewayAudioObject(root.audio) ??
+    decodeGatewayAudioObject(root.output)
+  if (rootAudio) return rootAudio
+
   const choice = (root.choices as Array<{ message?: Record<string, unknown> }> | undefined)?.[0]
   const message = choice?.message
   if (!message) return null
 
-  const audio = message.audio
-  if (typeof audio === 'string' && audio.trim()) {
-    return base64ToArrayBuffer(audio)
+  const messageAudio =
+    decodeBase64AudioField(message.audio) ?? decodeGatewayAudioObject(message.audio)
+  if (messageAudio) return messageAudio
+
+  if (Array.isArray(message.content)) {
+    for (const part of message.content) {
+      if (!part || typeof part !== 'object') continue
+      const rec = part as Record<string, unknown>
+      const partAudio =
+        decodeBase64AudioField(rec.data) ??
+        decodeGatewayAudioObject(rec.input_audio) ??
+        decodeGatewayAudioObject(rec.audio)
+      if (partAudio) return partAudio
+    }
   }
-  if (audio && typeof audio === 'object') {
-    const audioData = (audio as { data?: string; b64?: string }).data ?? (audio as { b64?: string }).b64
-    if (typeof audioData === 'string' && audioData.trim()) return base64ToArrayBuffer(audioData)
-  }
+
   if (typeof message.content === 'string') {
     const content = message.content.trim()
     if (content.startsWith('data:audio')) {
       const comma = content.indexOf(',')
       if (comma >= 0) return base64ToArrayBuffer(content.slice(comma + 1))
+    }
+    if (/^[A-Za-z0-9+/=_-]+$/.test(content.replace(/\s/g, '')) && content.length > 128) {
+      const decoded = decodeBase64AudioField(content)
+      if (decoded) return decoded
     }
   }
   return null

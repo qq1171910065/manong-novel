@@ -18,6 +18,7 @@ import { route } from '@renderer/router'
 import { useNovelStore } from '@renderer/stores/novel'
 import ReadingSettingsSheet from '@renderer/components/reading/ReadingSettingsSheet.vue'
 import { bossHideReadingWindow, closeReadingWindow } from '@renderer/services/reading-service'
+import { clearSessionTtsCache, purgeLegacyTtsIndexedDb } from '@renderer/services/reading-tts-cache'
 import {
   readingSettingsService,
   type ReadingSettings,
@@ -53,7 +54,6 @@ const sheetDragging = ref(false)
 let wheelLock = false
 let chromeHideTimer: number | undefined
 let scrollSaveTimer: number | undefined
-let scrollbarHideTimer: number | undefined
 let sheetDragStartY = 0
 let sheetDragStartOffset = 0
 let viewportPointerDown = false
@@ -118,6 +118,8 @@ const {
   persistProgress,
   ensureChapterLoaded,
   resetAutoTurn,
+  pauseAutoScroll,
+  isAutoScrollDriving,
   disposeAutoTurn,
   prevPage,
   nextPage,
@@ -243,17 +245,6 @@ const chromeVisible = computed(() => showChrome.value || showSettings.value || l
 
 const SCROLL_EDGE_THRESHOLD = 6
 
-function showScrollbarTemporarily() {
-  const el = pageViewportRef.value
-  if (!el || isPageMode.value) return
-  el.classList.add('is-scrolling')
-  if (scrollbarHideTimer) window.clearTimeout(scrollbarHideTimer)
-  scrollbarHideTimer = window.setTimeout(() => {
-    el.classList.remove('is-scrolling')
-    scrollbarHideTimer = undefined
-  }, 900)
-}
-
 function scrollToActiveSegment(element: HTMLElement | null) {
   const viewport = pageViewportRef.value
   if (!viewport || !element) return
@@ -321,8 +312,8 @@ function applyWindowEffects() {
   }
 }
 
-function updateSettings(partial: Partial<ReadingSettings>) {
-  settings.value = readingSettingsService.save(partial)
+function applySettingsPatch(partial: Partial<ReadingSettings>) {
+  settings.value = readingSettingsService.save(partial, settings.value)
   applyWindowEffects()
   resetAutoTurn()
 }
@@ -330,7 +321,7 @@ function updateSettings(partial: Partial<ReadingSettings>) {
 function cycleTheme() {
   const order: ReadingTheme[] = ['light', 'sepia', 'dark']
   const idx = order.indexOf(settings.value.theme)
-  updateSettings({ theme: order[(idx + 1) % order.length] })
+  settings.value = readingSettingsService.save({ theme: order[(idx + 1) % order.length] }, settings.value)
 }
 
 function clearChromeHideTimer() {
@@ -367,12 +358,23 @@ function onViewportClick(event: MouseEvent) {
   }
 }
 
+function goPrevChapter() {
+  pauseAutoScroll()
+  prevChapter()
+}
+
+function goNextChapter() {
+  pauseAutoScroll()
+  nextChapter()
+}
+
 function onViewportPointerDown(event: PointerEvent) {
   viewportPointerDown = false
   viewportDragMoved = false
 
   if (event.button !== 0 || showSettings.value || isPageMode.value) return
 
+  pauseAutoScroll()
   const el = pageViewportRef.value
   if (!el) return
 
@@ -393,7 +395,6 @@ function onViewportPointerMove(event: PointerEvent) {
       viewportPointerDown = true
     }
     el.scrollTop = viewportDragStartScrollTop - delta
-    showScrollbarTemporarily()
     return
   }
 
@@ -416,7 +417,11 @@ function onViewportPointerCancel(event: PointerEvent) {
   el?.releasePointerCapture(event.pointerId)
 }
 
+let sheetDragCleanup: (() => void) | undefined
+
 function resetSheetDrag() {
+  sheetDragCleanup?.()
+  sheetDragCleanup = undefined
   sheetDragging.value = false
   sheetDragOffset.value = 0
   sheetDragStartY = 0
@@ -425,34 +430,47 @@ function resetSheetDrag() {
 
 function onSheetDragStart(event: PointerEvent) {
   if (event.button !== 0) return
-  sheetDragging.value = true
+  event.preventDefault()
   sheetDragStartY = event.clientY
   sheetDragStartOffset = sheetDragOffset.value
-  ;(event.currentTarget as HTMLElement | null)?.setPointerCapture(event.pointerId)
-}
+  sheetDragging.value = false
 
-function onSheetDragMove(event: PointerEvent) {
-  if (!sheetDragging.value) return
-  const delta = event.clientY - sheetDragStartY
-  sheetDragOffset.value = Math.max(0, sheetDragStartOffset + delta)
-}
+  const onMove = (ev: PointerEvent) => {
+    const delta = ev.clientY - sheetDragStartY
+    if (!sheetDragging.value && Math.abs(delta) > 4) {
+      sheetDragging.value = true
+    }
+    if (sheetDragging.value) {
+      sheetDragOffset.value = Math.max(0, sheetDragStartOffset + delta)
+    }
+  }
 
-function finishSheetDrag(event: PointerEvent) {
-  if (!sheetDragging.value) return
-  ;(event.currentTarget as HTMLElement | null)?.releasePointerCapture(event.pointerId)
-  const shouldClose = sheetDragOffset.value > 96
-  resetSheetDrag()
-  if (shouldClose) showSettings.value = false
+  const onEnd = () => {
+    const shouldClose = sheetDragging.value && sheetDragOffset.value > 96
+    resetSheetDrag()
+    if (shouldClose) showSettings.value = false
+  }
+
+  const cleanup = () => {
+    window.removeEventListener('pointermove', onMove)
+    window.removeEventListener('pointerup', onEnd)
+    window.removeEventListener('pointercancel', onEnd)
+    sheetDragCleanup = undefined
+  }
+
+  sheetDragCleanup = cleanup
+  window.addEventListener('pointermove', onMove)
+  window.addEventListener('pointerup', onEnd)
+  window.addEventListener('pointercancel', onEnd)
 }
 
 function onWheel(event: WheelEvent) {
   if (showSettings.value) return
 
   if (!isPageMode.value) {
+    pauseAutoScroll()
     const el = pageViewportRef.value
     if (!el) return
-
-    showScrollbarTemporarily()
 
     const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - SCROLL_EDGE_THRESHOLD
     const atTop = el.scrollTop <= SCROLL_EDGE_THRESHOLD
@@ -496,7 +514,7 @@ function onWheel(event: WheelEvent) {
 
 function onScroll() {
   if (isPageMode.value) return
-  showScrollbarTemporarily()
+  if (!isAutoScrollDriving()) pauseAutoScroll()
   onReadingTurn()
   if (scrollSaveTimer) window.clearTimeout(scrollSaveTimer)
   scrollSaveTimer = window.setTimeout(() => {
@@ -533,7 +551,7 @@ function onKeydown(event: KeyboardEvent) {
     event.stopPropagation()
     const accelerator = acceleratorFromKeyboardEvent(event)
     if (accelerator) {
-      updateSettings({ bossKeyAccelerator: accelerator })
+      applySettingsPatch({ bossKeyAccelerator: accelerator })
       recordingBossKey.value = false
     }
     return
@@ -587,13 +605,16 @@ watch(showSettings, (open) => {
     showChrome.value = true
     clearChromeHideTimer()
     resetSheetDrag()
+    pauseAutoScroll()
     return
   }
   resetSheetDrag()
+  resetAutoTurn()
   if (readingStarted.value) scheduleChromeAutoHide()
 })
 
 onMounted(() => {
+  void purgeLegacyTtsIndexedDb()
   void loadReader()
   window.addEventListener('keydown', onKeydown, true)
 })
@@ -605,12 +626,13 @@ watch(pageViewportRef, (el, _, onCleanup) => {
 })
 
 onUnmounted(() => {
+  resetSheetDrag()
   window.removeEventListener('keydown', onKeydown, true)
   disposeAutoTurn()
   if (scrollSaveTimer) window.clearTimeout(scrollSaveTimer)
-  if (scrollbarHideTimer) window.clearTimeout(scrollbarHideTimer)
   clearChromeHideTimer()
   stopListening()
+  clearSessionTtsCache()
   if (typeof window.api.setAlwaysOnTop === 'function') {
     void window.api.setAlwaysOnTop(false)
   }
@@ -688,50 +710,52 @@ onUnmounted(() => {
     </div>
 
     <template v-else>
-      <main
-        ref="pageViewportRef"
-        class="reader-page-viewport"
-        :class="{ 'reader-page-viewport--scroll': !isPageMode }"
-        :style="readerStyle"
-        @click="onViewportClick"
-        @pointerdown="onViewportPointerDown"
-        @pointermove="onViewportPointerMove"
-        @pointerup="onViewportPointerUp"
-        @pointercancel="onViewportPointerCancel"
-        @scroll="onScroll"
-      >
-        <article v-if="isPageMode" class="reader-page reader-page--paged">
-          <template v-if="ttsActive && pageTtsEntries.length">
+      <div class="reader-viewport-shell">
+        <main
+          ref="pageViewportRef"
+          class="reader-page-viewport"
+          :class="{ 'reader-page-viewport--scroll': !isPageMode }"
+          :style="readerStyle"
+          @click="onViewportClick"
+          @pointerdown="onViewportPointerDown"
+          @pointermove="onViewportPointerMove"
+          @pointerup="onViewportPointerUp"
+          @pointercancel="onViewportPointerCancel"
+          @scroll="onScroll"
+        >
+          <article v-if="isPageMode" class="reader-page reader-page--paged">
+            <template v-if="ttsActive && pageTtsEntries.length">
+              <p
+                v-for="entry in pageTtsEntries"
+                :key="`${chapterIndex}-${pageIndex}-${entry.globalIndex}`"
+                :ref="(el) => setSegmentRef(entry.globalIndex, el as Element | null)"
+                :class="{
+                  'reader-segment--active': ttsCurrentSegmentIndex === entry.globalIndex,
+                  'reader-segment--loading': ttsLoading && ttsCurrentSegmentIndex === entry.globalIndex,
+                }"
+              >
+                {{ entry.text }}
+              </p>
+            </template>
+            <template v-else>
+              <p v-for="(paragraph, idx) in currentPageText.split('\n\n')" :key="idx">{{ paragraph }}</p>
+            </template>
+          </article>
+          <article v-else class="reader-page reader-page--scroll">
             <p
-              v-for="entry in pageTtsEntries"
-              :key="`${chapterIndex}-${pageIndex}-${entry.globalIndex}`"
-              :ref="(el) => setSegmentRef(entry.globalIndex, el as Element | null)"
+              v-for="(segment, idx) in scrollDisplaySegments"
+              :key="`${chapterIndex}-${idx}`"
+              :ref="(el) => setSegmentRef(idx, el as Element | null)"
               :class="{
-                'reader-segment--active': ttsCurrentSegmentIndex === entry.globalIndex,
-                'reader-segment--loading': ttsLoading && ttsCurrentSegmentIndex === entry.globalIndex,
+                'reader-segment--active': ttsActive && ttsCurrentSegmentIndex === idx,
+                'reader-segment--loading': ttsLoading && ttsCurrentSegmentIndex === idx,
               }"
             >
-              {{ entry.text }}
+              {{ segment }}
             </p>
-          </template>
-          <template v-else>
-            <p v-for="(paragraph, idx) in currentPageText.split('\n\n')" :key="idx">{{ paragraph }}</p>
-          </template>
-        </article>
-        <article v-else class="reader-page reader-page--scroll">
-          <p
-            v-for="(segment, idx) in scrollDisplaySegments"
-            :key="`${chapterIndex}-${idx}`"
-            :ref="(el) => setSegmentRef(idx, el as Element | null)"
-            :class="{
-              'reader-segment--active': ttsActive && ttsCurrentSegmentIndex === idx,
-              'reader-segment--loading': ttsLoading && ttsCurrentSegmentIndex === idx,
-            }"
-          >
-            {{ segment }}
-          </p>
-        </article>
-      </main>
+          </article>
+        </main>
+      </div>
 
       <div v-if="ttsActive" class="reader-tts-bar reader-chrome no-drag">
         <div class="reader-tts-bar__meta">
@@ -755,7 +779,7 @@ onUnmounted(() => {
           type="button"
           class="reader-nav-btn"
           :disabled="isPageMode ? !canPrevPage : !canPrevChapter"
-          @click.stop="isPageMode ? prevPage() : prevChapter()"
+          @click.stop="isPageMode ? prevPage() : goPrevChapter()"
         >
           <ChevronLeft :size="18" />
           {{ isPageMode ? '上一页' : '上一章' }}
@@ -765,7 +789,7 @@ onUnmounted(() => {
           type="button"
           class="reader-nav-btn"
           :disabled="isPageMode ? !canNextPage : !canNextChapter"
-          @click.stop="isPageMode ? nextPage() : nextChapter()"
+          @click.stop="isPageMode ? nextPage() : goNextChapter()"
         >
           {{ isPageMode ? '下一页' : '下一章' }}
           <ChevronRight :size="18" />
@@ -782,14 +806,11 @@ onUnmounted(() => {
       :sheet-dragging="sheetDragging"
       :sheet-drag-offset="sheetDragOffset"
       @close="showSettings = false"
-      @update:settings="updateSettings"
+      @patch="applySettingsPatch"
       @start-listening="startListening()"
       @start-boss-key-recording="recordingBossKey = true"
       @cancel-boss-key-recording="recordingBossKey = false"
       @sheet-drag-start="onSheetDragStart"
-      @sheet-drag-move="onSheetDragMove"
-      @sheet-drag-end="finishSheetDrag"
-      @sheet-drag-cancel="resetSheetDrag()"
     />
   </div>
 </template>

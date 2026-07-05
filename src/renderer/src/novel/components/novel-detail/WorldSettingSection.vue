@@ -15,12 +15,6 @@
       <div class="nd-char-detail">
         <div class="nd-char-detail__name-row">
           <h3 class="nd-char-detail__name">核心规则</h3>
-          <SubmitToLibraryButton
-            v-if="editable"
-            compact
-            label="存入设定库"
-            :handler="submitCoreRules"
-          />
         </div>
 
         <DetailEditableZone
@@ -131,12 +125,6 @@
             >
               <h3 class="nd-char-detail__name">{{ selectedItem.title }}</h3>
             </DetailEditableZone>
-            <SubmitToLibraryButton
-              v-if="editable"
-              compact
-              label="存入设定库"
-              :handler="() => submitItem(itemKind, selectedIndex)"
-            />
           </div>
 
           <DetailEditableZone
@@ -179,7 +167,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { WorldListItem, WorldSetting } from '@shared/novel/types'
-import SubmitToLibraryButton from '@renderer/novel/components/shared/SubmitToLibraryButton.vue'
 import NovelPreviewDialog from '@renderer/novel/components/shared/NovelPreviewDialog.vue'
 import DetailEditableZone from './DetailEditableZone.vue'
 import type { DetailMenuAction } from './DetailEditableZone.vue'
@@ -188,10 +175,6 @@ import WorldRulesFormModal from './WorldRulesFormModal.vue'
 import WorldListItemFormModal from './WorldListItemFormModal.vue'
 import { ensureWorldListItem } from '@renderer/services/novel/blueprint-asset'
 import { NovelAPI } from '@renderer/services/novel/api'
-import {
-  submitWorldItemToLibrary,
-  submitWorldRulesToLibrary,
-} from '@renderer/services/novel/material-library-submit'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
 import { randomUUID } from '@renderer/utils/id'
 import type { ProjectModelPrefs } from '@renderer/services/novel/project-model'
@@ -308,28 +291,14 @@ watch(currentList, (list) => {
   }
 })
 
-const libraryContext = () => ({
-  projectId: props.projectId,
-  projectTitle: props.projectTitle,
-  project: props.projectModel,
-})
-
 function rulesMenuActions(): DetailMenuAction[] {
   if (!props.editable) {
     return [{ id: 'preview', label: '预览', onClick: () => openRulesPreview() }]
   }
-  const items: DetailMenuAction[] = [
+  return [
     { id: 'preview', label: '预览', onClick: () => openRulesPreview() },
     { id: 'edit', label: '编辑', onClick: () => openRulesEdit() },
   ]
-  if (worldSetting.value.core_rules?.trim()) {
-    items.push({
-      id: 'save-rules',
-      label: '存入设定库',
-      onClick: () => void submitCoreRules(),
-    })
-  }
-  return items
 }
 
 function listItemMenuActions(index: number): DetailMenuAction[] {
@@ -441,51 +410,6 @@ async function deleteItem(kind: ItemKind, index: number) {
     }
   } catch (error) {
     globalAlert.showError(error instanceof Error ? error.message : '删除失败', '删除失败')
-  }
-}
-
-async function submitCoreRules() {
-  if (!props.editable || !worldSetting.value.core_rules?.trim()) return
-  try {
-    const item = await submitWorldRulesToLibrary(worldSetting.value.core_rules, libraryContext())
-    globalAlert.showSuccess(`「${item.title}」已存入设定库`, '提交成功')
-  } catch (error) {
-    globalAlert.showError(error instanceof Error ? error.message : '提交失败', '存入设定库失败')
-  }
-}
-
-async function submitItem(kind: ItemKind, index: number) {
-  if (kind === 'location') await submitLocation(index)
-  else await submitFaction(index)
-}
-
-async function submitLocation(index: number) {
-  if (!props.editable || !props.projectId) return
-  const source = [...(worldSetting.value.key_locations || [])]
-  const raw = source[index]
-  if (!raw) return
-  try {
-    const { item, asset } = await submitWorldItemToLibrary(raw, 'location', libraryContext())
-    source[index] = asset
-    await persistWorldSetting({ key_locations: source })
-    globalAlert.showSuccess(`「${item.title}」已存入设定库`, '提交成功')
-  } catch (error) {
-    globalAlert.showError(error instanceof Error ? error.message : '提交失败', '存入设定库失败')
-  }
-}
-
-async function submitFaction(index: number) {
-  if (!props.editable || !props.projectId) return
-  const source = [...(worldSetting.value.factions || [])]
-  const raw = source[index]
-  if (!raw) return
-  try {
-    const { item, asset } = await submitWorldItemToLibrary(raw, 'faction', libraryContext())
-    source[index] = asset
-    await persistWorldSetting({ factions: source })
-    globalAlert.showSuccess(`「${item.title}」已存入设定库`, '提交成功')
-  } catch (error) {
-    globalAlert.showError(error instanceof Error ? error.message : '提交失败', '存入设定库失败')
   }
 }
 

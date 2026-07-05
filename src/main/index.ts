@@ -19,5 +19,5 @@ createMntoolsApp({
   },
   shellLayout: 'sidebar',
   shellStyle: 'grouped',
-  defaultHomePath: '/workspace',
+  defaultHomePath: '/home',
 })

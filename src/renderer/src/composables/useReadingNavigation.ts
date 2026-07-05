@@ -30,7 +30,14 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
   const chapterIndex = ref(0)
   const pageIndex = ref(0)
 
+  const SCROLL_EDGE_THRESHOLD = 6
+
   let autoTurnTimer: number | undefined
+  let autoScrollRaf: number | undefined
+  let autoScrollLastTime = 0
+  let autoScrollPausedUntil = 0
+  let autoScrollChapterLock = false
+  let autoScrollDriving = false
 
   const project = computed(() => options.novelStore.currentProject)
 
@@ -138,10 +145,86 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
   function resetAutoTurn() {
     if (autoTurnTimer) window.clearInterval(autoTurnTimer)
     autoTurnTimer = undefined
-    if (!options.settings.value.autoTurn || !isPageMode.value || options.ttsActive.value) return
-    autoTurnTimer = window.setInterval(() => {
-      if (canNextPage.value) nextPage()
-    }, options.settings.value.autoTurnSeconds * 1000)
+    if (options.settings.value.autoTurn && isPageMode.value && !options.ttsActive.value) {
+      autoTurnTimer = window.setInterval(() => {
+        if (canNextPage.value) nextPage()
+      }, options.settings.value.autoTurnSeconds * 1000)
+    }
+    resetAutoScroll()
+  }
+
+  function stopAutoScroll() {
+    if (autoScrollRaf !== undefined) {
+      cancelAnimationFrame(autoScrollRaf)
+      autoScrollRaf = undefined
+    }
+    autoScrollLastTime = 0
+  }
+
+  function pauseAutoScroll(durationMs = 4000) {
+    autoScrollPausedUntil = performance.now() + durationMs
+  }
+
+  function isAutoScrollDriving() {
+    return autoScrollDriving
+  }
+
+  function resetAutoScroll() {
+    stopAutoScroll()
+    if (!options.settings.value.autoScroll || isPageMode.value || options.ttsActive.value) return
+
+    const tick = (now: number) => {
+      if (!options.settings.value.autoScroll || isPageMode.value || options.ttsActive.value) {
+        stopAutoScroll()
+        return
+      }
+
+      const el = options.pageViewportRef.value
+      if (!el) {
+        autoScrollRaf = requestAnimationFrame(tick)
+        return
+      }
+
+      if (now < autoScrollPausedUntil) {
+        autoScrollRaf = requestAnimationFrame(tick)
+        return
+      }
+
+      if (!autoScrollLastTime) autoScrollLastTime = now
+      const deltaMs = Math.min(now - autoScrollLastTime, 48)
+      autoScrollLastTime = now
+
+      const step = (options.settings.value.autoScrollSpeed * deltaMs) / 1000
+      const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - SCROLL_EDGE_THRESHOLD
+
+      if (atBottom) {
+        if (autoScrollChapterLock) {
+          autoScrollRaf = requestAnimationFrame(tick)
+          return
+        }
+        if (canNextChapter.value) {
+          autoScrollChapterLock = true
+          nextChapter()
+          window.setTimeout(() => {
+            autoScrollChapterLock = false
+            autoScrollLastTime = 0
+          }, 320)
+        } else {
+          stopAutoScroll()
+          return
+        }
+      } else {
+        autoScrollDriving = true
+        el.scrollTop = Math.min(el.scrollTop + step, el.scrollHeight - el.clientHeight)
+        queueMicrotask(() => {
+          autoScrollDriving = false
+        })
+      }
+
+      autoScrollRaf = requestAnimationFrame(tick)
+    }
+
+    autoScrollRaf = requestAnimationFrame(tick)
   }
 
   function prevPage() {
@@ -243,6 +326,7 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
 
   function disposeAutoTurn() {
     if (autoTurnTimer) window.clearInterval(autoTurnTimer)
+    stopAutoScroll()
   }
 
   return {
@@ -266,6 +350,8 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
     ensureChapterLoaded,
     prefetchAdjacentChapters,
     resetAutoTurn,
+    pauseAutoScroll,
+    isAutoScrollDriving,
     disposeAutoTurn,
     prevPage,
     nextPage,

@@ -22,6 +22,7 @@ import { openReadingWindow } from '@renderer/services/reading-service'
 import WritingModeSelectModal from '@renderer/novel/components/shared/WritingModeSelectModal.vue'
 import { useCreateNovelProject } from '@renderer/novel/composables/useCreateNovelProject'
 import type { WritingMode } from '@shared/novel/types'
+import type { CreateProjectMaterialSelection } from '@renderer/novel/composables/useCreateNovelProject'
 
 const novelStore = useNovelStore()
 const { showModeModal, isCreating, openCreateModal, closeCreateModal, createWithMode } = useCreateNovelProject()
@@ -44,7 +45,7 @@ const sloganLines = [
 const typingLines = [
   '与 AI 并肩写作，把零散灵感写成完整章节',
   '从蓝图到正文，小说家的每一步都有智能辅助',
-  '角色、设定、情节库触手可及，落笔更从容',
+  '角色库与文风库触手可及，落笔更从容',
   '准备好后，就在写作台开启你的下一部小说',
 ]
 
@@ -165,9 +166,10 @@ function openCreateNovel() {
   openCreateModal()
 }
 
-async function handleCreateWithMode(mode: WritingMode) {
+async function handleCreateWithMode(mode: WritingMode, materials: CreateProjectMaterialSelection) {
   try {
     const project = await createWithMode(mode, {
+      materials,
       onCreated: async () => {
         await loadDashboard()
       },

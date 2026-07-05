@@ -3,17 +3,14 @@ import {
   BookMarked,
   Clock3,
   Crown,
-  Globe2,
   Heart,
-  Layers,
-  MapPin,
   PenLine,
   Sparkles,
   Swords,
   Users,
-  Zap,
 } from 'lucide-vue-next'
 import type { MaterialItem, MaterialLibraryType } from '@renderer/services/novel/material-library-service'
+import { isMaterialBuiltIn } from '@renderer/services/novel/material-library-service'
 import {
   getMaterialLibraryPrefs,
   isMaterialFavorite,
@@ -80,40 +77,15 @@ export const MATERIAL_LIBRARY_CONFIG: Record<MaterialLibraryType, MaterialLibrar
       { id: 'antagonist', label: '反派型', icon: Swords, match: (item) => hasCategory(item, 'antagonist') },
     ]),
   },
-  world: {
-    type: 'world',
-    title: '设定库',
-    description: '世界观、地点、阵营等设定模板，搭好故事舞台',
-    searchPlaceholder: '搜索设定名称、标签或摘要...',
-    createLabel: '新建设定',
-    accent: '#8eb4a2',
-    filters: baseFilters([
-      { id: 'worldview', label: '世界观', icon: Globe2, match: (item) => hasCategory(item, 'worldview') },
-      { id: 'location', label: '地点', icon: MapPin, match: (item) => hasCategory(item, 'location') },
-      { id: 'faction', label: '阵营', icon: Layers, match: (item) => hasCategory(item, 'faction') },
-    ]),
-  },
-  plots: {
-    type: 'plots',
-    title: '情节库',
-    description: '情节桥段、冲突模式与节奏参考，推进故事不卡壳',
-    searchPlaceholder: '搜索情节名称、标签或摘要...',
-    createLabel: '新建情节',
-    accent: '#248a75',
-    filters: baseFilters([
-      { id: 'conflict', label: '冲突桥段', icon: Zap, match: (item) => hasCategory(item, 'conflict') },
-      { id: 'twist', label: '转折', icon: Sparkles, match: (item) => hasCategory(item, 'twist') },
-      { id: 'rhythm', label: '节奏', icon: BookMarked, match: (item) => hasCategory(item, 'rhythm') },
-    ]),
-  },
   styles: {
     type: 'styles',
     title: '文风库',
-    description: '叙述风格、口吻与修辞偏好，统一全书的写作气质',
+    description: '内置多种叙述风格预设，也可保存作品文风供跨书复用',
     searchPlaceholder: '搜索文风名称、标签或摘要...',
     createLabel: '新建文风',
     accent: '#c5a059',
     filters: baseFilters([
+      { id: 'builtin', label: '内置预设', icon: Sparkles, match: (item) => isMaterialBuiltIn(item) },
       { id: 'narrative', label: '叙述风格', icon: PenLine, match: (item) => hasCategory(item, 'narrative') },
       { id: 'tone', label: '基调口吻', icon: Sparkles, match: (item) => hasCategory(item, 'tone') },
       { id: 'rhetoric', label: '修辞偏好', icon: BookMarked, match: (item) => hasCategory(item, 'rhetoric') },

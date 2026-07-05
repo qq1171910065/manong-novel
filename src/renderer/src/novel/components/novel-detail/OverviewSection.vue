@@ -101,12 +101,11 @@
         v-if="!data?.full_synopsis"
         block
         :editable="editable"
-        :menu-actions="synopsisMenuActions"
         @edit="openEdit('full_synopsis', '完整剧情梗概', data?.full_synopsis)"
       >
         <DetailEmptyState
           title="暂无剧情梗概"
-          description="左键编辑 · 右键更多操作"
+          description="点击编辑"
         />
       </DetailEditableZone>
 
@@ -114,7 +113,6 @@
         v-else
         block
         :editable="editable"
-        :menu-actions="synopsisMenuActions"
         @edit="openEdit('full_synopsis', '完整剧情梗概', data?.full_synopsis)"
       >
         <p class="nd-text-block nd-text-block--synopsis">{{ data.full_synopsis }}</p>
@@ -129,10 +127,9 @@ import ImageAssetField from '@renderer/novel/components/shared/ImageAssetField.v
 import ProjectModelSettings from '@renderer/novel/components/shared/ProjectModelSettings.vue'
 import SubmitToLibraryButton from '@renderer/novel/components/shared/SubmitToLibraryButton.vue'
 import DetailEditableZone from './DetailEditableZone.vue'
-import type { DetailMenuAction } from './DetailEditableZone.vue'
 import DetailEmptyState from './DetailEmptyState.vue'
 import { buildCoverPrompt } from '@renderer/services/image-service'
-import { submitStyleToLibrary, submitSynopsisToLibrary } from '@renderer/services/novel/material-library-submit'
+import { submitStyleToLibrary } from '@renderer/services/novel/material-library-submit'
 import type { ProjectModelPrefs } from '@renderer/services/novel/project-model'
 import type { WritingMode } from '@shared/novel/types'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
@@ -199,33 +196,11 @@ const hasStyleInfo = computed(
   () => Boolean(props.data?.genre || props.data?.style || props.data?.tone)
 )
 
-const synopsisMenuActions = computed<DetailMenuAction[]>(() => {
-  if (!props.editable || !props.data?.full_synopsis?.trim()) return []
-  return [
-    {
-      id: 'save-synopsis',
-      label: '存入情节库',
-      onClick: () => void submitSynopsis(),
-    },
-  ]
-})
-
 const libraryContext = () => ({
   projectId: props.projectId,
   projectTitle: props.projectTitle || props.data?.title || undefined,
   project: props.projectModel,
 })
-
-async function submitSynopsis() {
-  const synopsis = props.data?.full_synopsis?.trim()
-  if (!synopsis) return
-  try {
-    const item = await submitSynopsisToLibrary(synopsis, libraryContext())
-    globalAlert.showSuccess(`「${item.title}」已存入情节库`, '提交成功')
-  } catch (error) {
-    globalAlert.showError(error instanceof Error ? error.message : '提交失败', '存入情节库失败')
-  }
-}
 
 async function submitStylePreset() {
   if (!hasStyleInfo.value) return

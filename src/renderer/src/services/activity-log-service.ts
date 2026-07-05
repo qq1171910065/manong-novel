@@ -29,15 +29,11 @@ const MAX_ENTRIES = 100
 
 const MATERIAL_TYPE_LABEL: Record<MaterialLibraryType, string> = {
   characters: '角色',
-  world: '设定',
-  plots: '情节',
   styles: '文风',
 }
 
 const MATERIAL_TYPE_PATH: Record<MaterialLibraryType, string> = {
   characters: '/library/characters',
-  world: '/library/world',
-  plots: '/library/plots',
   styles: '/library/styles',
 }
 

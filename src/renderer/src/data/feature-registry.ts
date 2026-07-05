@@ -1,4 +1,4 @@
-import { BookOpen, Feather, Globe2, Home, PenLine, Settings, Sparkles, GitBranch, Users } from 'lucide-vue-next'
+import { BookOpen, Feather, Home, PenLine, Settings, Sparkles, Users } from 'lucide-vue-next'
 import type { FeatureRegistry } from '@renderer/types/registry'
 
 export const featureRegistry: FeatureRegistry = [
@@ -50,30 +50,12 @@ export const featureRegistry: FeatureRegistry = [
     icon: Users,
   },
   {
-    key: 'library-world',
-    route: 'material-library',
-    path: '/library/world',
-    label: '设定库',
-    group: 'main',
-    order: 4,
-    icon: Globe2,
-  },
-  {
-    key: 'library-plots',
-    route: 'material-library',
-    path: '/library/plots',
-    label: '情节库',
-    group: 'main',
-    order: 5,
-    icon: GitBranch,
-  },
-  {
     key: 'library-styles',
     route: 'material-library',
     path: '/library/styles',
     label: '文风库',
     group: 'main',
-    order: 6,
+    order: 4,
     icon: PenLine,
   },
   {

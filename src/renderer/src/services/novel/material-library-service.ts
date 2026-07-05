@@ -1,7 +1,11 @@
-export type MaterialLibraryType = 'characters' | 'world' | 'plots' | 'styles'
+export type MaterialLibraryType = 'characters' | 'styles'
+
+/** @deprecated 旧版物料库类型，仅用于兼容历史数据 */
+export type LegacyMaterialLibraryType = 'world' | 'plots'
+
 export interface MaterialItem {
   id: string
-  type: MaterialLibraryType
+  type: MaterialLibraryType | LegacyMaterialLibraryType
   title: string
   summary: string
   tags: string[]
@@ -11,17 +15,27 @@ export interface MaterialItem {
 }
 
 import { activityLogService } from '../activity-log-service'
+import { ensureBuiltinStyleSeeds } from './material-library-seeds'
 
 const STORAGE_KEY = 'novel_material_library_v1'
+
+function isActiveType(type: MaterialItem['type']): type is MaterialLibraryType {
+  return type === 'characters' || type === 'styles'
+}
 
 function readAll(): MaterialItem[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return []
+    if (!raw) return ensureBuiltinStyleSeeds([])
     const parsed = JSON.parse(raw) as MaterialItem[]
-    return Array.isArray(parsed) ? parsed : []
+    const items = Array.isArray(parsed) ? parsed : []
+    const seeded = ensureBuiltinStyleSeeds(items)
+    if (seeded !== items) writeAll(seeded)
+    return seeded
   } catch {
-    return []
+    const seeded = ensureBuiltinStyleSeeds([])
+    writeAll(seeded)
+    return seeded
   }
 }
 
@@ -33,6 +47,10 @@ function createId(): string {
   return `mat_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 }
 
+export function isMaterialBuiltIn(item: MaterialItem): boolean {
+  return item.payload?.builtIn === true
+}
+
 export const materialLibraryService = {
   listAll(): MaterialItem[] {
     return readAll()
@@ -41,7 +59,12 @@ export const materialLibraryService = {
   list(type: MaterialLibraryType): MaterialItem[] {
     return readAll()
       .filter((item) => item.type === type)
-      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .sort((a, b) => {
+        const aBuiltIn = isMaterialBuiltIn(a) ? 1 : 0
+        const bBuiltIn = isMaterialBuiltIn(b) ? 1 : 0
+        if (aBuiltIn !== bBuiltIn) return bBuiltIn - aBuiltIn
+        return b.updatedAt.localeCompare(a.updatedAt)
+      })
   },
 
   get(id: string): MaterialItem | undefined {
@@ -77,6 +100,7 @@ export const materialLibraryService = {
     const items = readAll()
     const index = items.findIndex((item) => item.id === id)
     if (index < 0) return null
+    if (isMaterialBuiltIn(items[index])) return null
     const next: MaterialItem = {
       ...items[index],
       ...patch,
@@ -91,6 +115,8 @@ export const materialLibraryService = {
 
   remove(id: string): boolean {
     const items = readAll()
+    const target = items.find((item) => item.id === id)
+    if (!target || isMaterialBuiltIn(target)) return false
     const next = items.filter((item) => item.id !== id)
     if (next.length === items.length) return false
     writeAll(next)
@@ -107,3 +133,5 @@ export const materialLibraryService = {
     })
   },
 }
+
+export { isActiveType as isMaterialLibraryType }

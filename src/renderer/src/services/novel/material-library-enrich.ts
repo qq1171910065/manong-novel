@@ -1,10 +1,5 @@
 import materialEnrichPrompt from '@shared/novel/prompts/material_library_enrich.md?raw'
-import type {
-  Character,
-  ChapterOutline,
-  Relationship,
-  WorldListItem,
-} from '@shared/novel/types'
+import type { Character } from '@shared/novel/types'
 import { chat } from './writing-service'
 import { parseLlmJsonObject, pickBestLlmPayload } from './json-utils'
 import type { ProjectModelPrefs } from './project-model'
@@ -19,15 +14,6 @@ export interface EnrichedMaterialMeta {
 
 export type MaterialEnrichKind =
   | { libraryType: 'characters'; character: Character }
-  | {
-      libraryType: 'world'
-      category: 'location' | 'faction' | 'worldview'
-      item?: WorldListItem
-      rules?: string
-    }
-  | { libraryType: 'plots'; plotKind: 'chapter'; chapter: ChapterOutline }
-  | { libraryType: 'plots'; plotKind: 'relationship'; relationship: Relationship }
-  | { libraryType: 'plots'; plotKind: 'synopsis'; synopsis: string }
   | {
       libraryType: 'styles'
       genre?: string
@@ -67,41 +53,6 @@ function buildUserPayload(kind: MaterialEnrichKind, context?: SubmitContext): st
       )
       break
     }
-    case 'world': {
-      lines.push(`子类型：${kind.category}`)
-      if (kind.rules) {
-        lines.push(`核心规则原文：${kind.rules}`)
-      } else if (kind.item) {
-        lines.push(
-          `名称：${kind.item.name || kind.item.title || '未命名'}`,
-          kind.item.description ? `描述：${kind.item.description}` : ''
-        )
-      }
-      break
-    }
-    case 'plots': {
-      if (kind.plotKind === 'chapter') {
-        const ch = kind.chapter
-        lines.push(
-          '子类型：章节大纲',
-          `章节序号：${ch.chapter_number}`,
-          ch.title ? `章节标题：${ch.title}` : '',
-          ch.summary ? `章节摘要：${ch.summary}` : ''
-        )
-      } else if (kind.plotKind === 'relationship') {
-        const r = kind.relationship
-        lines.push(
-          '子类型：人物关系',
-          `角色A：${r.character_from || '未知'}`,
-          `角色B：${r.character_to || '未知'}`,
-          r.relationship_type ? `关系类型：${r.relationship_type}` : '',
-          r.description ? `关系描述：${r.description}` : ''
-        )
-      } else {
-        lines.push('子类型：完整剧情梗概', `梗概原文：${kind.synopsis}`)
-      }
-      break
-    }
     case 'styles': {
       lines.push(
         '子类型：文风预设',
@@ -129,37 +80,6 @@ function fallbackMeta(kind: MaterialEnrichKind): EnrichedMaterialMeta {
         '角色档案'
       const tags = [name, c.identity, c.personality].filter(Boolean) as string[]
       return { title: name, summary, tags }
-    }
-    case 'world': {
-      if (kind.rules) {
-        const summary = kind.rules.trim()
-        const title = summary.slice(0, 16).replace(/\s+/g, '') || '世界观核心规则'
-        return { title, summary: summary.slice(0, 200), tags: ['世界观', '核心规则'] }
-      }
-      const item = kind.item
-      const title = (item?.name || item?.title || '未命名设定').trim()
-      const summary = (item?.description || '').trim() || title
-      return { title, summary, tags: [title, kind.category] }
-    }
-    case 'plots': {
-      if (kind.plotKind === 'chapter') {
-        const ch = kind.chapter
-        const title = ch.title?.trim() || `第 ${ch.chapter_number} 章情节`
-        const summary = ch.summary?.trim() || title
-        return { title, summary, tags: [title, `第${ch.chapter_number}章`] }
-      }
-      if (kind.plotKind === 'relationship') {
-        const r = kind.relationship
-        const from = r.character_from?.trim() || '角色A'
-        const to = r.character_to?.trim() || '角色B'
-        const title = `${from}与${to}：${r.relationship_type?.trim() || '人物关系'}`
-        const summary = r.description?.trim() || r.relationship_type?.trim() || title
-        return { title, summary, tags: [from, to, r.relationship_type].filter(Boolean) as string[] }
-      }
-      const synopsis = kind.synopsis.trim()
-      const firstSentence = synopsis.split(/[。！？\n]/)[0]?.trim() || synopsis.slice(0, 24)
-      const title = firstSentence.slice(0, 24) || '剧情梗概片段'
-      return { title, summary: synopsis.slice(0, 200), tags: ['剧情梗概', '主线'] }
     }
     case 'styles': {
       const parts = [kind.genre, kind.style, kind.tone].filter(Boolean)

@@ -156,6 +156,7 @@ import type { NovelProjectSummary } from '@renderer/services/novel/api'
 import { NovelAPI } from '@renderer/services/novel/api'
 import { resolveAccent } from '@renderer/services/novel/home-mapper'
 import type { WritingMode } from '@shared/novel/types'
+import type { CreateProjectMaterialSelection } from '@renderer/novel/composables/useCreateNovelProject'
 import { WRITING_MODE_LABELS } from '@shared/novel/writing-mode'
 
 const router = useRouter()
@@ -255,9 +256,9 @@ async function loadProjects() {
   await novelStore.loadProjects()
 }
 
-async function handleCreateWithMode(mode: WritingMode) {
+async function handleCreateWithMode(mode: WritingMode, materials: CreateProjectMaterialSelection) {
   try {
-    const project = await createWithMode(mode, { onCreated: loadProjects })
+    const project = await createWithMode(mode, { materials, onCreated: loadProjects })
     if (project) router.push(`/detail/${project.id}`)
   } catch (error) {
     alert(error instanceof Error ? error.message : '创建项目失败，请重试')

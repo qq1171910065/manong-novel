@@ -339,6 +339,7 @@
   position: relative;
   width: min(520px, 100%);
   max-height: min(88vh, 760px);
+  height: fit-content;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -353,9 +354,12 @@
   width: min(920px, calc(100vw - 40px));
   max-height: min(92vh, 900px);
   min-height: min(70vh, 720px);
+  height: auto;
 }
 
 .novel-preview-dialog--chapter .novel-preview-dialog__scroll {
+  flex: 1 1 auto;
+  max-height: none;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -383,8 +387,9 @@
 }
 
 .novel-preview-dialog__scroll {
-  flex: 1 1 0;
+  flex: 0 1 auto;
   min-height: 0;
+  max-height: min(88vh, 760px);
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -425,7 +430,8 @@
 }
 
 .novel-preview-dialog__hero.is-portrait {
-  aspect-ratio: 4 / 3;
+  aspect-ratio: 3 / 4;
+  max-height: min(40vh, 320px);
 }
 
 .novel-preview-dialog__hero--text {

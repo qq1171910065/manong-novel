@@ -1,16 +1,11 @@
-import type { Character, ChapterOutline, Relationship, WorldListItem } from '@shared/novel/types'
+import type { Character } from '@shared/novel/types'
 import type { MaterialItem, MaterialLibraryType } from './material-library-service'
+import { isMaterialBuiltIn } from './material-library-service'
 
 const CATEGORY_LABELS: Record<string, string> = {
   protagonist: '主角型',
   supporting: '配角型',
   antagonist: '反派型',
-  worldview: '世界观',
-  location: '地点',
-  faction: '阵营',
-  conflict: '冲突桥段',
-  twist: '转折',
-  rhythm: '节奏',
   narrative: '叙述风格',
   tone: '基调口吻',
   rhetoric: '修辞偏好',
@@ -26,6 +21,7 @@ export function getMaterialImageUrl(item: MaterialItem): string | null {
 }
 
 export function getMaterialCategoryLabel(item: MaterialItem): string {
+  if (isMaterialBuiltIn(item)) return '内置预设'
   const category = String(item.payload?.category ?? '')
   if (category && CATEGORY_LABELS[category]) return CATEGORY_LABELS[category]
   return item.tags[0] || '未分类'
@@ -71,39 +67,17 @@ export function getMaterialPreviewFields(item: MaterialItem): MaterialPreviewFie
       if (character?.abilities?.trim()) fields.push({ label: '能力', value: character.abilities.trim() })
       break
     }
-    case 'world': {
-      const worldItem = item.payload?.worldItem as WorldListItem | undefined
-      const coreRules = item.payload?.core_rules
-      if (worldItem?.description?.trim()) fields.push({ label: '描述', value: worldItem.description.trim() })
-      if (typeof coreRules === 'string' && coreRules.trim()) {
-        fields.push({ label: '核心规则', value: coreRules.trim() })
-      }
-      break
-    }
-    case 'plots': {
-      const chapter = item.payload?.chapterOutline as ChapterOutline | undefined
-      const relationship = item.payload?.relationship as Relationship | undefined
-      if (chapter) {
-        fields.push({ label: '章节', value: `第 ${chapter.chapter_number} 章` })
-        if (chapter.summary?.trim()) fields.push({ label: '梗概', value: chapter.summary.trim() })
-      }
-      if (relationship) {
-        if (relationship.relationship_type?.trim()) {
-          fields.push({ label: '关系类型', value: relationship.relationship_type.trim() })
-        }
-        if (relationship.description?.trim()) {
-          fields.push({ label: '关系描述', value: relationship.description.trim() })
-        }
-      }
-      break
-    }
     case 'styles': {
       const genre = item.payload?.genre
       const style = item.payload?.style
       const tone = item.payload?.tone
+      const writingHints = item.payload?.writingHints
       if (typeof genre === 'string' && genre.trim()) fields.push({ label: '题材', value: genre.trim() })
       if (typeof style === 'string' && style.trim()) fields.push({ label: '风格', value: style.trim() })
       if (typeof tone === 'string' && tone.trim()) fields.push({ label: '基调', value: tone.trim() })
+      if (typeof writingHints === 'string' && writingHints.trim()) {
+        fields.push({ label: '写作提示', value: writingHints.trim() })
+      }
       break
     }
   }
