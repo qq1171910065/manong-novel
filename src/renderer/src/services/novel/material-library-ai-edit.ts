@@ -137,6 +137,8 @@ function buildFieldOptimizeMessage(
     formContext,
     '',
     `优化要求：${instruction.trim()}`,
+    '',
+    '请严格只输出一行 JSON，格式为 {"value":"优化后的文本","explanation":"说明"}，不要代码块或其它文字。',
   ].join('\n')
 }
 
@@ -161,18 +163,50 @@ function buildUserMessage(
   return lines.filter(Boolean).join('\n')
 }
 
+function buildPatchFromRoot(parsed: Record<string, unknown>): MaterialAiEditPatch {
+  const patch: MaterialAiEditPatch = {}
+  if (typeof parsed.title === 'string') patch.title = parsed.title
+  if (typeof parsed.summary === 'string') patch.summary = parsed.summary
+  if (Array.isArray(parsed.tags)) {
+    patch.tags = parsed.tags.map((t) => String(t).trim()).filter(Boolean)
+  }
+  const payload: Record<string, unknown> = {}
+  if (parsed.payload && typeof parsed.payload === 'object') {
+    Object.assign(payload, parsed.payload as Record<string, unknown>)
+  }
+  if (parsed.character && typeof parsed.character === 'object') {
+    payload.character = parsed.character
+  }
+  for (const key of [...STYLE_FIELD_KEYS, 'category']) {
+    if (typeof parsed[key] === 'string') payload[key] = parsed[key]
+  }
+  for (const key of CHARACTER_FIELD_KEYS) {
+    if (typeof parsed[key] === 'string') {
+      payload.character = {
+        ...(payload.character && typeof payload.character === 'object'
+          ? (payload.character as Record<string, unknown>)
+          : {}),
+        [key]: parsed[key],
+      }
+    }
+  }
+  if (Object.keys(payload).length) patch.payload = payload
+  return patch
+}
+
 function parseAiEditResponse(raw: string): { patch: MaterialAiEditPatch; explanation: string } | null {
   const payload = pickBestLlmPayload(raw, '')
   const parsed = parseLlmJsonObject(payload)
   if (!parsed || typeof parsed !== 'object') return null
 
-  const explanation =
-    typeof parsed.explanation === 'string' && parsed.explanation.trim()
-      ? parsed.explanation.trim()
-      : '已生成修改建议'
+  const explanation = extractExplanation(parsed, '已生成修改建议')
 
   const patchRaw = parsed.patch
   if (!patchRaw || typeof patchRaw !== 'object') {
+    const directPatch = buildPatchFromRoot(parsed)
+    if (Object.keys(directPatch).length || directPatch.payload) {
+      return { patch: directPatch, explanation }
+    }
     return { patch: {}, explanation }
   }
 
@@ -190,20 +224,153 @@ function parseAiEditResponse(raw: string): { patch: MaterialAiEditPatch; explana
   return { patch, explanation }
 }
 
-function parseFieldOptimizeResponse(raw: string): { value: string; explanation: string } | null {
+function extractExplanation(parsed: Record<string, unknown> | null, fallback = '已优化字段内容'): string {
+  if (!parsed) return fallback
+  for (const key of ['explanation', 'reason', 'summary', 'note', 'message']) {
+    const text = parsed[key]
+    if (typeof text === 'string' && text.trim()) return text.trim()
+  }
+  return fallback
+}
+
+function extractStringValue(value: unknown): string {
+  if (typeof value === 'string') return value.trim()
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value).trim()
+  return ''
+}
+
+function extractTagsText(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean).join(', ')
+  }
+  return extractStringValue(value)
+}
+
+function readValueFromRecord(record: Record<string, unknown>, field: MaterialFocusField): string {
+  const raw = record[field]
+  if (raw === undefined || raw === null) return ''
+  return field === 'tags' ? extractTagsText(raw) : extractStringValue(raw)
+}
+
+function extractValueFromPatch(patch: MaterialAiEditPatch, field: MaterialFocusField): string {
+  if (field === 'title' && patch.title) return patch.title.trim()
+  if (field === 'summary' && patch.summary) return patch.summary.trim()
+  if (field === 'tags' && patch.tags?.length) return patch.tags.join(', ')
+
+  const payload = patch.payload
+  if (!payload || typeof payload !== 'object') return ''
+
+  if (CHARACTER_FIELD_KEYS.has(field)) {
+    const character = payload.character
+    if (character && typeof character === 'object') {
+      return readValueFromRecord(character as Record<string, unknown>, field)
+    }
+  }
+
+  if (STYLE_FIELD_KEYS.has(field)) {
+    return readValueFromRecord(payload, field)
+  }
+
+  return ''
+}
+
+function unescapeLooseJsonString(raw: string): string {
+  return raw
+    .replace(/\\n/g, '\n')
+    .replace(/\\r/g, '\r')
+    .replace(/\\t/g, '\t')
+    .replace(/\\"/g, '"')
+    .replace(/\\\\/g, '\\')
+    .trim()
+}
+
+function extractRegexStringField(raw: string, key: string): string | null {
+  const pattern = new RegExp(`"${key}"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"`, 's')
+  const match = raw.match(pattern)
+  if (!match?.[1]) return null
+  try {
+    return JSON.parse(`"${match[1]}"`).trim()
+  } catch {
+    return unescapeLooseJsonString(match[1])
+  }
+}
+
+function parseFieldOptimizeRegex(
+  raw: string,
+  field: MaterialFocusField
+): { value: string; explanation: string } | null {
+  const aliases = ['value', 'content', 'text', 'result', field]
+  for (const key of aliases) {
+    const value = extractRegexStringField(raw, key)
+    if (value) {
+      const explanation = extractRegexStringField(raw, 'explanation') || '已优化字段内容'
+      return { value, explanation }
+    }
+  }
+  return null
+}
+
+function parseFieldOptimizeResponse(
+  raw: string,
+  field: MaterialFocusField,
+  type: MaterialLibraryType
+): { value: string; explanation: string } | null {
   const payload = pickBestLlmPayload(raw, '')
   const parsed = parseLlmJsonObject(payload)
-  if (!parsed || typeof parsed !== 'object') return null
+  const explanation = extractExplanation(parsed)
 
-  const value = typeof parsed.value === 'string' ? parsed.value.trim() : ''
-  if (!value) return null
+  if (parsed) {
+    if (parsed.value !== undefined) {
+      const value = field === 'tags' ? extractTagsText(parsed.value) : extractStringValue(parsed.value)
+      if (value) return { value, explanation }
+    }
 
-  const explanation =
-    typeof parsed.explanation === 'string' && parsed.explanation.trim()
-      ? parsed.explanation.trim()
-      : '已优化字段内容'
+    for (const key of ['content', 'text', 'result', 'optimized_value', 'optimized']) {
+      if (parsed[key] !== undefined) {
+        const value = field === 'tags' ? extractTagsText(parsed[key]) : extractStringValue(parsed[key])
+        if (value) return { value, explanation }
+      }
+    }
 
-  return { value, explanation }
+    const direct = readValueFromRecord(parsed, field)
+    if (direct) return { value: direct, explanation }
+
+    if (parsed.patch && typeof parsed.patch === 'object') {
+      const patchSource = parsed.patch as Record<string, unknown>
+      const patch: MaterialAiEditPatch = {}
+      if (typeof patchSource.title === 'string') patch.title = patchSource.title
+      if (typeof patchSource.summary === 'string') patch.summary = patchSource.summary
+      if (Array.isArray(patchSource.tags)) {
+        patch.tags = patchSource.tags.map((t) => String(t).trim()).filter(Boolean)
+      }
+      if (patchSource.payload && typeof patchSource.payload === 'object') {
+        patch.payload = patchSource.payload as Record<string, unknown>
+      }
+      const value = extractValueFromPatch(patch, field)
+      if (value) return { value, explanation }
+    }
+
+    if (parsed.payload && typeof parsed.payload === 'object') {
+      const value = extractValueFromPatch({ payload: parsed.payload as Record<string, unknown> }, field)
+      if (value) return { value, explanation }
+    }
+
+    if (type === 'characters' && parsed.character && typeof parsed.character === 'object') {
+      const value = readValueFromRecord(parsed.character as Record<string, unknown>, field)
+      if (value) return { value, explanation }
+    }
+  }
+
+  const regexParsed = parseFieldOptimizeRegex(payload, field)
+  if (regexParsed) return regexParsed
+
+  const editParsed = parseAiEditResponse(raw)
+  if (editParsed) {
+    const value = extractValueFromPatch(editParsed.patch, field)
+    if (value) return { value, explanation: editParsed.explanation }
+  }
+
+  return null
 }
 
 function finalizeAiEditResult(
@@ -232,9 +399,9 @@ export async function runMaterialFieldOptimize(input: {
     statsKind: 'ai',
   })
 
-  const parsed = parseFieldOptimizeResponse(raw)
+  const parsed = parseFieldOptimizeResponse(raw, input.field, input.type)
   if (!parsed) {
-    throw new Error('AI 返回格式无法解析，请换种说法重试')
+    throw new Error('AI 返回格式无法解析，请重试或换种说法')
   }
 
   const patch = buildPatchForField(input.field, parsed.value)

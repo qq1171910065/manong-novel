@@ -4,6 +4,8 @@ export function removeThinkTags(rawText: string): string {
   if (!rawText) return rawText
   return rawText
     .replace(/<think>[\s\S]*?<\/redacted_thinking>/gi, '')
+    .replace(/<thinking>[\s\S]*?<\/thinking>/gi, '')
+    .replace(/`[\s\S]*?`/gi, '')
     .replace(/[\s\S]*?<\/think>/gi, '')
     .trim()
 }
