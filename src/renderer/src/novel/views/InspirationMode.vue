@@ -288,6 +288,10 @@ import {
 } from '@renderer/services/gateway-api'
 import { DEFAULT_SYSTEM_ROLE_MODEL_ID } from '@shared/gateway/constants'
 import { resolveWritingMode } from '@shared/novel/writing-mode'
+import {
+  previewConceptStateAfterUserInput,
+  rebuildFullConceptStateFromHistory,
+} from '@shared/novel/concept-checklist'
 import { NButton, NModal } from '@renderer/ui'
 
 interface ChatMessage {
@@ -758,7 +762,11 @@ const restoreConversation = async (projectId: string) => {
         } else {
           currentUIControl.value = lastAssistantMsg.ui_control || { ...DEFAULT_UI_CONTROL }
         }
-        novelStore.currentConversationState = lastAssistantMsg.conversation_state || {}
+        novelStore.currentConversationState = rebuildFullConceptStateFromHistory(
+          project.conversation_history,
+          projectWritingMode.value,
+          lastAssistantMsg.conversation_state || {}
+        )
       } else {
         currentUIControl.value = { ...DEFAULT_UI_CONTROL }
       }
@@ -1167,6 +1175,11 @@ const handleUserInput = async (userInput: any) => {
         content: userInput.value,
         type: 'user',
       })
+      novelStore.currentConversationState = previewConceptStateAfterUserInput(
+        novelStore.currentConversationState,
+        userInput.value,
+        projectWritingMode.value
+      )
       currentUIControl.value = { ...LOADING_UI_CONTROL }
       await scrollToBottom()
     }

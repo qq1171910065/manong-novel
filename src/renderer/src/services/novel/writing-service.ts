@@ -90,11 +90,15 @@ import {
   isChecklistComplete,
   detectChapterCountLoop,
   forceCompleteChecklist,
+  mergeChecklistAnswersFromModel,
+  mergeChecklistDrafts,
   mergeChecklistFromModel,
   normalizeChecklist,
   parseExpectedChapterCount,
+  pruneDraftsForConfirmed,
   rebuildChecklistFromHistory,
   requiredChecklistKeys,
+  resolveFinalConceptAnswers,
   resolvePendingTopicAfterResponse,
   type ConceptChecklistKey,
   type ConceptConversationState,
@@ -387,14 +391,20 @@ IMPORTANT: 你的回复必须是合法的 JSON 对象，并严格包含以下字
     ],
     "placeholder": "string"
   },
-  "conversation_state": {},
+  "conversation_state": {
+    "checklist": { "spark": true, "genre_tone": false },
+    "checklist_answers": { "spark": "精炼摘要，1-2句" }
+  },
   "is_complete": false
 }
 ui_control 规则：
 - ai_message 中不要重复列出 A/B/C 选项文字，选项只放在 ui_control.options 里
 - 根据对话需要灵活决定 ui_control.type：开放性问题用 text_input；需要用户从若干方向中选一个用 single_choice；允许多选组合（如类型混搭、多重特质）用 multiple_choice
 - options 数量与内容应贴合当前问题，2-8 个均可，不要机械凑满固定数量；id 用简短序号即可
-- conversation_state.checklist 必须同步更新：用户已明确回答的项设为 true，禁止在后续轮次重复追问
+- conversation_state.checklist：同步勾选已确认项（键名：spark/genre_tone/prose_style/protagonist/central_conflict/antagonist/inciting_incident/core_theme/working_title/chapter_count）
+- conversation_state.checklist_answers：**每轮必填且须完整**。对所有已勾选 ✓ 的项输出精炼摘要（1-2 句）；用户一句透露多项设定时须同时更新多项；**禁止粘贴用户原话**；左侧设定面板直接展示
+- 若用户补充了已确认项的新细节，应**合并进** checklist_answers 对应条目，而非重复追问
+- 示例：{"spark":"能品尝谎言的私家侦探，谎言会在舌尖留下独特风味","genre_tone":"近未来赛博朋克黑色侦探，霓虹雨夜"}
 不要输出额外的文本或解释。
 `
 
@@ -518,6 +528,7 @@ function buildUiControl(message: string): UIControl {
 function autoFillRemainingChecklist(
   checklist: ReturnType<typeof normalizeChecklist>,
   answers: Record<string, string | undefined>,
+  drafts: Record<string, string | undefined>,
   mode: ReturnType<typeof resolveWritingMode>,
   substantiveTurns: number
 ) {
@@ -527,7 +538,9 @@ function autoFillRemainingChecklist(
   if (chapterDone && substantiveTurns >= Math.max(4, required.length - 2) && incomplete.length > 0) {
     for (const key of incomplete) {
       checklist[key] = true
-      if (!answers[key]) answers[key] = '（对话中已确认）'
+      if (!answers[key]) {
+        answers[key] = drafts[key]?.trim() || '（对话中已确认）'
+      }
     }
   }
   return { checklist, answers }
@@ -551,7 +564,8 @@ function mergeConceptStateFromHistory(
   return {
     ...conceptState,
     checklist: mergedChecklist,
-    checklist_answers: { ...rebuilt.answers, ...(conceptState.checklist_answers ?? {}) },
+    checklist_answers: mergeChecklistAnswersFromModel(rebuilt.answers, conceptState.checklist_answers),
+    checklist_drafts: mergeChecklistDrafts(rebuilt.drafts, conceptState.checklist_drafts ?? {}),
     pending_topic: conceptState.pending_topic ?? rebuilt.pendingTopic ?? null,
   }
 }
@@ -604,28 +618,39 @@ export async function converseConcept(
 
   const mode = resolveWritingMode(project)
   const conceptState = mergeConceptStateFromHistory(conversationState, history, mode)
-  let { checklist, answers } = applyUserAnswerToChecklist(
+  let { checklist, answers, drafts, pendingTopic } = applyUserAnswerToChecklist(
     conceptState,
     formattedInput.value,
     mode
   )
+  drafts = mergeChecklistDrafts(conceptState.checklist_drafts ?? {}, drafts)
   if (history.length <= 1) {
     ;({ checklist, answers } = seedConceptChecklistFromMaterials(checklist, answers, project))
   }
   const substantiveUserTurns = countSubstantiveUserTurns(history)
-  ;({ checklist, answers } = autoFillRemainingChecklist(checklist, answers, mode, substantiveUserTurns))
+  ;({ checklist, answers } = autoFillRemainingChecklist(
+    checklist,
+    answers,
+    drafts,
+    mode,
+    substantiveUserTurns
+  ))
 
   if (detectChapterCountLoop(history)) {
-    ;({ checklist, answers } = forceCompleteChecklist(checklist, answers, mode))
+    ;({ checklist, answers } = forceCompleteChecklist(checklist, answers, drafts, mode))
   }
 
   const checklistDone = isChecklistComplete(checklist, mode)
   const inRevision = Boolean(conceptState.revision_mode)
   if (checklistDone && formattedInput.value && !inRevision) {
-    return buildConceptCompletionResponse(project, history, conversationState, checklist, answers)
+    const finalizedAnswers = resolveFinalConceptAnswers(checklist, answers, drafts, mode)
+    return buildConceptCompletionResponse(project, history, conversationState, checklist, finalizedAnswers)
   }
 
-  const checklistSupplement = buildChecklistPromptSupplement(checklist, answers, mode)
+  const checklistSupplement = buildChecklistPromptSupplement(checklist, answers, mode, {
+    drafts,
+    forcedNextTopic: pendingTopic ?? undefined,
+  })
   const materialSupplement = buildConceptMaterialPromptSupplement(project)
   const revisionSupplement = inRevision
     ? '\n\n【调整模式】用户从蓝图确认/预览返回，希望继续修改设定。请根据用户最新输入更新 checklist 与 checklist_answers；在用户明确表示满意、可以生成蓝图时再设置 ready_for_blueprint: true 与 is_complete: true。'
@@ -647,14 +672,18 @@ export async function converseConcept(
 
   const parsed = parseJsonBlock(raw) || {}
   const aiMessage = resolveAiMessage(raw, parsed)
-  let mergedChecklist = mergeChecklistFromModel(
-    checklist,
-    (parsed.conversation_state as ConceptConversationState | undefined)?.checklist
+  const modelState = (parsed.conversation_state ?? {}) as ConceptConversationState
+  let mergedChecklist = mergeChecklistFromModel(checklist, modelState.checklist)
+  let mergedAnswers = mergeChecklistAnswersFromModel(answers, modelState.checklist_answers)
+  let mergedDrafts = pruneDraftsForConfirmed(
+    mergeChecklistDrafts(conceptState.checklist_drafts ?? {}, drafts),
+    mergedChecklist,
+    mergedAnswers
   )
-  let mergedAnswers = { ...answers }
   ;({ checklist: mergedChecklist, answers: mergedAnswers } = autoFillRemainingChecklist(
     mergedChecklist,
     mergedAnswers,
+    mergedDrafts,
     mode,
     substantiveUserTurns
   ))
@@ -662,31 +691,36 @@ export async function converseConcept(
     ;({ checklist: mergedChecklist, answers: mergedAnswers } = forceCompleteChecklist(
       mergedChecklist,
       mergedAnswers,
+      mergedDrafts,
       mode
     ))
   }
   const uiControl = parseUiControl(parsed.ui_control, aiMessage)
-  const pendingTopic = resolvePendingTopicAfterResponse(aiMessage, mergedChecklist, mode)
+  const pendingTopicAfter = resolvePendingTopicAfterResponse(aiMessage, mergedChecklist, mode)
   const allChecklistDone = isChecklistComplete(mergedChecklist, mode)
 
   if (allChecklistDone && !inRevision) {
+    const finalizedAnswers = resolveFinalConceptAnswers(
+      mergedChecklist,
+      mergedAnswers,
+      mergedDrafts,
+      mode
+    )
     return buildConceptCompletionResponse(
       project,
       history,
       conversationState,
       mergedChecklist,
-      mergedAnswers
+      finalizedAnswers
     )
   }
 
   const nextConversationState: Record<string, unknown> = {
     ...conversationState,
-    ...(parsed.conversation_state && typeof parsed.conversation_state === 'object'
-      ? (parsed.conversation_state as Record<string, unknown>)
-      : {}),
     checklist: mergedChecklist,
     checklist_answers: mergedAnswers,
-    pending_topic: pendingTopic,
+    checklist_drafts: mergedDrafts,
+    pending_topic: pendingTopicAfter,
     revision_mode: inRevision,
   }
 
@@ -703,6 +737,12 @@ export async function converseConcept(
   if (ready) {
     nextConversationState.ready_for_blueprint = true
     nextConversationState.revision_mode = false
+    nextConversationState.checklist_answers = resolveFinalConceptAnswers(
+      mergedChecklist,
+      mergedAnswers,
+      mergedDrafts,
+      mode
+    )
   }
 
   const assistantPayload = JSON.stringify({
@@ -1043,8 +1083,10 @@ async function repairBlueprintOutline(
   if (hasUsableChapterOutline(blueprint)) return
 
   const mode = resolveWritingMode(project)
-  const { answers } = rebuildChecklistFromHistory(project.conversation_history ?? [], mode)
-  const expected = parseExpectedChapterCount(answers.chapter_count) ?? 12
+  const rebuilt = rebuildChecklistFromHistory(project.conversation_history ?? [], mode)
+  const expected = parseExpectedChapterCount(
+    resolveFinalConceptAnswers(rebuilt.checklist, rebuilt.answers, rebuilt.drafts, mode).chapter_count
+  ) ?? 12
 
   project.blueprint = blueprint
   const MAX_BATCH = 20
@@ -1086,8 +1128,14 @@ export async function generateBlueprint(
     .join('\n\n')
 
   const mode = resolveWritingMode(project)
-  const { checklist, answers } = rebuildChecklistFromHistory(project.conversation_history ?? [], mode)
-  const conceptSupplement = buildBlueprintConceptSupplement(checklist, answers, mode)
+  const rebuilt = rebuildChecklistFromHistory(project.conversation_history ?? [], mode)
+  const finalizedAnswers = resolveFinalConceptAnswers(
+    rebuilt.checklist,
+    rebuilt.answers,
+    rebuilt.drafts,
+    mode
+  )
+  const conceptSupplement = buildBlueprintConceptSupplement(rebuilt.checklist, finalizedAnswers, mode)
   const materialContext = buildConceptMaterialPromptSupplement(project)
 
   const blueprintUserContent = [
