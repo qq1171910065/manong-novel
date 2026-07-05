@@ -13,10 +13,13 @@
     <div class="novel-confirm-panel__message prose" v-html="renderedAiMessage" />
 
     <p class="novel-confirm-panel__hint">
-      我们已经收集了足够的信息来为您创建详细的小说蓝图。点击下方按钮开始生成您的专属故事大纲。
+      若还想改类型、人物或篇幅等设定，可先返回对话继续补充；满意后再生成蓝图。
     </p>
 
-    <div style="display:flex;justify-content:center;padding-top:8px;">
+    <div class="novel-confirm-panel__actions">
+      <button type="button" class="novel-btn novel-btn--text" @click="$emit('back')">
+        继续补充设定
+      </button>
       <button type="button" class="novel-btn novel-btn--primary" @click="$emit('generate')">
         <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true" width="16" height="16">
           <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
@@ -59,5 +62,13 @@ const renderedAiMessage = computed(() => marked.parse(props.aiMessage))
 
 .prose :deep(strong) {
   color: var(--text);
+}
+
+.novel-confirm-panel__actions {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-top: 8px;
 }
 </style>

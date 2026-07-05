@@ -39,6 +39,17 @@
 
     <div v-else class="text-center mt-8 space-x-4">
       <button
+        @click="emit('back-to-chat')"
+        class="bg-white text-indigo-700 font-bold py-3 px-8 rounded-full border border-indigo-200 hover:bg-indigo-50 transition-all duration-300 transform hover:scale-105"
+      >
+        <span class="flex items-center justify-center">
+          <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+            <path fill-rule="evenodd" d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" clip-rule="evenodd"></path>
+          </svg>
+          返回对话调整
+        </span>
+      </button>
+      <button
         @click="confirmRegenerate"
         class="bg-gray-200 text-gray-700 font-bold py-3 px-8 rounded-full hover:bg-gray-300 transition-all duration-300 transform hover:scale-105"
       >
@@ -88,6 +99,7 @@ const props = defineProps<Props>()
 const emit = defineEmits<{
   confirm: []
   regenerate: []
+  'back-to-chat': []
 }>()
 
 const isSaving = ref(false)

@@ -590,17 +590,21 @@ export async function converseConcept(
   }
 
   const checklistDone = isChecklistComplete(checklist, mode)
-  if (checklistDone && formattedInput.value) {
+  const inRevision = Boolean(conceptState.revision_mode)
+  if (checklistDone && formattedInput.value && !inRevision) {
     return buildConceptCompletionResponse(project, history, conversationState, checklist, answers)
   }
 
   const checklistSupplement = buildChecklistPromptSupplement(checklist, answers, mode)
   const materialSupplement = buildConceptMaterialPromptSupplement(project)
+  const revisionSupplement = inRevision
+    ? '\n\n【调整模式】用户从蓝图确认/预览返回，希望继续修改设定。请根据用户最新输入更新 checklist 与 checklist_answers；在用户明确表示满意、可以生成蓝图时再设置 ready_for_blueprint: true 与 is_complete: true。'
+    : ''
   const conceptSystem =
     mode === 'simple' ? `${conceptPrompt}\n${SIMPLE_CONCEPT_SUPPLEMENT}` : conceptPrompt
 
   const raw = await chat(
-    `${conceptSystem}\n${JSON_RESPONSE_INSTRUCTION}\n${checklistSupplement}${materialSupplement}`,
+    `${conceptSystem}\n${JSON_RESPONSE_INSTRUCTION}\n${checklistSupplement}${materialSupplement}${revisionSupplement}`,
     history.map((m) => ({ role: m.role, content: m.content })),
     projectChatOpts(project, {
       temperature: 0.8,
@@ -633,7 +637,7 @@ export async function converseConcept(
   const pendingTopic = resolvePendingTopicAfterResponse(aiMessage, mergedChecklist, mode)
   const allChecklistDone = isChecklistComplete(mergedChecklist, mode)
 
-  if (allChecklistDone) {
+  if (allChecklistDone && !inRevision) {
     return buildConceptCompletionResponse(
       project,
       history,
@@ -651,17 +655,22 @@ export async function converseConcept(
     checklist: mergedChecklist,
     checklist_answers: mergedAnswers,
     pending_topic: pendingTopic,
+    revision_mode: inRevision,
   }
 
   const explicitlyComplete =
-    Boolean(parsed.is_complete) || Boolean(parsed.ready_for_blueprint) || checklistDone
-  const ready =
-    allChecklistDone ||
-    Boolean(nextConversationState.ready_for_blueprint) ||
-    (explicitlyComplete && substantiveUserTurns >= 1)
+    Boolean(parsed.is_complete) ||
+    Boolean(parsed.ready_for_blueprint) ||
+    (checklistDone && !inRevision)
+  const ready = inRevision
+    ? Boolean(parsed.is_complete) || Boolean(parsed.ready_for_blueprint)
+    : allChecklistDone ||
+      Boolean(nextConversationState.ready_for_blueprint) ||
+      (explicitlyComplete && substantiveUserTurns >= 1)
 
   if (ready) {
     nextConversationState.ready_for_blueprint = true
+    nextConversationState.revision_mode = false
   }
 
   const assistantPayload = JSON.stringify({

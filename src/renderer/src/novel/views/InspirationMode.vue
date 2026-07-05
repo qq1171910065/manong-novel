@@ -192,6 +192,7 @@
           :ai-message="blueprintMessage"
           @confirm="handleConfirmBlueprint"
           @regenerate="handleRegenerateBlueprint"
+          @back-to-chat="resumeConceptRevision"
         />
       </div>
     </div>
@@ -288,9 +289,11 @@ const props = withDefaults(defineProps<{
   projectId?: string
   mode?: 'inspiration' | 'section-polish'
   polishContext?: SectionPolishContext
+  modalVisible?: boolean
 }>(), {
   embedded: false,
   mode: 'inspiration',
+  modalVisible: true,
 })
 
 const emit = defineEmits<{
@@ -624,8 +627,34 @@ const backFromSectionPolishConfirmation = () => {
 }
 
 const backToConversation = () => {
+  resumeConceptRevision()
+}
+
+const resumeConceptRevision = () => {
   showBlueprintConfirmation.value = false
-  currentUIControl.value = { ...DEFAULT_UI_CONTROL }
+  showBlueprint.value = false
+
+  novelStore.currentConversationState = {
+    ...(novelStore.currentConversationState || {}),
+    revision_mode: true,
+    ready_for_blueprint: false,
+  }
+
+  currentUIControl.value = {
+    type: 'text_input',
+    placeholder: '说说你想调整的方向，例如类型、主角、世界观或章节体量…',
+  }
+
+  const hasResumeHint = chatMessages.value.some((m) => m.type === 'ai' && m.content.includes('继续调整设定'))
+  if (!hasResumeHint) {
+    chatMessages.value.push({
+      id: randomUUID(),
+      content: '好的，我们可以继续调整设定。请告诉我你想修改哪些部分；调整满意后我会再次引导你生成蓝图。',
+      type: 'ai',
+      streamStatus: 'done',
+    })
+  }
+  void scrollToBottom()
 }
 
 const startConversation = async () => {
@@ -1170,6 +1199,12 @@ const handleUserInput = async (userInput: any) => {
     if (response.is_complete && response.ready_for_blueprint) {
       confirmationMessage.value = resolveDisplayAiMessage(response.ai_message)
       currentUIControl.value = { ...DEFAULT_UI_CONTROL }
+      if (novelStore.currentConversationState?.revision_mode) {
+        novelStore.currentConversationState = {
+          ...novelStore.currentConversationState,
+          revision_mode: false,
+        }
+      }
       showBlueprintConfirmation.value = true
     } else if (response.is_complete) {
       await handleGenerateBlueprint()
@@ -1239,6 +1274,9 @@ const handleConfirmBlueprint = async () => {
   try {
     await novelStore.saveBlueprint(completedBlueprint.value)
     if (props.embedded) {
+      showBlueprint.value = false
+      completedBlueprint.value = null
+      blueprintMessage.value = ''
       emit('blueprint-saved')
       emit('close')
       return
@@ -1273,6 +1311,25 @@ const bootstrapProject = async (projectId: string) => {
     await startConversationForProject(projectId)
   }
 }
+
+const refreshEmbeddedSession = async (projectId: string) => {
+  if (showBlueprint.value && completedBlueprint.value) return
+  await novelStore.loadProject(projectId, true)
+  const hasHistory = (novelStore.currentProject?.conversation_history?.length ?? 0) > 0
+  if (hasHistory) {
+    await restoreConversation(projectId)
+  }
+}
+
+watch(
+  () => props.modalVisible,
+  (visible, wasVisible) => {
+    if (!props.embedded || isPolishMode.value || !props.projectId) return
+    if (visible && wasVisible === false) {
+      void refreshEmbeddedSession(props.projectId)
+    }
+  }
+)
 
 onMounted(async () => {
   void loadChatModels()

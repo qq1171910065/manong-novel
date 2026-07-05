@@ -88,6 +88,7 @@ onUnmounted(() => {
             :mode="mode"
             :polish-context="polishContext ?? undefined"
             embedded
+            :modal-visible="show"
             @close="emit('close')"
             @blueprint-saved="emit('blueprint-saved')"
             @section-polish-applied="emit('section-polish-applied', $event)"

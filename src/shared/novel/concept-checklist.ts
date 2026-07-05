@@ -58,6 +58,8 @@ export interface ConceptConversationState {
   checklist_answers?: ConceptChecklistAnswers
   pending_topic?: ConceptChecklistKey | null
   ready_for_blueprint?: boolean
+  /** 用户从蓝图确认/预览返回，继续补充设定 */
+  revision_mode?: boolean
 }
 
 export function createEmptyChecklist(): ConceptChecklist {

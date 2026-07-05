@@ -17,8 +17,19 @@
             <span>{{ primaryActionLabel }}</span>
           </button>
 
-          <div v-if="canOpenAiAssistant" class="detail-sidebar-actions">
+          <div v-if="canOpenAiAssistant || canOpenInspirationChat" class="detail-sidebar-actions">
             <button
+              v-if="canOpenInspirationChat"
+              type="button"
+              class="detail-sidebar-action detail-sidebar-action--inspiration"
+              :disabled="isPrimaryActionBusy || aiAssistantBusy || isWritingDeskLocked"
+              @click="openInspirationChat"
+            >
+              <MessageCircle :size="15" aria-hidden="true" />
+              <span>灵感对话</span>
+            </button>
+            <button
+              v-if="canOpenAiAssistant"
               type="button"
               class="detail-sidebar-action detail-sidebar-action--ai"
               :class="{ 'is-busy': aiAssistantBusy }"
@@ -29,6 +40,7 @@
               <span>{{ aiAssistantBusy ? 'AI 处理中' : 'AI 助手' }}</span>
             </button>
             <button
+              v-if="canOpenAiAssistant"
               type="button"
               class="detail-sidebar-action detail-sidebar-action--reinspire"
               :disabled="isPrimaryActionBusy || aiAssistantBusy || isWritingDeskLocked"
@@ -224,6 +236,7 @@ import {
   Pause,
   Sparkles,
   RefreshCw,
+  MessageCircle,
   Plus,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
@@ -557,6 +570,13 @@ const canOpenAiAssistant = computed(() => {
   const project = novel.value
   if (!project) return false
   return !needsInspirationConversation(project)
+})
+
+const canOpenInspirationChat = computed(() => {
+  if (props.isAdmin || isContentLocked.value) return false
+  const project = novel.value
+  if (!project || isTxtImportPending(project)) return false
+  return (project.conversation_history?.length ?? 0) > 0
 })
 
 const aiAssistantBusy = computed(() => isAiAssistantBusy(projectId))
@@ -929,6 +949,15 @@ const openAiAssistant = async (options?: {
   if (!ctx) return
   inspirationModalMode.value = 'section-polish'
   polishContext.value = ctx
+  showInspirationModal.value = true
+}
+
+const openInspirationChat = async () => {
+  await ensureProjectLoaded()
+  const project = novel.value
+  if (!project) return
+  inspirationModalMode.value = 'inspiration'
+  polishContext.value = null
   showInspirationModal.value = true
 }
 
