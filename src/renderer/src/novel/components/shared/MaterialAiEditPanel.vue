@@ -6,6 +6,7 @@ import ConversationInput from '@renderer/novel/components/ConversationInput.vue'
 import {
   buildFieldAiSuggestion,
   runMaterialAiEdit,
+  runMaterialFieldOptimize,
   type MaterialAiEditResult,
 } from '@renderer/services/novel/material-library-ai-edit'
 import {
@@ -72,10 +73,29 @@ watch(
     if ((!props.show && !props.column) || !field || field === prev) return
     chatHistory.value.push({
       role: 'ai',
-      content: `已聚焦「${getMaterialFieldLabel(field)}」。你可以直接描述想怎么改，或点击「一键优化」。`,
+      content: `已聚焦「${getMaterialFieldLabel(field)}」。优化时会综合表单其他字段发散联想。你可以直接描述想怎么改，或点击「一键优化」。`,
     })
   }
 )
+
+async function runAiEdit(instruction: string, fieldOverride?: MaterialFocusField | null) {
+  const focusedField = fieldOverride ?? props.focusedField
+  if (focusedField && fieldOverride !== undefined) {
+    return runMaterialFieldOptimize({
+      type: props.type,
+      draft: props.draft,
+      field: focusedField,
+      instruction,
+    })
+  }
+  return runMaterialAiEdit({
+    type: props.type,
+    draft: props.draft,
+    instruction,
+    history: llmHistory.value.slice(0, -1),
+    focusedField,
+  })
+}
 
 async function onSubmit(userInput: { id: string; value: string } | null) {
   const instruction = userInput?.value?.trim()
@@ -87,13 +107,7 @@ async function onSubmit(userInput: { id: string; value: string } | null) {
   pendingResult.value = null
 
   try {
-    const result = await runMaterialAiEdit({
-      type: props.type,
-      draft: props.draft,
-      instruction,
-      history: llmHistory.value.slice(0, -1),
-      focusedField: props.focusedField,
-    })
+    const result = await runAiEdit(instruction)
 
     pendingResult.value = result
     const changeText =
@@ -102,7 +116,13 @@ async function onSubmit(userInput: { id: string; value: string } | null) {
         : '本次未产生字段变更'
     const aiMessage = `${result.explanation}\n\n${changeText}`
     chatHistory.value.push({ role: 'ai', content: aiMessage })
-    llmHistory.value.push({ role: 'assistant', content: JSON.stringify(result) })
+    llmHistory.value.push({
+      role: 'assistant',
+      content: JSON.stringify({
+        explanation: result.explanation,
+        changedFields: result.changedFields,
+      }),
+    })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'AI 编辑失败'
     chatHistory.value.push({ role: 'ai', content: message })
@@ -123,9 +143,31 @@ function dismissPending() {
   pendingResult.value = null
 }
 
-function askFieldSuggestion() {
-  if (!props.focusedField) return
-  void onSubmit({ id: 'suggest', value: buildFieldAiSuggestion(props.focusedField) })
+async function askFieldSuggestion() {
+  if (!props.focusedField || loading.value || props.readonly) return
+  const instruction = buildFieldAiSuggestion(props.focusedField)
+  chatHistory.value.push({ role: 'user', content: instruction })
+  loading.value = true
+  pendingResult.value = null
+
+  try {
+    const result = await runAiEdit(instruction, props.focusedField)
+    pendingResult.value = result
+    const changeText =
+      result.changedFields.length > 0
+        ? `建议修改：${result.changedFields.join('、')}`
+        : '本次未产生字段变更'
+    chatHistory.value.push({
+      role: 'ai',
+      content: `${result.explanation}\n\n${changeText}`,
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'AI 优化失败'
+    chatHistory.value.push({ role: 'ai', content: message })
+    globalAlert.showError(message, 'AI 优化')
+  } finally {
+    loading.value = false
+  }
 }
 </script>
 
@@ -162,7 +204,7 @@ function askFieldSuggestion() {
 
     <div class="material-ai-panel__messages">
       <p v-if="chatHistory.length === 0" class="material-ai-panel__empty">
-        描述你想怎么改，例如「性格更阴郁」「文风改得更口语化」。支持多轮对话继续微调。
+        描述你想怎么改。聚焦某字段后，AI 会结合表单其他内容发散优化，支持多轮继续微调。
       </p>
       <ChatBubble
         v-for="(entry, index) in chatHistory"

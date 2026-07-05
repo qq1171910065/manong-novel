@@ -158,6 +158,7 @@ export async function chat(
     temperature?: number
     stream?: ChatStreamHandlers
     timeoutMs?: number
+    max_tokens?: number
     project?: ProjectModelPrefs | null
     statsProjectId?: string
     statsKind?: 'ai' | 'chapter'
@@ -269,7 +270,7 @@ export async function chat(
           reject(new Error(formatGatewayContentFilterError(err)))
         },
       },
-      { temperature, timeoutMs }
+      { temperature, timeoutMs, max_tokens: params?.max_tokens }
     )
       .then((cancel) => {
         cancelStream = cancel
