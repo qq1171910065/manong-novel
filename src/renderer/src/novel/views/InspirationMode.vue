@@ -296,7 +296,6 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   close: []
   'blueprint-saved': []
-  'blueprint-generating': []
   'section-polish-applied': [payload: SectionPolishApplyPayload]
 }>()
 
@@ -1201,11 +1200,6 @@ const handleGenerateBlueprint = async () => {
 }
 
 const handleStartBlueprintGeneration = async () => {
-  if (props.embedded) {
-    emit('blueprint-generating')
-    return
-  }
-
   showBlueprintConfirmation.value = false
   try {
     const response = await blueprintGen.run(() => novelStore.runBlueprintGeneration())

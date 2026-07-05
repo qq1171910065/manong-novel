@@ -23,7 +23,6 @@ const props = withDefaults(
 const emit = defineEmits<{
   close: []
   'blueprint-saved': []
-  'blueprint-generating': []
   'section-polish-applied': [payload: SectionPolishApplyPayload]
 }>()
 
@@ -91,7 +90,6 @@ onUnmounted(() => {
             embedded
             @close="emit('close')"
             @blueprint-saved="emit('blueprint-saved')"
-            @blueprint-generating="emit('blueprint-generating')"
             @section-polish-applied="emit('section-polish-applied', $event)"
           />
         </div>

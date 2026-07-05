@@ -134,8 +134,7 @@
       :polish-context="polishContext"
       :keep-mounted="canOpenAiAssistant || inspirationModalMode === 'inspiration'"
       @close="closeInspiration"
-      @blueprint-saved="closeInspiration"
-      @blueprint-generating="onBlueprintGenerating"
+      @blueprint-saved="onBlueprintSaved"
       @section-polish-applied="handleSectionPolishApplied"
     />
 
@@ -248,7 +247,6 @@ import { globalAlert } from '@renderer/novel/composables/useAlert'
 import { generateCoverImage, generateCharacterPortrait } from '@renderer/services/image-service'
 import { ensureLocalImageDataUrl } from '@renderer/services/image-storage'
 import {
-  formatBlueprintGenerationError,
   useBlueprintGeneration,
   LONG_TASK_NO_TOTAL_TIMEOUT,
 } from '@renderer/novel/composables/useBlueprintGeneration'
@@ -485,7 +483,9 @@ const generationOverlayText = computed(() => {
 })
 
 const showGenerationOverlay = computed(
-  () => showBlueprintGenerating.value || showImportParsing.value
+  () =>
+    (showBlueprintGenerating.value || showImportParsing.value) &&
+    !showInspirationModal.value
 )
 
 const isCurrentProjectAutoWriteRunning = computed(() => autoWrite.isProjectActive(projectId))
@@ -1013,7 +1013,18 @@ const handleSectionPolishApplied = async (payload: SectionPolishApplyPayload) =>
 const closeInspiration = () => {
   showInspirationModal.value = false
   inspirationModalMode.value = 'inspiration'
+  polishContext.value = null
   refreshDetailSections()
+}
+
+const onBlueprintSaved = () => {
+  activityLogService.logBlueprintGenerate(
+    projectId,
+    overviewMeta.title || novel.value?.title || '未命名作品'
+  )
+  activeSection.value = 'overview'
+  globalAlert.showSuccess('蓝图已生成。可在各 Tab 使用「AI 助手」继续调整设定。', '生成成功')
+  closeInspiration()
 }
 
 watch(activeSection, () => {
@@ -1050,31 +1061,6 @@ const refreshDetailSections = () => {
   void loadSection('chapters', true)
   void loadSection('world_setting', true)
   void loadSection('relationships', true)
-}
-
-const onBlueprintGenerating = async () => {
-  showInspirationModal.value = false
-  try {
-    await ensureProjectLoaded()
-    const response = await blueprintGen.run(() => novelStore.runBlueprintGeneration())
-    await novelStore.saveBlueprint(response.blueprint)
-    activityLogService.logBlueprintGenerate(
-      projectId,
-      overviewMeta.title || novel.value?.title || '未命名作品'
-    )
-    refreshDetailSections()
-    globalAlert.showSuccess('蓝图已生成。可在各 Tab 使用「AI 助手」继续调整设定。', '生成成功')
-  } catch (error) {
-    if (isAbortError(error)) {
-      globalAlert.showSuccess('已取消蓝图生成', '已取消')
-      return
-    }
-    console.error('生成蓝图失败:', error)
-    globalAlert.showError(formatBlueprintGenerationError(error), '生成失败')
-    inspirationModalMode.value = 'inspiration'
-    polishContext.value = null
-    showInspirationModal.value = true
-  }
 }
 
 const cancelGenerationOverlay = () => {
