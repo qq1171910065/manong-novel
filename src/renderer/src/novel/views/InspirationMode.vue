@@ -41,6 +41,7 @@
           v-if="!isPolishMode"
           :mode="projectWritingMode"
           :conversation-state="novelStore.currentConversationState"
+          :is-refining="isChatRequestInFlight"
         />
         <div
           class="novel-chat-panel"
@@ -288,10 +289,7 @@ import {
 } from '@renderer/services/gateway-api'
 import { DEFAULT_SYSTEM_ROLE_MODEL_ID } from '@shared/gateway/constants'
 import { resolveWritingMode } from '@shared/novel/writing-mode'
-import {
-  previewConceptStateAfterUserInput,
-  rebuildFullConceptStateFromHistory,
-} from '@shared/novel/concept-checklist'
+import { rebuildFullConceptStateFromHistory } from '@shared/novel/concept-checklist'
 import { NButton, NModal } from '@renderer/ui'
 
 interface ChatMessage {
@@ -1175,11 +1173,6 @@ const handleUserInput = async (userInput: any) => {
         content: userInput.value,
         type: 'user',
       })
-      novelStore.currentConversationState = previewConceptStateAfterUserInput(
-        novelStore.currentConversationState,
-        userInput.value,
-        projectWritingMode.value
-      )
       currentUIControl.value = { ...LOADING_UI_CONTROL }
       await scrollToBottom()
     }

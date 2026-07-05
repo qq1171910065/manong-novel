@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
   applyUserAnswerToChecklist,
+  composeConceptBriefFromAnswers,
   extractMultiTopicHintsFromMessage,
   isRefinedConceptAnswer,
   mergeChecklistAnswersFromModel,
-  previewConceptStateAfterUserInput,
-  resolveChecklistDisplayEntry,
+  mergeConceptBriefFromModel,
+  resolveConceptBriefForDisplay,
   resolveFinalConceptAnswers,
+  resolveFinalConceptBrief,
 } from './concept-checklist'
 
 describe('extractMultiTopicHintsFromMessage', () => {
@@ -58,24 +60,56 @@ describe('mergeChecklistAnswersFromModel', () => {
   })
 })
 
-describe('resolveChecklistDisplayEntry', () => {
-  it('原话不入已完善，显示整理中', () => {
-    const entry = resolveChecklistDisplayEntry('spark', {
-      checklist: { spark: true },
-      checklist_answers: { spark: '一个侦探' },
-      checklist_drafts: { spark: '一个侦探' },
-    })
-    expect(entry.status).toBe('draft')
+describe('mergeConceptBriefFromModel', () => {
+  it('模型输出优先于旧综述', () => {
+    const merged = mergeConceptBriefFromModel('旧概念', '近未来赛博朋克侦探故事，主角能品尝谎言')
+    expect(merged).toContain('品尝谎言')
   })
 
-  it('精炼摘要显示已完善', () => {
-    const entry = resolveChecklistDisplayEntry('spark', {
-      checklist: { spark: true },
-      checklist_answers: {
+  it('模型未输出时保留旧综述', () => {
+    const merged = mergeConceptBriefFromModel('已有概念综述', undefined)
+    expect(merged).toBe('已有概念综述')
+  })
+})
+
+describe('composeConceptBriefFromAnswers', () => {
+  it('从精炼摘要拼合连贯综述', () => {
+    const brief = composeConceptBriefFromAnswers(
+      {
         spark: '私家侦探能品尝谎言，每句假话会在舌尖留下独特风味',
+        genre_tone: '近未来赛博朋克黑色幽默',
       },
-    })
-    expect(entry.status).toBe('confirmed')
+      'full'
+    )
+    expect(brief).toContain('品尝谎言')
+    expect(brief).toContain('赛博朋克')
+  })
+})
+
+describe('resolveConceptBriefForDisplay', () => {
+  it('空状态提示等待 AI 整合', () => {
+    const display = resolveConceptBriefForDisplay({}, 'full')
+    expect(display.status).toBe('empty')
+    expect(display.brief).toBe('')
+  })
+
+  it('展示 concept_brief 整体综述', () => {
+    const display = resolveConceptBriefForDisplay(
+      { concept_brief: '第一段\n\n第二段', checklist: { spark: true } },
+      'full'
+    )
+    expect(display.status).toBe('ready')
+    expect(display.brief).toContain('第一段')
+  })
+
+  it('整合中保留已有综述不展示用户输入', () => {
+    const display = resolveConceptBriefForDisplay(
+      { concept_brief: '已有 AI 综述' },
+      'full',
+      { isRefining: true }
+    )
+    expect(display.brief).toBe('已有 AI 综述')
+    expect(display.status).toBe('refining')
   })
 })
 
@@ -85,15 +119,8 @@ describe('isRefinedConceptAnswer', () => {
   })
 })
 
-describe('previewConceptStateAfterUserInput', () => {
-  it('发送后立即更新 drafts', () => {
-    const next = previewConceptStateAfterUserInput({}, '我想写赛博朋克侦探', 'full')
-    expect(next.checklist_drafts?.genre_tone || next.checklist_drafts?.spark).toBeTruthy()
-  })
-})
-
 describe('resolveFinalConceptAnswers', () => {
-  it('完成时用 drafts 兜底', () => {
+  it('完成时为缺失项生成占位摘要', () => {
     const checklist = {
       spark: true,
       genre_tone: false,
@@ -106,12 +133,27 @@ describe('resolveFinalConceptAnswers', () => {
       working_title: false,
       chapter_count: false,
     }
-    const answers = resolveFinalConceptAnswers(
-      checklist,
-      {},
-      { spark: '记忆可以被交易的城市里，一名清道夫发现了自己的过去被标价出售' },
+    const answers = resolveFinalConceptAnswers(checklist, {}, {}, 'full')
+    expect(answers.spark).toContain('核心火花')
+  })
+})
+
+describe('resolveFinalConceptBrief', () => {
+  it('优先使用 concept_brief', () => {
+    const brief = resolveFinalConceptBrief(
+      { concept_brief: '整体故事概念' },
+      { spark: '分项摘要' },
       'full'
     )
-    expect(answers.spark).toContain('记忆')
+    expect(brief).toBe('整体故事概念')
+  })
+
+  it('无 brief 时从精炼 answers 兜底', () => {
+    const brief = resolveFinalConceptBrief(
+      {},
+      { spark: '私家侦探能品尝谎言，每句假话会在舌尖留下独特风味' },
+      'full'
+    )
+    expect(brief).toContain('品尝谎言')
   })
 })

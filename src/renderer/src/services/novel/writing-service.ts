@@ -93,12 +93,15 @@ import {
   mergeChecklistAnswersFromModel,
   mergeChecklistDrafts,
   mergeChecklistFromModel,
+  composeConceptBriefFromAnswers,
+  mergeConceptBriefFromModel,
   normalizeChecklist,
   parseExpectedChapterCount,
   pruneDraftsForConfirmed,
   rebuildChecklistFromHistory,
   requiredChecklistKeys,
   resolveFinalConceptAnswers,
+  resolveFinalConceptBrief,
   resolvePendingTopicAfterResponse,
   type ConceptChecklistKey,
   type ConceptConversationState,
@@ -392,8 +395,9 @@ IMPORTANT: 你的回复必须是合法的 JSON 对象，并严格包含以下字
     "placeholder": "string"
   },
   "conversation_state": {
+    "concept_brief": "2-5段整体故事概念综述，整合全部已知设定，连贯 prose",
     "checklist": { "spark": true, "genre_tone": false },
-    "checklist_answers": { "spark": "精炼摘要，1-2句" }
+    "checklist_answers": { "spark": "内部结构化备份" }
   },
   "is_complete": false
 }
@@ -401,10 +405,9 @@ ui_control 规则：
 - ai_message 中不要重复列出 A/B/C 选项文字，选项只放在 ui_control.options 里
 - 根据对话需要灵活决定 ui_control.type：开放性问题用 text_input；需要用户从若干方向中选一个用 single_choice；允许多选组合（如类型混搭、多重特质）用 multiple_choice
 - options 数量与内容应贴合当前问题，2-8 个均可，不要机械凑满固定数量；id 用简短序号即可
-- conversation_state.checklist：同步勾选已确认项（键名：spark/genre_tone/prose_style/protagonist/central_conflict/antagonist/inciting_incident/core_theme/working_title/chapter_count）
-- conversation_state.checklist_answers：**每轮必填且须完整**。对所有已勾选 ✓ 的项输出精炼摘要（1-2 句）；用户一句透露多项设定时须同时更新多项；**禁止粘贴用户原话**；左侧设定面板直接展示
-- 若用户补充了已确认项的新细节，应**合并进** checklist_answers 对应条目，而非重复追问
-- 示例：{"spark":"能品尝谎言的私家侦探，谎言会在舌尖留下独特风味","genre_tone":"近未来赛博朋克黑色侦探，霓虹雨夜"}
+- conversation_state.concept_brief：**每轮必填**。对照整段对话**整体改写**故事概念（2-5 段连贯 prose，像策划案梗概）。这是用户左侧唯一可见的设定板：禁止粘贴用户原话、禁止问答式分条罗列
+- conversation_state.checklist / checklist_answers：内部进度与结构化备份，每轮同步更新；用户可见内容只在 concept_brief 中体现
+- 用户补充或修改设定时，应合并进 concept_brief 整体叙述，而非另起一条问答记录
 不要输出额外的文本或解释。
 `
 
@@ -564,8 +567,8 @@ function mergeConceptStateFromHistory(
   return {
     ...conceptState,
     checklist: mergedChecklist,
+    concept_brief: conceptState.concept_brief,
     checklist_answers: mergeChecklistAnswersFromModel(rebuilt.answers, conceptState.checklist_answers),
-    checklist_drafts: mergeChecklistDrafts(rebuilt.drafts, conceptState.checklist_drafts ?? {}),
     pending_topic: conceptState.pending_topic ?? rebuilt.pendingTopic ?? null,
   }
 }
@@ -575,11 +578,18 @@ function buildConceptCompletionResponse(
   history: ConversationMessage[],
   conversationState: Record<string, unknown>,
   checklist: ReturnType<typeof normalizeChecklist>,
-  answers: Record<string, string | undefined>
+  answers: Record<string, string | undefined>,
+  mode: ReturnType<typeof resolveWritingMode>
 ): ConverseResponse {
   const aiMessage = buildAutoCompletionMessage(answers)
+  const conceptBrief = resolveFinalConceptBrief(
+    conversationState as ConceptConversationState,
+    answers,
+    mode
+  )
   const nextConversationState: Record<string, unknown> = {
     ...conversationState,
+    concept_brief: conceptBrief,
     checklist,
     checklist_answers: answers,
     pending_topic: null,
@@ -644,7 +654,14 @@ export async function converseConcept(
   const inRevision = Boolean(conceptState.revision_mode)
   if (checklistDone && formattedInput.value && !inRevision) {
     const finalizedAnswers = resolveFinalConceptAnswers(checklist, answers, drafts, mode)
-    return buildConceptCompletionResponse(project, history, conversationState, checklist, finalizedAnswers)
+    return buildConceptCompletionResponse(
+      project,
+      history,
+      conversationState,
+      checklist,
+      finalizedAnswers,
+      mode
+    )
   }
 
   const checklistSupplement = buildChecklistPromptSupplement(checklist, answers, mode, {
@@ -711,15 +728,21 @@ export async function converseConcept(
       history,
       conversationState,
       mergedChecklist,
-      finalizedAnswers
+      finalizedAnswers,
+      mode
     )
+  }
+
+  let mergedBrief = mergeConceptBriefFromModel(conceptState.concept_brief, modelState.concept_brief)
+  if (!mergedBrief) {
+    mergedBrief = composeConceptBriefFromAnswers(mergedAnswers, mode)
   }
 
   const nextConversationState: Record<string, unknown> = {
     ...conversationState,
+    concept_brief: mergedBrief,
     checklist: mergedChecklist,
     checklist_answers: mergedAnswers,
-    checklist_drafts: mergedDrafts,
     pending_topic: pendingTopicAfter,
     revision_mode: inRevision,
   }
@@ -741,6 +764,11 @@ export async function converseConcept(
       mergedChecklist,
       mergedAnswers,
       mergedDrafts,
+      mode
+    )
+    nextConversationState.concept_brief = resolveFinalConceptBrief(
+      { ...(conversationState as ConceptConversationState), concept_brief: mergedBrief },
+      nextConversationState.checklist_answers as Record<string, string | undefined>,
       mode
     )
   }

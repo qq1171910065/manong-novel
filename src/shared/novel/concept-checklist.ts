@@ -57,13 +57,16 @@ export type ConceptChecklistAnswers = Partial<Record<ConceptChecklistKey, string
 export type ConceptChecklistDrafts = Partial<Record<ConceptChecklistKey, string>>
 
 export interface ConceptConversationState {
+  /** 左侧故事概念板：AI 每轮对照整段对话整体改写的设定综述（用户可见） */
+  concept_brief?: string
+  /** 内部清单进度，驱动 AI 收集，不对用户展示为分步表单 */
   checklist?: Partial<ConceptChecklist>
+  /** 内部结构化摘要，供蓝图生成；不对用户展示 */
   checklist_answers?: ConceptChecklistAnswers
-  /** 从用户发言中提取的原始线索，供 AI 本轮综合进 checklist_answers */
+  /** 仅本轮 prompt 用的线索，不持久化、不展示 */
   checklist_drafts?: ConceptChecklistDrafts
   pending_topic?: ConceptChecklistKey | null
   ready_for_blueprint?: boolean
-  /** 用户从蓝图确认/预览返回，继续补充设定 */
   revision_mode?: boolean
 }
 
@@ -307,9 +310,9 @@ export function buildChecklistPromptSupplement(
 ${lines.join('\n')}
 
 所有必填项已完成。请：
-1. 在 conversation_state.checklist_answers 中为**每一项**输出最终精炼摘要（禁止原话粘贴）
-2. 输出简短总结性收尾，设置 is_complete: true
-3. 不要再提出新的收集问题
+1. 在 conversation_state.concept_brief 输出**完整故事概念综述**（2-5 段，整合全部已知设定，像策划案梗概；禁止问答式罗列或粘贴用户原话）
+2. 同步输出完整的 checklist 与 checklist_answers（内部用，勿在 concept_brief 中重复分条抄录）
+3. 输出简短总结性收尾，设置 is_complete: true
 `
   }
 
@@ -322,9 +325,10 @@ ${lines.join('\n')}
 
 **本轮必须收集：${nextLabel}**
 - 禁止重复询问已标记 ✓ 的项（${completedLabels.join('、') || '无'}）
-- 若用户刚才的回答已覆盖「${nextLabel}」或多项设定，请**综合对话**更新 checklist 与 checklist_answers，并转向下一未完成项
-- checklist_answers 必须是**精炼摘要**（每项 1-2 句，像策划案条目），禁止粘贴用户原话；左侧设定面板会直接展示 checklist_answers
-- 在 conversation_state 中回传 checklist 与 checklist_answers
+- 对话是整体构思，不是分步填表：每轮必须用 conversation_state.concept_brief **整体改写**故事概念综述（整合全部已知信息，2-5 段连贯 prose）
+- concept_brief 是用户左侧唯一可见的设定板：**禁止粘贴用户原话、禁止问答式罗列**
+- 同步更新 checklist / checklist_answers（内部进度与结构化备份，勿在 concept_brief 里逐条复读）
+- 若用户一句透露多项设定，须同时更新 concept_brief 与 checklist
 `
 }
 
@@ -453,65 +457,116 @@ export function synthesizeAnswersFromDrafts(
   return result
 }
 
-export type ChecklistDisplayStatus = 'confirmed' | 'draft' | 'empty'
-
-export function resolveChecklistDisplayEntry(
-  key: ConceptChecklistKey,
-  state?: ConceptConversationState | null
-): { text: string; status: ChecklistDisplayStatus } {
-  const checklist = normalizeChecklist(state?.checklist)
-  const answer = state?.checklist_answers?.[key]?.trim()
-  const draft = state?.checklist_drafts?.[key]?.trim()
-
-  if (answer && isRefinedConceptAnswer(answer, draft)) {
-    return { text: answer, status: 'confirmed' }
-  }
-  if (draft) {
-    return { text: draft, status: 'draft' }
-  }
-  if (answer) {
-    return { text: answer, status: 'draft' }
-  }
-  if (checklist[key]) {
-    return { text: '已确认，待 AI 整理摘要…', status: 'draft' }
-  }
-  return { text: '', status: 'empty' }
-}
-
-/** 用户发送后、AI 回复前：乐观更新设定板 */
-export function previewConceptStateAfterUserInput(
-  state: ConceptConversationState | null | undefined,
-  userValue: string | null | undefined,
+/** 内部进度（不展示分项内容） */
+export function countConceptCompleteness(
+  checklist: ConceptChecklist,
   mode: WritingMode
-): ConceptConversationState {
-  const base = state ?? {}
-  const preview = applyUserAnswerToChecklist(base, userValue, mode)
+): { completed: number; total: number; percent: number } {
+  const required = requiredChecklistKeys(mode)
+  const completed = required.filter((key) => checklist[key]).length
+  const total = required.length
   return {
-    ...base,
-    checklist: preview.checklist,
-    checklist_answers: preview.answers,
-    checklist_drafts: mergeChecklistDrafts(base.checklist_drafts ?? {}, preview.drafts),
-    pending_topic: preview.pendingTopic ?? base.pending_topic ?? null,
+    completed,
+    total,
+    percent: total > 0 ? Math.round((completed / total) * 100) : 0,
   }
 }
 
-/** 蓝图生成 / 对话完成时：合并 AI 摘要与对话线索 */
+export function mergeConceptBriefFromModel(base: string | undefined, modelRaw?: unknown): string {
+  const next = typeof modelRaw === 'string' ? modelRaw.trim() : ''
+  if (next) return next
+  return base?.trim() || ''
+}
+
+/** 从 AI 精炼的结构化摘要拼合综述（仅兜底，不用用户原话） */
+export function composeConceptBriefFromAnswers(
+  answers: ConceptChecklistAnswers,
+  mode: WritingMode
+): string {
+  const paragraphs: string[] = []
+
+  const spark = answers.spark?.trim()
+  const genre = answers.genre_tone?.trim()
+  const style = answers.prose_style?.trim()
+  const protagonist = answers.protagonist?.trim()
+  const conflict = answers.central_conflict?.trim()
+  const antagonist = answers.antagonist?.trim()
+  const inciting = answers.inciting_incident?.trim()
+  const theme = answers.core_theme?.trim()
+  const title = answers.working_title?.trim()
+  const scope = answers.chapter_count?.trim()
+
+  if (spark) paragraphs.push(spark)
+  if (genre || style) {
+    paragraphs.push([genre, style].filter(Boolean).join('写作风格上，'))
+  }
+  if (protagonist) paragraphs.push(`主角：${protagonist}`)
+  if (conflict || antagonist) {
+    paragraphs.push([conflict, antagonist ? `对立面：${antagonist}` : ''].filter(Boolean).join('；'))
+  }
+  if (inciting) paragraphs.push(`催化事件：${inciting}`)
+  if (theme) paragraphs.push(`核心主题：${theme}`)
+  if (title) paragraphs.push(`暂定书名：${title}`)
+  if (scope) paragraphs.push(`预期篇幅：${scope}`)
+
+  if (paragraphs.length) return paragraphs.join('\n\n')
+
+  const lines = requiredChecklistKeys(mode)
+    .map((key) => answers[key]?.trim())
+    .filter((line): line is string => Boolean(line && isRefinedConceptAnswer(line)))
+  return lines.join('\n\n')
+}
+
+export type ConceptBriefDisplayStatus = 'empty' | 'refining' | 'ready'
+
+export function resolveConceptBriefForDisplay(
+  state: ConceptConversationState | null | undefined,
+  mode: WritingMode,
+  options?: { isRefining?: boolean }
+): {
+  brief: string
+  status: ConceptBriefDisplayStatus
+  completeness: ReturnType<typeof countConceptCompleteness>
+} {
+  const checklist = normalizeChecklist(state?.checklist)
+  const completeness = countConceptCompleteness(checklist, mode)
+  const brief = state?.concept_brief?.trim() || ''
+
+  if (options?.isRefining) {
+    return {
+      brief,
+      status: brief ? 'refining' : 'refining',
+      completeness,
+    }
+  }
+  if (brief) {
+    return { brief, status: 'ready', completeness }
+  }
+  return { brief: '', status: 'empty', completeness }
+}
+
+export function resolveFinalConceptBrief(
+  state: ConceptConversationState,
+  answers: ConceptChecklistAnswers,
+  mode: WritingMode
+): string {
+  const brief = state.concept_brief?.trim()
+  if (brief) return brief
+  return composeConceptBriefFromAnswers(answers, mode)
+}
+
+/** 蓝图生成 / 对话完成时：仅合并 AI 精炼摘要，不用用户原话兜底 */
 export function resolveFinalConceptAnswers(
   checklist: ConceptChecklist,
   answers: ConceptChecklistAnswers,
-  drafts: ConceptChecklistDrafts,
+  _drafts: ConceptChecklistDrafts,
   mode: WritingMode
 ): ConceptChecklistAnswers {
   const result = { ...answers }
   for (const key of requiredChecklistKeys(mode)) {
     if (!checklist[key]) continue
     const current = result[key]?.trim()
-    if (current && isRefinedConceptAnswer(current, drafts[key])) continue
-    const draft = drafts[key]?.trim()
-    if (draft) {
-      result[key] = draft.length <= 160 ? draft : `${draft.slice(0, 157)}…`
-      continue
-    }
+    if (current && isRefinedConceptAnswer(current)) continue
     if (!current) {
       result[key] = `（${CONCEPT_CHECKLIST_LABELS[key]}已在对话中确认）`
     }
@@ -631,8 +686,10 @@ export function parseExpectedChapterCount(raw: string | null | undefined): numbe
 export function buildBlueprintConceptSupplement(
   checklist: ConceptChecklist,
   answers: ConceptChecklistAnswers,
-  mode: WritingMode
+  mode: WritingMode,
+  conceptBrief?: string
 ): string {
+  const brief = conceptBrief?.trim()
   const lines = requiredChecklistKeys(mode)
     .filter((key) => checklist[key] || answers[key])
     .map((key) => `- ${CONCEPT_CHECKLIST_LABELS[key]}：${answers[key]?.trim() || '（对话中已确认）'}`)
@@ -642,9 +699,15 @@ export function buildBlueprintConceptSupplement(
     ? `chapter_outline 必须包含 ${expectedChapters} 章（chapter_number 从 1 连续到 ${expectedChapters}），每章必须有 title、summary、target_word_count。`
     : '必须输出完整 chapter_outline（每章含 title、summary、target_word_count），数量与对话中确认的篇幅一致。'
 
+  const conceptBody = brief
+    ? brief
+    : lines.length
+      ? lines.join('\n')
+      : '（详见下方对话历史）'
+
   return `
-## 灵感对话已确认的核心设定（生成蓝图时必须完整体现）
-${lines.length ? lines.join('\n') : '（详见下方对话历史）'}
+## 灵感对话已整合的故事概念（生成蓝图时必须完整体现）
+${conceptBody}
 
 ## 硬性输出要求
 - full_synopsis 必须写完整故事梗概与主线情节，不可留空
@@ -685,9 +748,6 @@ export function rebuildChecklistFromHistory(
         }
         if (cs?.checklist_answers) {
           Object.assign(answers, mergeChecklistAnswersFromModel(answers, cs.checklist_answers))
-        }
-        if (cs?.checklist_drafts) {
-          Object.assign(drafts, mergeChecklistDrafts(drafts, cs.checklist_drafts))
         }
       } catch {
         // ignore malformed assistant payloads
@@ -752,9 +812,27 @@ export function rebuildFullConceptStateFromHistory(
   return {
     checklist: rebuilt.checklist,
     checklist_answers: rebuilt.answers,
-    checklist_drafts: rebuilt.drafts,
+    concept_brief: resolveConceptBriefFromHistory(history, rebuilt.answers, mode),
     pending_topic: rebuilt.pendingTopic,
     revision_mode: revisionMode,
     ready_for_blueprint: readyForBlueprint,
   }
+}
+
+function resolveConceptBriefFromHistory(
+  history: Array<{ role: string; content: string }>,
+  answers: ConceptChecklistAnswers,
+  mode: WritingMode
+): string {
+  let brief = ''
+  for (const msg of history) {
+    if (msg.role !== 'assistant') continue
+    try {
+      const payload = JSON.parse(msg.content) as { conversation_state?: ConceptConversationState }
+      brief = mergeConceptBriefFromModel(brief, payload.conversation_state?.concept_brief)
+    } catch {
+      // ignore
+    }
+  }
+  return brief || composeConceptBriefFromAnswers(answers, mode)
 }
