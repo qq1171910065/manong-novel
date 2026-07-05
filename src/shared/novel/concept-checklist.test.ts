@@ -7,6 +7,7 @@ import {
   mergeChecklistAnswersFromModel,
   mergeConceptBriefFromModel,
   enrichBlueprintFromConcept,
+  buildFallbackRelationshipsFromConcept,
   resolveConceptBriefForDisplay,
   resolveFinalConceptAnswers,
   resolveFinalConceptBrief,
@@ -173,5 +174,21 @@ describe('enrichBlueprintFromConcept', () => {
     expect(enriched.title).toBe('谎言品尝师')
     expect(enriched.full_synopsis).toContain('品尝谎言')
     expect(enriched.one_sentence_summary).toContain('品尝谎言')
+  })
+})
+
+describe('buildFallbackRelationshipsFromConcept', () => {
+  it('从主角与对立面生成核心关系', () => {
+    const relationships = buildFallbackRelationshipsFromConcept(
+      [
+        { name: '林默', identity: '私家侦探' },
+        { name: '顾深', identity: '幕后黑手' },
+      ],
+      { central_conflict: '林默追查顾深操控的谎言网络' }
+    )
+    expect(relationships.length).toBeGreaterThanOrEqual(1)
+    expect(relationships[0]?.character_from).toBe('林默')
+    expect(relationships[0]?.character_to).toBe('顾深')
+    expect(relationships[0]?.description).toContain('谎言')
   })
 })

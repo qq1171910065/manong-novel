@@ -213,6 +213,7 @@ function scoreBlueprintCandidate(obj: Record<string, unknown>): number {
   if (typeof target.full_synopsis === 'string' && target.full_synopsis.trim()) score += 25
   if (typeof target.one_sentence_summary === 'string' && target.one_sentence_summary.trim()) score += 8
   if (Array.isArray(target.characters)) score += 10 + Math.min(target.characters.length, 10)
+  if (Array.isArray(target.relationships)) score += 8 + Math.min(target.relationships.length, 6)
   if (Array.isArray(target.chapter_outline)) score += 15 + Math.min(target.chapter_outline.length, 50)
   if (target.world_setting && typeof target.world_setting === 'object') score += 5
   if (typeof target.genre === 'string' && target.genre.trim()) score += 3

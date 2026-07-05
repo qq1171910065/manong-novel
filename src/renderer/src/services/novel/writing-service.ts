@@ -1230,15 +1230,18 @@ async function repairBlueprintOutline(
   options?: {
     signal?: AbortSignal
     conceptBrief?: string
+    expectedChapters?: number
     onProgress?: (message: string, percent: number) => void
   }
 ): Promise<void> {
   const mode = resolveWritingMode(project)
   const rebuilt = rebuildChecklistFromHistory(project.conversation_history ?? [], mode)
   const expected =
+    options?.expectedChapters ??
     parseExpectedChapterCount(
       resolveFinalConceptAnswers(rebuilt.checklist, rebuilt.answers, rebuilt.drafts, mode).chapter_count
-    ) ?? 12
+    ) ??
+    12
 
   if (!needsOutlineRepair(blueprint, expected)) return
 
@@ -1285,24 +1288,63 @@ async function repairBlueprintOutline(
   }
 }
 
-function buildFallbackChapterOutline(blueprint: Blueprint, expected: number): Blueprint['chapter_outline'] {
+function buildFallbackChapterOutline(
+  blueprint: Blueprint,
+  expected: number
+): NonNullable<Blueprint['chapter_outline']> {
   const synopsis = blueprint.full_synopsis?.trim() || blueprint.one_sentence_summary?.trim() || ''
   const sentences = synopsis.split(/[。！？\n]+/).map((part) => part.trim()).filter((part) => part.length >= 4)
   const titleBase = blueprint.title?.trim() || '故事'
   const chapters: NonNullable<Blueprint['chapter_outline']> = []
+  const total = Math.max(1, expected)
 
-  for (let i = 1; i <= expected; i += 1) {
-    const snippet = sentences[(i - 1) % Math.max(sentences.length, 1)] || ''
+  for (let i = 1; i <= total; i += 1) {
+    const progress = total > 1 ? (i - 1) / (total - 1) : 0
+    let phaseSummary = ''
+    if (progress < 0.2) {
+      phaseSummary = '引入世界观与人物，抛出核心悬念'
+    } else if (progress < 0.45) {
+      phaseSummary = '冲突升级，主角被迫做出关键抉择'
+    } else if (progress < 0.75) {
+      phaseSummary = '局势逆转，真相逐步浮出水面'
+    } else if (progress < 0.92) {
+      phaseSummary = '高潮对决，旧有矛盾总爆发'
+    } else {
+      phaseSummary = '收束主线，回应核心主题'
+    }
+    const snippet = sentences[Math.min(sentences.length - 1, Math.floor(progress * sentences.length))] || ''
     chapters.push({
       chapter_number: i,
-      title: i === 1 ? `${titleBase}·开端` : i === expected ? `${titleBase}·终章` : `${titleBase}·第${i}章`,
+      title:
+        i === 1
+          ? `${titleBase}·序章`
+          : i === total
+            ? `${titleBase}·终章`
+            : `${titleBase}·第${i}章`,
       summary:
-        snippet ||
-        `第 ${i} 章：承接前文，推进「${titleBase}」主线，展开新的冲突与人物成长。`,
+        snippet && sentences.length >= total
+          ? snippet
+          : `第 ${i} 章：${phaseSummary}，推进「${titleBase}」主线。`,
       target_word_count: 3500,
     })
   }
   return chapters
+}
+
+/** 将章节大纲补齐到预期章数（保留已有 AI 章节，空缺处用梗概分段兜底） */
+function ensureChapterOutlineCount(blueprint: Blueprint, expected: number): void {
+  const target = Math.max(1, expected)
+  const existing = (blueprint.chapter_outline ?? []).filter(
+    (item) => item?.title?.trim() || item?.summary?.trim()
+  )
+  const byNumber = new Map<number, NonNullable<Blueprint['chapter_outline']>[number]>()
+  for (const chapter of existing) {
+    const num = chapter.chapter_number
+    if (num >= 1 && num <= target) byNumber.set(num, chapter)
+  }
+
+  const fallback = buildFallbackChapterOutline(blueprint, target)
+  blueprint.chapter_outline = fallback.map((chapter) => byNumber.get(chapter.chapter_number) ?? chapter)
 }
 
 export interface BlueprintGenerationProgress {
@@ -1350,6 +1392,7 @@ export async function generateBlueprint(
     `请根据灵感对话生成完整小说蓝图 JSON。硬性要求：
 - title、one_sentence_summary、full_synopsis 均不可为空
 - chapter_outline 必须包含 ${expectedChapters} 章（chapter_number 从 1 到 ${expectedChapters}），每章含 title、summary、target_word_count
+- relationships 至少 2 条（character_from、character_to、description 均不可为空）
 - 仅输出 JSON 对象，不要附加解释或 markdown 代码块`,
     historyText ? `## 灵感对话摘要\n${historyText}` : '',
   ]
@@ -1394,7 +1437,6 @@ export async function generateBlueprint(
     if (!blueprint.world_setting) blueprint.world_setting = {}
     blueprint.world_setting.key_locations = []
     blueprint.world_setting.factions = []
-    blueprint.relationships = []
   }
 
   const previousBlueprint = project.blueprint
@@ -1426,12 +1468,18 @@ export async function generateBlueprint(
   await repairBlueprintOutline(project, blueprint, {
     signal: options?.signal,
     conceptBrief,
+    expectedChapters,
     onProgress: (message, percent) => report('repairing_outline', message, percent),
   })
 
-  if (countUsableChapterOutline(blueprint) === 0) {
-    report('repairing_outline', '正在根据故事梗概生成基础章节大纲…', 88)
-    blueprint.chapter_outline = buildFallbackChapterOutline(blueprint, expectedChapters)
+  const usableBeforeEnsure = countUsableChapterOutline(blueprint)
+  if (usableBeforeEnsure < expectedChapters) {
+    report(
+      'repairing_outline',
+      `补齐章节至 ${expectedChapters} 章（当前 ${usableBeforeEnsure} 章）…`,
+      88
+    )
+    ensureChapterOutlineCount(blueprint, expectedChapters)
     project.blueprint = blueprint
   }
 

@@ -74,13 +74,13 @@ export const SIMPLE_CONCEPT_SUPPLEMENT = `
 - 选项按实际上下文灵活给出，不凑固定数量；能开放回答时用 text_input
 `
 
-/** 简易模式：蓝图生成时省略地点/阵营/关系 */
+/** 简易出书模式：蓝图生成时省略地点/阵营，保留核心关系 */
 export const SIMPLE_BLUEPRINT_SUPPLEMENT = `
 ## 简易出书模式
 本项目为快速出书。生成 JSON 时务必遵守：
 - world_setting.core_rules 保留 1-2 句概括即可
 - world_setting.key_locations 与 world_setting.factions 必须为 []
-- relationships 必须为 []
+- relationships 至少 1 条核心关系（主角与对立面），含 character_from、character_to、description
 - characters 保留 2-4 名核心角色，字段精简但可用
 - chapter_outline 必须完整，每章 title 与 summary 清晰可写
 `

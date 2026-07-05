@@ -717,7 +717,7 @@ export function enrichBlueprintFromConcept(
     const characters: Record<string, string>[] = []
     if (answers.protagonist?.trim()) {
       characters.push({
-        name: '主角',
+        name: inferCharacterDisplayName(answers.protagonist, '主角'),
         identity: answers.protagonist.trim(),
         personality: '',
         goals: answers.central_conflict?.trim() || '',
@@ -727,7 +727,7 @@ export function enrichBlueprintFromConcept(
     }
     if (answers.antagonist?.trim()) {
       characters.push({
-        name: '对立面',
+        name: inferCharacterDisplayName(answers.antagonist, '对立面'),
         identity: answers.antagonist.trim(),
         personality: '',
         goals: '',
@@ -749,9 +749,94 @@ export function enrichBlueprintFromConcept(
   if (!Array.isArray(ws.factions)) ws.factions = []
   result.world_setting = ws
 
-  if (!Array.isArray(result.relationships)) result.relationships = []
+  const characters = Array.isArray(result.characters)
+    ? (result.characters as Array<Record<string, string>>)
+    : []
+  if (characters.length) {
+    result.characters = characters.map((char, index) => ({
+      ...char,
+      name:
+        char.name?.trim() ||
+        inferCharacterDisplayName(char.identity, index === 0 ? '主角' : `角色${index + 1}`),
+    }))
+  }
+
+  const validRelationships = (Array.isArray(result.relationships) ? result.relationships : []).filter(
+    (rel) =>
+      rel &&
+      typeof rel === 'object' &&
+      String((rel as { character_from?: string }).character_from ?? '').trim() &&
+      String((rel as { character_to?: string }).character_to ?? '').trim()
+  )
+  if (validRelationships.length) {
+    result.relationships = validRelationships
+  } else {
+    result.relationships = buildFallbackRelationshipsFromConcept(
+      (result.characters as Array<{ name?: string; identity?: string }>) ?? [],
+      answers
+    )
+  }
 
   return result
+}
+
+/** 从角色描述推断简短称呼（用于关系网节点名） */
+export function inferCharacterDisplayName(text: string | undefined, fallback: string): string {
+  const trimmed = text?.trim()
+  if (!trimmed) return fallback
+  const named = trimmed.match(/^([^\s，,。；：:（(【\[]]{1,8})/)?.[1]?.trim()
+  if (named && named.length >= 2) return named
+  if (trimmed.length <= 10) return trimmed
+  return fallback
+}
+
+/** 从角色与概念设定生成基础人物关系网 */
+export function buildFallbackRelationshipsFromConcept(
+  characters: Array<{ name?: string; identity?: string }>,
+  answers: ConceptChecklistAnswers
+): Array<{ character_from: string; character_to: string; description: string }> {
+  const relationships: Array<{ character_from: string; character_to: string; description: string }> =
+    []
+  const names = characters
+    .map((char, index) => char.name?.trim() || inferCharacterDisplayName(char.identity, `角色${index + 1}`))
+    .filter(Boolean)
+
+  if (names.length >= 2) {
+    relationships.push({
+      character_from: names[0]!,
+      character_to: names[1]!,
+      description:
+        answers.central_conflict?.trim() ||
+        answers.antagonist?.trim() ||
+        '故事核心对立关系，推动主线冲突不断升级',
+    })
+  }
+
+  if (names.length >= 3) {
+    relationships.push({
+      character_from: names[0]!,
+      character_to: names[2]!,
+      description: '与主角命运交织的次要关系，影响关键抉择与情节走向',
+    })
+    relationships.push({
+      character_from: names[1]!,
+      character_to: names[2]!,
+      description: '对立阵营与中间人物的博弈关系，制造张力与转折',
+    })
+  }
+
+  if (!relationships.length && answers.protagonist?.trim() && answers.antagonist?.trim()) {
+    const hero = inferCharacterDisplayName(answers.protagonist, '主角')
+    const villain = inferCharacterDisplayName(answers.antagonist, '对立面')
+    relationships.push({
+      character_from: hero,
+      character_to: villain,
+      description:
+        answers.central_conflict?.trim() || '贯穿全书的核心对立与冲突关系',
+    })
+  }
+
+  return relationships
 }
 
 /** 蓝图生成时注入的结构化设定摘要 */
@@ -784,6 +869,8 @@ ${conceptBody}
 ## 硬性输出要求
 - full_synopsis 必须写完整故事梗概与主线情节，不可留空
 - ${chapterRequirement}
+- characters 至少 2 名核心角色（主角 + 对立面/关键配角），字段完整
+- relationships 至少 2 条，覆盖主角与对立面/关键人物，每条含 character_from、character_to、description（不可为空数组）
 - 角色、世界观、关系网须与上述设定一致
 `
 }
