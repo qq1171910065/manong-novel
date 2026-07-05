@@ -159,6 +159,44 @@ export function parseLlmJsonObject(rawText: string): Record<string, unknown> | n
   return null
 }
 
+function tryParseJsonArray(text: string): unknown[] | null {
+  try {
+    const parsed = JSON.parse(text)
+    return Array.isArray(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+/** 从 LLM 回复中解析 chapter_outline 数组（兼容纯数组或嵌套对象） */
+export function parseChapterOutlineFromLlm(rawText: string): unknown[] | null {
+  const parsed = parseLlmJsonObject(rawText)
+  if (parsed) {
+    const nested = parsed.chapter_outline ?? parsed.chapters
+    if (Array.isArray(nested)) return nested
+  }
+
+  const cleaned = removeThinkTags(rawText)
+  const candidates = [cleaned, unwrapMarkdownJson(cleaned)]
+
+  for (const candidate of candidates) {
+    const trimmed = candidate.trim()
+    const asArray = tryParseJsonArray(trimmed)
+    if (asArray) return asArray
+
+    const bracketIdx = trimmed.indexOf('[')
+    if (bracketIdx >= 0) {
+      const closing = trimmed.lastIndexOf(']')
+      if (closing > bracketIdx) {
+        const slice = tryParseJsonArray(trimmed.slice(bracketIdx, closing + 1))
+        if (slice) return slice
+      }
+    }
+  }
+
+  return null
+}
+
 function extractAiMessageByRegex(rawText: string): string | null {
   const match = rawText.match(/"ai_message"\s*:\s*"((?:\\.|[^"\\])*)"/s)
   if (!match?.[1]) return null

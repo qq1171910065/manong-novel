@@ -275,6 +275,7 @@ import { globalAlert } from '@renderer/novel/composables/useAlert'
 import {
   formatBlueprintGenerationError,
   useBlueprintGeneration,
+  LONG_TASK_NO_TOTAL_TIMEOUT,
 } from '@renderer/novel/composables/useBlueprintGeneration'
 import { resolveDisplayAiMessage } from '@renderer/services/novel/json-utils'
 import { randomUUID } from '@renderer/utils/id'
@@ -1261,13 +1262,15 @@ const handleStartBlueprintGeneration = async () => {
   showBlueprintConfirmation.value = false
   blueprintProgressMessage.value = ''
   try {
-    const response = await blueprintGen.run(() =>
-      novelStore.runBlueprintGeneration({
-        onProgress: (progress) => {
-          blueprintGen.setProgress(progress.percent)
-          blueprintProgressMessage.value = progress.message
-        },
-      })
+    const response = await blueprintGen.run(
+      () =>
+        novelStore.runBlueprintGeneration({
+          onProgress: (progress) => {
+            blueprintGen.setProgress(progress.percent)
+            blueprintProgressMessage.value = progress.message
+          },
+        }),
+      { totalTimeoutMs: LONG_TASK_NO_TOTAL_TIMEOUT }
     )
     handleBlueprintGenerated(response)
   } catch (error) {

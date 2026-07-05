@@ -15,6 +15,7 @@ import type { GatewayTokenUsage } from '@renderer/services/gateway-api'
 import { projectStatsService } from '@renderer/services/project-stats-service'
 import { resolveProjectChatModelId, type ProjectModelPrefs } from './project-model'
 import {
+  parseChapterOutlineFromLlm,
   parseLlmJsonObject,
   pickBestLlmPayload,
   resolveDisplayAiMessage,
@@ -99,6 +100,7 @@ import {
   parseExpectedChapterCount,
   pruneDraftsForConfirmed,
   rebuildChecklistFromHistory,
+  rebuildFullConceptStateFromHistory,
   requiredChecklistKeys,
   resolveFinalConceptAnswers,
   resolveFinalConceptBrief,
@@ -109,6 +111,9 @@ import {
 
 const STREAM_TIMEOUT_MS = 120_000
 const LONG_STREAM_TIMEOUT_MS = 1_800_000
+const OUTLINE_GENERATION_TIMEOUT_MS = 300_000
+const OUTLINE_REPAIR_BATCH_SIZE = 6
+const OUTLINE_REPAIR_MAX_BATCHES = 12
 const STREAM_EMIT_INTERVAL_MS = 48
 
 export type ChatStreamStatus = 'pending' | 'streaming' | 'done'
@@ -1097,38 +1102,85 @@ function normalizeBlueprintPayload(parsed: Record<string, unknown>): Blueprint {
   return blueprint
 }
 
-function hasUsableChapterOutline(blueprint: Blueprint | null | undefined): boolean {
+function countUsableChapterOutline(blueprint: Blueprint | null | undefined): number {
   const list = blueprint?.chapter_outline
-  if (!Array.isArray(list) || list.length === 0) return false
-  return list.some((item) => Boolean(item?.title?.trim() || item?.summary?.trim()))
+  if (!Array.isArray(list)) return 0
+  return list.filter((item) => Boolean(item?.title?.trim() || item?.summary?.trim())).length
+}
+
+function needsOutlineRepair(blueprint: Blueprint, expected: number): boolean {
+  const usable = countUsableChapterOutline(blueprint)
+  if (usable === 0) return true
+  return usable < expected
+}
+
+function buildOutlineGenerationPayload(
+  project: NovelProject,
+  startChapter: number,
+  numChapters: number
+): Record<string, unknown> {
+  const blueprint = project.blueprint ?? {}
+  const { chapter_outline: _ignored, ...rest } = blueprint
+  const existingOutline = (blueprint.chapter_outline ?? []).filter(
+    (item) => item?.title?.trim() || item?.summary?.trim()
+  )
+
+  return {
+    novel_blueprint: existingOutline.length ? { ...rest, chapter_outline: existingOutline } : rest,
+    wait_to_generate: {
+      start_chapter: startChapter,
+      num_chapters: numChapters,
+    },
+  }
 }
 
 async function repairBlueprintOutline(
   project: NovelProject,
   blueprint: Blueprint,
-  options?: { signal?: AbortSignal }
+  options?: {
+    signal?: AbortSignal
+    onProgress?: (message: string, percent: number) => void
+  }
 ): Promise<void> {
-  if (hasUsableChapterOutline(blueprint)) return
-
   const mode = resolveWritingMode(project)
   const rebuilt = rebuildChecklistFromHistory(project.conversation_history ?? [], mode)
-  const expected = parseExpectedChapterCount(
-    resolveFinalConceptAnswers(rebuilt.checklist, rebuilt.answers, rebuilt.drafts, mode).chapter_count
-  ) ?? 12
+  const expected =
+    parseExpectedChapterCount(
+      resolveFinalConceptAnswers(rebuilt.checklist, rebuilt.answers, rebuilt.drafts, mode).chapter_count
+    ) ?? 12
+
+  if (!needsOutlineRepair(blueprint, expected)) return
 
   project.blueprint = blueprint
-  const MAX_BATCH = 20
-  let startChapter = 1
+  let startChapter = countUsableChapterOutline(blueprint) + 1
+  if (startChapter < 1) startChapter = 1
 
-  while ((project.blueprint.chapter_outline?.length ?? 0) < expected && startChapter <= expected) {
-    const currentCount = project.blueprint.chapter_outline?.length ?? 0
-    const remaining = expected - currentCount
-    const batchSize = Math.min(MAX_BATCH, remaining)
-    const before = currentCount
-    await generateChapterOutline(project, startChapter, batchSize, options)
-    const after = project.blueprint.chapter_outline?.length ?? 0
-    if (after <= before) break
-    startChapter = after + 1
+  for (let batchIndex = 0; batchIndex < OUTLINE_REPAIR_MAX_BATCHES; batchIndex += 1) {
+    const usable = countUsableChapterOutline(project.blueprint)
+    if (usable >= expected) break
+
+    const remaining = expected - usable
+    const batchSize = Math.min(OUTLINE_REPAIR_BATCH_SIZE, remaining)
+    const before = usable
+    const percent = 72 + Math.min(22, Math.round((usable / expected) * 22))
+    options?.onProgress?.(
+      `补全章节大纲（${usable}/${expected}）…`,
+      percent
+    )
+
+    const added = await generateChapterOutline(project, startChapter, batchSize, options)
+    let after = countUsableChapterOutline(project.blueprint)
+    if (after <= before && batchSize > 3) {
+      await generateChapterOutline(project, startChapter, 3, options)
+      after = countUsableChapterOutline(project.blueprint)
+    }
+    if (added <= 0 && after <= before) {
+      break
+    }
+
+    const nextStart = countUsableChapterOutline(project.blueprint) + 1
+    if (nextStart <= startChapter) break
+    startChapter = nextStart
   }
 
   if (Array.isArray(project.blueprint.chapter_outline)) {
@@ -1163,7 +1215,13 @@ export async function generateBlueprint(
     rebuilt.drafts,
     mode
   )
-  const conceptSupplement = buildBlueprintConceptSupplement(rebuilt.checklist, finalizedAnswers, mode)
+  const conceptState = rebuildFullConceptStateFromHistory(project.conversation_history ?? [], mode)
+  const conceptSupplement = buildBlueprintConceptSupplement(
+    rebuilt.checklist,
+    finalizedAnswers,
+    mode,
+    conceptState.concept_brief
+  )
   const materialContext = buildConceptMaterialPromptSupplement(project)
 
   const blueprintUserContent = [
@@ -1235,14 +1293,17 @@ export async function generateBlueprint(
   }
 
   report('repairing_outline', '检查并补全章节大纲…', 72)
-  await repairBlueprintOutline(project, blueprint, options)
+  await repairBlueprintOutline(project, blueprint, {
+    signal: options?.signal,
+    onProgress: (message, percent) => report('repairing_outline', message, percent),
+  })
   report('done', '蓝图生成完成', 96)
 
   project.blueprint = blueprint
   applyWordCountPlanToBlueprint(blueprint, mode)
   project.title = blueprint.title || project.title
 
-  const chapterCount = blueprint.chapter_outline?.length ?? 0
+  const chapterCount = countUsableChapterOutline(blueprint)
   const aiMessage =
     chapterCount > 0
       ? `蓝图已生成（含 ${chapterCount} 章大纲）。你可以继续编辑或直接开始写作。`
@@ -1597,38 +1658,48 @@ export async function generateChapterOutline(
   startChapter: number,
   numChapters: number,
   options?: { signal?: AbortSignal }
-): Promise<NovelProject> {
+): Promise<number> {
+  const payload = buildOutlineGenerationPayload(project, startChapter, numChapters)
   const raw = await chat(
     outlinePrompt,
     [
       {
         role: 'user',
-        content: `基于以下蓝图，为第 ${startChapter} 章起连续 ${numChapters} 章生成 chapter_outline JSON 数组（chapter_number, title, summary, target_word_count）。相邻章节 target_word_count 应相对平稳。\n${JSON.stringify(project.blueprint ?? {}, null, 2)}`,
+        content: JSON.stringify(payload, null, 2),
       },
     ],
     projectChatOpts(project, {
       temperature: 0.6,
-      timeoutMs: LONG_STREAM_TIMEOUT_MS,
+      timeoutMs: OUTLINE_GENERATION_TIMEOUT_MS,
       signal: options?.signal,
+      pipelineStep: 'blueprint_generate',
+      pipelineLabel: `补全章节大纲 ${startChapter}-${startChapter + numChapters - 1}`,
     })
   )
 
-  const parsed = parseJsonBlock(raw)
-  const outline = (parsed?.chapter_outline || parsed?.chapters || parsed) as unknown
-  if (Array.isArray(outline)) {
-    if (!project.blueprint) project.blueprint = {}
-    const existing = project.blueprint.chapter_outline || []
-    const merged = [...existing]
-    for (const item of outline) {
-      const entry = item as { chapter_number: number; title: string; summary: string; target_word_count?: number }
-      const idx = merged.findIndex((c) => c.chapter_number === entry.chapter_number)
-      if (idx >= 0) merged[idx] = { ...merged[idx], ...entry }
-      else merged.push(entry)
-    }
+  const outline = parseChapterOutlineFromLlm(raw)
+  if (!Array.isArray(outline) || outline.length === 0) return 0
+
+  if (!project.blueprint) project.blueprint = {}
+  const existing = project.blueprint.chapter_outline || []
+  const merged = [...existing]
+  let added = 0
+
+  for (const item of outline) {
+    const entry = item as { chapter_number: number; title: string; summary: string; target_word_count?: number }
+    if (!entry?.chapter_number) continue
+    if (!entry.title?.trim() && !entry.summary?.trim()) continue
+    const idx = merged.findIndex((c) => c.chapter_number === entry.chapter_number)
+    if (idx >= 0) merged[idx] = { ...merged[idx], ...entry }
+    else merged.push(entry)
+    added += 1
+  }
+
+  if (added > 0) {
     project.blueprint.chapter_outline = merged.sort((a, b) => a.chapter_number - b.chapter_number)
     applyWordCountPlanToBlueprint(project.blueprint, resolveWritingMode(project))
   }
-  return project
+  return added
 }
 
 export async function optimizeChapter(

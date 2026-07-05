@@ -132,7 +132,10 @@ export function useBlueprintGeneration() {
 export function formatBlueprintGenerationError(error: unknown): string {
   const message = error instanceof Error ? error.message : '未知错误'
   if (/流式响应超时|timeout|超时/i.test(message)) {
-    return `生成失败：${message.includes('s 内无数据') ? message : '流式响应超时，请稍后重试'}`
+    if (/300|补全章节|outline/i.test(message)) {
+      return `章节大纲补全超时：${message}。可在蓝图预览中手动编辑章节，或稍后重试。`
+    }
+    return `生成失败：${message.includes('s 内无数据') ? message : '流式响应超时，蓝图章节较多时请耐心等待或稍后重试'}`
   }
   return `生成蓝图失败：${message}`
 }
