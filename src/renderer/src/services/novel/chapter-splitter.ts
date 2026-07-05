@@ -27,7 +27,17 @@ function normalizeText(content: string): string {
 function isLikelyChapterTitle(line: string): boolean {
   const trimmed = line.trim()
   if (!trimmed || trimmed.length > TITLE_MAX_LEN) return false
-  return CHAPTER_LINE_PATTERNS.some((re) => re.test(trimmed))
+  if (!CHAPTER_LINE_PATTERNS.some((re) => re.test(trimmed))) return false
+
+  // 避免正文「第三章他走进…」被误判为章节标题
+  const afterChapter = trimmed
+    .replace(/^\s*第[0-9零一二三四五六七八九十百千万]+\s*[章节卷回集]\s*/i, '')
+    .replace(/^\s*Chapter\s+\d+\s*/i, '')
+    .replace(/^\s*\d{1,4}\s*[、.．:：)\]]\s*/, '')
+  if (afterChapter.length > 28) return false
+  if (/[。！？!?…]/.test(afterChapter)) return false
+
+  return true
 }
 
 function findChapterMarkers(text: string): Array<{ index: number; title: string }> {
@@ -133,4 +143,85 @@ export function splitIntoChapters(content: string): ParsedChapter[] {
 
 export function chapterCountLabel(chapters: ParsedChapter[]): string {
   return `${chapters.length} 章`
+}
+
+const CN_DIGIT: Record<string, number> = {
+  零: 0,
+  一: 1,
+  二: 2,
+  三: 3,
+  四: 4,
+  五: 5,
+  六: 6,
+  七: 7,
+  八: 8,
+  九: 9,
+}
+
+/** 从章节标题行解析章号（阿拉伯数字或常见中文数字） */
+export function parseChapterNumberFromTitle(title: string): number | null {
+  const digitMatch = title.match(/第\s*(\d+)\s*[章节卷回集]/i)
+  if (digitMatch) return Number(digitMatch[1])
+
+  const cnMatch = title.match(/第\s*([零一二三四五六七八九十百千万]+)\s*[章节卷回集]/)
+  if (cnMatch) {
+    const raw = cnMatch[1]
+    if (raw === '十') return 10
+    if (raw.startsWith('十') && raw.length === 2 && CN_DIGIT[raw[1]] != null) {
+      return 10 + CN_DIGIT[raw[1]]
+    }
+    if (raw.endsWith('十') && raw.length === 2 && CN_DIGIT[raw[0]] != null) {
+      return CN_DIGIT[raw[0]] * 10
+    }
+    if (CN_DIGIT[raw] != null) return CN_DIGIT[raw]
+  }
+
+  const chapterMatch = title.match(/Chapter\s+(\d+)/i)
+  if (chapterMatch) return Number(chapterMatch[1])
+
+  const listMatch = title.match(/^(\d{1,4})\s*[、.．:：)\]]/)
+  if (listMatch) return Number(listMatch[1])
+
+  return null
+}
+
+export interface ExtractSingleChapterResult {
+  content: string
+  /** AI 输出被识别为多章，已截取本章 */
+  truncated: boolean
+  detectedChapters: number
+}
+
+/**
+ * 从 AI 单次输出中只保留目标章正文。
+ * 模型有时会连续写多章或插入「第 N 章」标题，导致单章字数虚高。
+ */
+export function extractSingleChapterContent(
+  content: string,
+  chapterNumber: number
+): ExtractSingleChapterResult {
+  const trimmed = content.trim()
+  if (!trimmed) {
+    return { content: trimmed, truncated: false, detectedChapters: 0 }
+  }
+
+  const chapters = splitIntoChapters(trimmed)
+  if (chapters.length <= 1) {
+    return { content: trimmed, truncated: false, detectedChapters: chapters.length }
+  }
+
+  const matched = chapters.find((chapter) => parseChapterNumberFromTitle(chapter.title) === chapterNumber)
+  if (matched?.content.trim()) {
+    return {
+      content: matched.content.trim(),
+      truncated: true,
+      detectedChapters: chapters.length,
+    }
+  }
+
+  return {
+    content: chapters[0].content.trim(),
+    truncated: true,
+    detectedChapters: chapters.length,
+  }
 }

@@ -1,9 +1,12 @@
 import { computed, nextTick, ref, watch, type ComputedRef, type Ref } from 'vue'
 import type { useNovelStore } from '@renderer/stores/novel'
 import {
+  buildBookPages,
   estimateCharsPerPage,
+  fromGlobalPageIndex,
   paginateChapterText,
   readingProgressService,
+  toGlobalPageIndex,
   type ReadingSettings,
 } from '@renderer/services/reading-settings'
 
@@ -12,6 +15,16 @@ export interface ReadableChapter {
   title: string
   content: string
 }
+
+export type ScrollBlock =
+  | { type: 'chapter-start'; chapterIndex: number; title: string; key: string }
+  | {
+      type: 'paragraph'
+      chapterIndex: number
+      paragraphIndex: number
+      text: string
+      key: string
+    }
 
 export interface UseReadingNavigationOptions {
   projectId: ComputedRef<string>
@@ -36,8 +49,9 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
   let autoScrollRaf: number | undefined
   let autoScrollLastTime = 0
   let autoScrollPausedUntil = 0
-  let autoScrollChapterLock = false
   let autoScrollDriving = false
+  let chapterChangeFromPageNav = false
+  let chapterChangeFromScroll = false
 
   const project = computed(() => options.novelStore.currentProject)
 
@@ -79,24 +93,86 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
     )
   })
 
+  const bookPages = computed(() => buildBookPages(readableChapters.value, charsPerPage.value))
+
+  const globalPageIndex = computed(() =>
+    toGlobalPageIndex(bookPages.value, chapterIndex.value, pageIndex.value)
+  )
+
   const pages = computed(() => {
     const chapter = currentChapter.value
     if (!chapter) return ['暂无章节内容']
     return paginateChapterText(chapter.content, charsPerPage.value)
   })
 
-  const currentPageText = computed(() => pages.value[pageIndex.value] ?? pages.value[0] ?? '')
+  const currentPageText = computed(() => {
+    if (isPageMode.value) {
+      return bookPages.value[globalPageIndex.value]?.text ?? pages.value[pageIndex.value] ?? ''
+    }
+    return pages.value[pageIndex.value] ?? pages.value[0] ?? ''
+  })
+
   const scrollChapterParagraphs = computed(() => {
     const chapter = currentChapter.value
     if (!chapter?.content) return ['暂无章节内容']
     return chapter.content.split(/\n+/).filter(Boolean)
   })
 
+  const scrollStreamRange = computed(() => {
+    const total = readableChapters.value.length
+    if (!total) return { start: 0, end: 0 }
+    return { start: 0, end: total - 1 }
+  })
+
+  const scrollBlocks = computed<ScrollBlock[]>(() => {
+    const chapters = readableChapters.value
+    if (!chapters.length) {
+      return [
+        {
+          type: 'paragraph',
+          chapterIndex: 0,
+          paragraphIndex: 0,
+          text: '暂无章节内容',
+          key: 'empty-0',
+        },
+      ]
+    }
+
+    const { start, end } = scrollStreamRange.value
+    const blocks: ScrollBlock[] = []
+
+    for (let ci = start; ci <= end; ci += 1) {
+      const chapter = chapters[ci]
+      if (!chapter) continue
+
+      blocks.push({
+        type: 'chapter-start',
+        chapterIndex: ci,
+        title: chapter.title,
+        key: `chapter-${ci}`,
+      })
+
+      const paragraphs = chapter.content
+        ? chapter.content.split(/\n+/).filter(Boolean)
+        : ['本章暂无正文，可在创作台继续写作。']
+
+      paragraphs.forEach((text, paragraphIndex) => {
+        blocks.push({
+          type: 'paragraph',
+          chapterIndex: ci,
+          paragraphIndex,
+          text,
+          key: `chapter-${ci}-p-${paragraphIndex}`,
+        })
+      })
+    }
+
+    return blocks
+  })
+
   const totalPages = computed(() => pages.value.length)
-  const canPrevPage = computed(() => pageIndex.value > 0 || chapterIndex.value > 0)
-  const canNextPage = computed(
-    () => pageIndex.value < totalPages.value - 1 || chapterIndex.value < readableChapters.value.length - 1
-  )
+  const canPrevPage = computed(() => globalPageIndex.value > 0)
+  const canNextPage = computed(() => globalPageIndex.value < bookPages.value.length - 1)
   const canPrevChapter = computed(() => chapterIndex.value > 0)
   const canNextChapter = computed(() => chapterIndex.value < readableChapters.value.length - 1)
 
@@ -121,6 +197,22 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
     el.scrollTop = value
   }
 
+  function applyGlobalPageIndex(nextGlobalIndex: number) {
+    const next = fromGlobalPageIndex(bookPages.value, nextGlobalIndex)
+    if (
+      next.chapterIndex === chapterIndex.value &&
+      next.pageIndex === pageIndex.value
+    ) {
+      return
+    }
+    chapterChangeFromPageNav = true
+    chapterIndex.value = next.chapterIndex
+    pageIndex.value = next.pageIndex
+    chapterChangeFromPageNav = false
+    persistProgress()
+    options.onReadingTurn()
+  }
+
   async function ensureChapterLoaded(chapter: ReadableChapter) {
     const current = project.value
     if (!current) return
@@ -140,6 +232,8 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
     const prev = chapters[current - 1]
     if (next) await ensureChapterLoaded(next)
     if (prev) await ensureChapterLoaded(prev)
+    const ahead = chapters[current + 2]
+    if (ahead) await ensureChapterLoaded(ahead)
   }
 
   function resetAutoTurn() {
@@ -195,31 +289,23 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
       autoScrollLastTime = now
 
       const step = (options.settings.value.autoScrollSpeed * deltaMs) / 1000
+      const maxScrollTop = el.scrollHeight - el.clientHeight
       const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - SCROLL_EDGE_THRESHOLD
 
       if (atBottom) {
-        if (autoScrollChapterLock) {
-          autoScrollRaf = requestAnimationFrame(tick)
-          return
-        }
-        if (canNextChapter.value) {
-          autoScrollChapterLock = true
-          nextChapter()
-          window.setTimeout(() => {
-            autoScrollChapterLock = false
-            autoScrollLastTime = 0
-          }, 320)
-        } else {
+        if (maxScrollTop <= 0) {
           stopAutoScroll()
           return
         }
-      } else {
-        autoScrollDriving = true
-        el.scrollTop = Math.min(el.scrollTop + step, el.scrollHeight - el.clientHeight)
-        queueMicrotask(() => {
-          autoScrollDriving = false
-        })
+        stopAutoScroll()
+        return
       }
+
+      autoScrollDriving = true
+      el.scrollTop = Math.min(el.scrollTop + step, maxScrollTop)
+      queueMicrotask(() => {
+        autoScrollDriving = false
+      })
 
       autoScrollRaf = requestAnimationFrame(tick)
     }
@@ -229,54 +315,82 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
 
   function prevPage() {
     if (options.ttsActive.value && !options.isTtsAdvancingPage()) options.stopTts()
-    if (pageIndex.value > 0) {
-      pageIndex.value -= 1
-      persistProgress()
-      options.onReadingTurn()
-      return
-    }
-    if (chapterIndex.value > 0) {
-      chapterIndex.value -= 1
-      pageIndex.value = Math.max(0, totalPages.value - 1)
-      persistProgress()
-      options.onReadingTurn()
-    }
+    if (!canPrevPage.value) return
+    applyGlobalPageIndex(globalPageIndex.value - 1)
   }
 
   function nextPage() {
     if (options.ttsActive.value && !options.isTtsAdvancingPage()) options.stopTts()
-    if (pageIndex.value < totalPages.value - 1) {
-      pageIndex.value += 1
-      persistProgress()
-      options.onReadingTurn()
+    if (!canNextPage.value) return
+    applyGlobalPageIndex(globalPageIndex.value + 1)
+  }
+
+  function scrollToChapter(targetIndex: number, behavior: ScrollBehavior = 'smooth') {
+    if (targetIndex < 0 || targetIndex >= readableChapters.value.length) return
+
+    if (isPageMode.value) {
+      const targetGlobal = bookPages.value.findIndex(
+        (page) => page.chapterIndex === targetIndex && page.pageIndex === 0
+      )
+      if (targetGlobal >= 0) applyGlobalPageIndex(targetGlobal)
       return
     }
-    if (chapterIndex.value < readableChapters.value.length - 1) {
-      chapterIndex.value += 1
+
+    const el = options.pageViewportRef.value
+    const marker = el?.querySelector(`[data-chapter-marker="${targetIndex}"]`)
+    if (el && marker) {
+      const viewportRect = el.getBoundingClientRect()
+      const markerRect = marker.getBoundingClientRect()
+      const top = markerRect.top - viewportRect.top + el.scrollTop
+      el.scrollTo({ top: Math.max(0, top), behavior })
+    }
+
+    if (targetIndex !== chapterIndex.value) {
+      chapterChangeFromScroll = true
+      chapterIndex.value = targetIndex
       pageIndex.value = 0
-      persistProgress()
-      options.onReadingTurn()
+      persistProgress(el?.scrollTop ?? 0)
+      chapterChangeFromScroll = false
     }
   }
 
-  function prevChapter() {
+  function prevChapter(behavior: ScrollBehavior = 'smooth') {
     if (!canPrevChapter.value) return
-    chapterIndex.value -= 1
-    pageIndex.value = 0
-    persistProgress(0)
+    scrollToChapter(chapterIndex.value - 1, behavior)
     options.onReadingTurn()
-    void nextTick().then(() => jumpScrollTop(0))
   }
 
-  function nextChapter() {
+  function nextChapter(behavior: ScrollBehavior = 'smooth') {
     if (!canNextChapter.value) return
-    chapterIndex.value += 1
-    pageIndex.value = 0
-    persistProgress(0)
+    scrollToChapter(chapterIndex.value + 1, behavior)
     options.onReadingTurn()
-    if (!options.isTtsAdvancingChapter()) {
-      void nextTick().then(() => jumpScrollTop(0))
-    }
+  }
+
+  function syncChapterFromScroll() {
+    if (isPageMode.value) return
+
+    const el = options.pageViewportRef.value
+    if (!el) return
+
+    const markers = el.querySelectorAll<HTMLElement>('[data-chapter-marker]')
+    if (!markers.length) return
+
+    const anchorTop = el.getBoundingClientRect().top + el.clientHeight * 0.22
+    let active = chapterIndex.value
+
+    markers.forEach((marker) => {
+      if (marker.getBoundingClientRect().top <= anchorTop) {
+        active = Number(marker.dataset.chapterMarker)
+      }
+    })
+
+    if (active === chapterIndex.value) return
+
+    chapterChangeFromScroll = true
+    chapterIndex.value = active
+    pageIndex.value = 0
+    persistProgress(el.scrollTop)
+    chapterChangeFromScroll = false
   }
 
   async function restoreProgress() {
@@ -294,13 +408,32 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
       await nextTick()
       const latest = readingProgressService.get(options.projectId.value)
       jumpScrollTop(latest?.scrollTop ?? 0)
+      syncChapterFromScroll()
+      return
     }
+
+    const restoredGlobal = toGlobalPageIndex(
+      bookPages.value,
+      chapterIndex.value,
+      pageIndex.value
+    )
+    const restored = fromGlobalPageIndex(bookPages.value, restoredGlobal)
+    chapterIndex.value = restored.chapterIndex
+    pageIndex.value = restored.pageIndex
   }
 
-  watch(chapterIndex, async (index) => {
-    const chapter = readableChapters.value[index]
+  watch(chapterIndex, async () => {
+    const chapter = readableChapters.value[chapterIndex.value]
     if (chapter) await ensureChapterLoaded(chapter)
     await prefetchAdjacentChapters()
+
+    if (chapterChangeFromPageNav || chapterChangeFromScroll) {
+      if (options.ttsActive.value && !options.isTtsAdvancingChapter()) {
+        options.stopTts()
+      }
+      return
+    }
+
     pageIndex.value = 0
     persistProgress(isPageMode.value ? undefined : 0)
     if (!isPageMode.value && !options.isTtsAdvancingChapter()) {
@@ -320,7 +453,12 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
       options.settings.value.interactionMode,
     ],
     () => {
-      if (isPageMode.value) pageIndex.value = 0
+      if (!isPageMode.value) return
+      const restored = fromGlobalPageIndex(bookPages.value, globalPageIndex.value)
+      chapterChangeFromPageNav = true
+      chapterIndex.value = restored.chapterIndex
+      pageIndex.value = restored.pageIndex
+      chapterChangeFromPageNav = false
     }
   )
 
@@ -336,9 +474,12 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
     currentChapter,
     isPageMode,
     charsPerPage,
+    bookPages,
+    globalPageIndex,
     pages,
     currentPageText,
     scrollChapterParagraphs,
+    scrollBlocks,
     totalPages,
     canPrevPage,
     canNextPage,
@@ -357,6 +498,8 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
     nextPage,
     prevChapter,
     nextChapter,
+    scrollToChapter,
+    syncChapterFromScroll,
     restoreProgress,
   }
 }

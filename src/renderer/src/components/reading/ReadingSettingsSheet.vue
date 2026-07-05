@@ -43,7 +43,10 @@ function setInteractionMode(mode: ReadingInteractionMode) {
   patchSettings({ interactionMode: mode })
 }
 
-function toggleSetting(key: 'alwaysOnTop' | 'autoTurn' | 'autoScroll' | 'bossKeyEnabled', current: boolean) {
+function toggleSetting(
+  key: 'alwaysOnTop' | 'autoTurn' | 'autoScroll' | 'bossKeyEnabled' | 'showChapterDividers' | 'pageTurnAnimation',
+  current: boolean
+) {
   patchSettings({ [key]: !current })
 }
 
@@ -221,6 +224,24 @@ function shortStyleLabel(label: string) {
           >
             <span>自动翻页</span>
             <i class="reader-switch" :class="{ 'is-on': settings.autoTurn }" />
+          </button>
+          <button
+            v-if="isPageMode"
+            type="button"
+            class="reader-sheet__toggle"
+            @click="toggleSetting('pageTurnAnimation', settings.pageTurnAnimation)"
+          >
+            <span>翻页动画</span>
+            <i class="reader-switch" :class="{ 'is-on': settings.pageTurnAnimation }" />
+          </button>
+          <button
+            v-if="!isPageMode"
+            type="button"
+            class="reader-sheet__toggle"
+            @click="toggleSetting('showChapterDividers', settings.showChapterDividers)"
+          >
+            <span>章节分隔线</span>
+            <i class="reader-switch" :class="{ 'is-on': settings.showChapterDividers }" />
           </button>
           <div v-if="isPageMode && settings.autoTurn" class="reader-sheet__row">
             <span>翻页间隔</span>

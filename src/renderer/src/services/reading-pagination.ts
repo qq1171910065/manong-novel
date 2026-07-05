@@ -46,6 +46,46 @@ function splitLongPage(text: string, charsPerPage: number): string[] {
   return pages.filter(Boolean)
 }
 
+export interface BookPage {
+  chapterIndex: number
+  pageIndex: number
+  text: string
+}
+
+export function buildBookPages(
+  chapters: Array<{ content: string }>,
+  charsPerPage: number
+): BookPage[] {
+  const pages: BookPage[] = []
+  chapters.forEach((chapter, chapterIndex) => {
+    const chapterPages = paginateChapterText(chapter.content, charsPerPage)
+    chapterPages.forEach((text, pageIndex) => {
+      pages.push({ chapterIndex, pageIndex, text })
+    })
+  })
+  return pages
+}
+
+export function toGlobalPageIndex(
+  bookPages: BookPage[],
+  chapterIndex: number,
+  pageIndex: number
+): number {
+  const found = bookPages.findIndex(
+    (page) => page.chapterIndex === chapterIndex && page.pageIndex === pageIndex
+  )
+  return found >= 0 ? found : 0
+}
+
+export function fromGlobalPageIndex(
+  bookPages: BookPage[],
+  globalIndex: number
+): { chapterIndex: number; pageIndex: number } {
+  const page = bookPages[globalIndex]
+  if (!page) return { chapterIndex: 0, pageIndex: 0 }
+  return { chapterIndex: page.chapterIndex, pageIndex: page.pageIndex }
+}
+
 export function estimateCharsPerPage(
   fontSize: number,
   lineHeight: number,

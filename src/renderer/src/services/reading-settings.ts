@@ -5,7 +5,14 @@ import {
   READING_TTS_VOICES,
 } from './reading-tts'
 
-export { estimateCharsPerPage, paginateChapterText } from './reading-pagination'
+export {
+  buildBookPages,
+  estimateCharsPerPage,
+  fromGlobalPageIndex,
+  paginateChapterText,
+  toGlobalPageIndex,
+  type BookPage,
+} from './reading-pagination'
 
 export type ReadingTheme = 'light' | 'dark' | 'sepia'
 export type ReadingInteractionMode = 'page' | 'scroll'
@@ -21,6 +28,8 @@ export interface ReadingSettings {
   autoTurnSeconds: number
   autoScroll: boolean
   autoScrollSpeed: number
+  showChapterDividers: boolean
+  pageTurnAnimation: boolean
   bossKeyEnabled: boolean
   bossKeyAccelerator: string
   ttsVoice: string
@@ -40,6 +49,8 @@ export const READING_DEFAULTS: ReadingSettings = {
   autoTurnSeconds: 12,
   autoScroll: false,
   autoScrollSpeed: 45,
+  showChapterDividers: false,
+  pageTurnAnimation: true,
   bossKeyEnabled: true,
   bossKeyAccelerator: 'Control+Shift+H',
   ttsVoice: READING_TTS_DEFAULT_VOICE,
@@ -64,6 +75,8 @@ function normalizeSettings(parsed: Partial<ReadingSettings>): ReadingSettings {
       15,
       120
     ),
+    showChapterDividers: parsed.showChapterDividers ?? READING_DEFAULTS.showChapterDividers,
+    pageTurnAnimation: parsed.pageTurnAnimation ?? READING_DEFAULTS.pageTurnAnimation,
     bossKeyEnabled: parsed.bossKeyEnabled ?? READING_DEFAULTS.bossKeyEnabled,
     bossKeyAccelerator:
       typeof parsed.bossKeyAccelerator === 'string' && parsed.bossKeyAccelerator.trim()

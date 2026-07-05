@@ -68,9 +68,11 @@ import {
   detectRepetitionIssues,
   extractBannedPhrases,
   formatRepetitionRewriteHint,
+  formatWordCountFeedback,
   hasSevereRepetition,
   sanitizeChapterContent,
 } from '@shared/novel/chapter-content-guard'
+import { extractSingleChapterContent } from './chapter-splitter'
 import {
   patchChapterGenProgress,
   setChapterGenProgress,
@@ -1563,10 +1565,28 @@ function buildChapterGenerationUserMessage(input: {
     input.priorEnding ? `上一章结尾片段（仅供衔接，禁止复述）：\n${input.priorEnding}` : '',
     input.styleHint ? `写作风格提示：${input.styleHint}` : '',
     input.rewriteHint || '',
+    `只写第 ${input.chapterNumber} 章正文；禁止写下一章内容，禁止输出「第 X 章」章节标题行。`,
     `请直接输出章节正文，不要输出 JSON 或解释。`,
   ]
     .filter(Boolean)
     .join('\n\n')
+}
+
+function normalizeGeneratedChapterContent(
+  raw: string,
+  chapterNumber: number,
+  priorContent: string | null
+): { content: string; multiChapterTruncated: boolean; detectedChapters: number } {
+  let sanitized = sanitizeChapterContent(raw, priorContent)
+  const extracted = extractSingleChapterContent(sanitized, chapterNumber)
+  if (extracted.truncated) {
+    sanitized = sanitizeChapterContent(extracted.content, priorContent)
+  }
+  return {
+    content: sanitized,
+    multiChapterTruncated: extracted.truncated,
+    detectedChapters: extracted.detectedChapters,
+  }
 }
 
 async function generateChapterDraft(
@@ -1727,7 +1747,15 @@ export async function generateChapterContent(
         },
       })
 
-      let sanitized = sanitizeChapterContent(content, priorContent)
+      let normalized = normalizeGeneratedChapterContent(content, chapterNumber, priorContent)
+      if (normalized.multiChapterTruncated) {
+        patchChapterGenProgress({
+          phase: 'processing',
+          message: `检测到 AI 连续写了 ${normalized.detectedChapters} 章，已截取第 ${chapterNumber} 章…`,
+        })
+      }
+
+      let sanitized = normalized.content
       if (hasSevereRepetition(sanitized, priorContent)) {
         const rewriteHint = formatRepetitionRewriteHint(sanitized, priorContent)
         if (rewriteHint) {
@@ -1751,8 +1779,36 @@ export async function generateChapterContent(
             }),
             { signal: options?.signal }
           )
-          sanitized = sanitizeChapterContent(content, priorContent)
+          normalized = normalizeGeneratedChapterContent(content, chapterNumber, priorContent)
+          sanitized = normalized.content
         }
+      }
+
+      const targetWordCount = resolveChapterTargetWordCount(outline, totalChapters, writingMode)
+      const wordCountFeedback = formatWordCountFeedback(countChapterChars(sanitized), targetWordCount)
+      if (wordCountFeedback) {
+        patchChapterGenProgress({
+          phase: 'writing',
+          message: `字数偏离规划（${countChapterChars(sanitized)}/${targetWordCount}），正在调整第 ${chapterNumber} 章…`,
+        })
+        content = await generateChapterDraft(
+          project,
+          buildChapterGenerationUserMessage({
+            project,
+            chapterNumber,
+            outline,
+            wordCountHint,
+            recentStats,
+            priorSummary,
+            priorEnding,
+            priorContent,
+            styleHint: versionCount > 1 ? styleHint : undefined,
+            rewriteHint: wordCountFeedback,
+          }),
+          { signal: options?.signal }
+        )
+        normalized = normalizeGeneratedChapterContent(content, chapterNumber, priorContent)
+        sanitized = normalized.content
       }
 
       patchChapterGenProgress({ phase: 'processing', message: `整理第 ${chapterNumber} 章正文…` })

@@ -19,6 +19,7 @@ import {
   registerAsyncTask,
   unregisterAsyncTask,
 } from '@renderer/services/novel/async-task-registry'
+import { countChapterChars } from '@shared/novel/chapter-length-plan'
 
 export const useNovelStore = defineStore('novel', () => {
   // State
@@ -558,7 +559,7 @@ export const useNovelStore = defineStore('novel', () => {
         previousWordCount = chapter.word_count
         chapter.content = content
         chapter.generation_status = 'successful'
-        chapter.word_count = content.length
+        chapter.word_count = countChapterChars(content)
         if (Array.isArray(chapter.versions) && previousContent !== null) {
           versionIndex = chapter.versions.findIndex(v => v === previousContent)
           if (versionIndex >= 0) {

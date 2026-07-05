@@ -62,6 +62,7 @@ import {
   type ImportParseProgress,
 } from './import-service'
 import { readNovelTextFile } from './file-text'
+import { countChapterChars } from '@shared/novel/chapter-length-plan'
 
 export type { ImportParseProgress }
 
@@ -367,7 +368,7 @@ export class NovelAPI {
     const chapter = project.chapters.find((c) => c.chapter_number === chapterNumber)
     if (!chapter?.versions?.[versionIndex]) throw new Error('版本不存在')
     chapter.content = chapter.versions[versionIndex]
-    chapter.word_count = chapter.content.length
+    chapter.word_count = countChapterChars(chapter.content)
     chapter.generation_status = 'waiting_for_confirm'
     return novelClient.saveProject(project)
   }
@@ -495,7 +496,7 @@ export class NovelAPI {
     const chapter = project.chapters.find((c) => c.chapter_number === chapterNumber)
     if (!chapter) throw new Error('章节不存在')
     chapter.content = content
-    chapter.word_count = content.length
+    chapter.word_count = countChapterChars(content)
     await novelClient.saveProject(project)
     return chapter
   }

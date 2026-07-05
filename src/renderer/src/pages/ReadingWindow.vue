@@ -47,6 +47,7 @@ const settings = ref<ReadingSettings>(readingSettingsService.get())
 const pageViewportRef = ref<HTMLElement | null>(null)
 const showChrome = ref(true)
 const readingStarted = ref(false)
+const pageTurnDirection = ref<'forward' | 'backward'>('forward')
 const recordingBossKey = ref(false)
 const sheetDragOffset = ref(0)
 const sheetDragging = ref(false)
@@ -108,8 +109,10 @@ const {
   currentChapter,
   isPageMode,
   charsPerPage,
+  globalPageIndex,
   currentPageText,
   scrollChapterParagraphs,
+  scrollBlocks,
   canPrevPage,
   canNextPage,
   canPrevChapter,
@@ -125,6 +128,7 @@ const {
   nextPage,
   prevChapter,
   nextChapter,
+  syncChapterFromScroll,
   restoreProgress,
 } = navigation
 
@@ -143,7 +147,7 @@ const tts = useReadingTts({
   onRequestNextChapter: async () => {
     if (!canNextChapter.value) return
     ttsAdvancingChapter = true
-    nextChapter()
+    nextChapter('auto')
     await nextTick()
     const chapter = readableChapters.value[chapterIndex.value]
     if (chapter) await ensureChapterLoaded(chapter)
@@ -200,6 +204,12 @@ watch(ttsActive, (active) => {
   resetAutoTurn()
 }, { immediate: true })
 
+watch(globalPageIndex, (next, prev) => {
+  if (!isPageMode.value) return
+  if (next > prev) pageTurnDirection.value = 'forward'
+  else if (next < prev) pageTurnDirection.value = 'backward'
+})
+
 const scrollDisplaySegments = computed(() => {
   const chapter = currentChapter.value
   if (!chapter?.content) return ['暂无章节内容']
@@ -242,8 +252,6 @@ const readerStyle = computed(() => ({
 }))
 
 const chromeVisible = computed(() => showChrome.value || showSettings.value || loading.value)
-
-const SCROLL_EDGE_THRESHOLD = 6
 
 function scrollToActiveSegment(element: HTMLElement | null) {
   const viewport = pageViewportRef.value
@@ -342,6 +350,27 @@ function revealChrome() {
   scheduleChromeAutoHide()
 }
 
+function turnPrevPage() {
+  if (!canPrevPage.value) return
+  prevPage()
+}
+
+function turnNextPage() {
+  if (!canNextPage.value) return
+  nextPage()
+}
+
+function resolvePageTapAction(event: MouseEvent): 'prev' | 'next' | null {
+  const el = pageViewportRef.value
+  if (!el) return null
+  const rect = el.getBoundingClientRect()
+  if (rect.width <= 0) return null
+  const ratio = (event.clientX - rect.left) / rect.width
+  if (ratio < 0.34) return 'prev'
+  if (ratio > 0.66) return 'next'
+  return null
+}
+
 function onViewportClick(event: MouseEvent) {
   if (showSettings.value) return
   if (viewportPointerDown || viewportDragMoved) return
@@ -353,6 +382,19 @@ function onViewportClick(event: MouseEvent) {
     enterImmersiveReading()
     return
   }
+
+  if (isPageMode.value) {
+    const tapAction = resolvePageTapAction(event)
+    if (tapAction === 'prev') {
+      turnPrevPage()
+      return
+    }
+    if (tapAction === 'next') {
+      turnNextPage()
+      return
+    }
+  }
+
   if (!showChrome.value) {
     revealChrome()
   }
@@ -469,34 +511,6 @@ function onWheel(event: WheelEvent) {
 
   if (!isPageMode.value) {
     pauseAutoScroll()
-    const el = pageViewportRef.value
-    if (!el) return
-
-    const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - SCROLL_EDGE_THRESHOLD
-    const atTop = el.scrollTop <= SCROLL_EDGE_THRESHOLD
-
-    if (event.deltaY > 8 && atBottom && canNextChapter.value) {
-      event.preventDefault()
-      if (wheelLock) return
-      wheelLock = true
-      window.setTimeout(() => {
-        wheelLock = false
-      }, 320)
-      nextChapter()
-      return
-    }
-
-    if (event.deltaY < -8 && atTop && canPrevChapter.value) {
-      event.preventDefault()
-      if (wheelLock) return
-      wheelLock = true
-      window.setTimeout(() => {
-        wheelLock = false
-      }, 320)
-      prevChapter()
-      return
-    }
-
     return
   }
 
@@ -508,13 +522,14 @@ function onWheel(event: WheelEvent) {
     wheelLock = false
   }, 260)
 
-  if (event.deltaY > 8) nextPage()
-  else if (event.deltaY < -8) prevPage()
+  if (event.deltaY > 8) turnNextPage()
+  else if (event.deltaY < -8) turnPrevPage()
 }
 
 function onScroll() {
   if (isPageMode.value) return
   if (!isAutoScrollDriving()) pauseAutoScroll()
+  syncChapterFromScroll()
   onReadingTurn()
   if (scrollSaveTimer) window.clearTimeout(scrollSaveTimer)
   scrollSaveTimer = window.setTimeout(() => {
@@ -584,10 +599,10 @@ function onKeydown(event: KeyboardEvent) {
 
   if (event.key === 'ArrowLeft' || event.key === 'PageUp') {
     event.preventDefault()
-    prevPage()
+    turnPrevPage()
   } else if (event.key === 'ArrowRight' || event.key === 'PageDown' || event.key === ' ') {
     event.preventDefault()
-    nextPage()
+    turnNextPage()
   } else if (event.key === 'Escape') {
     if (showSettings.value) {
       showSettings.value = false
@@ -649,6 +664,7 @@ onUnmounted(() => {
         'reader--chrome-visible': chromeVisible,
         'reader--immersive': readingStarted && !chromeVisible,
         'reader--scroll-mode': !isPageMode,
+        'reader--page-mode': isPageMode,
         'reader--listening': ttsActive,
       },
     ]"
@@ -714,7 +730,10 @@ onUnmounted(() => {
         <main
           ref="pageViewportRef"
           class="reader-page-viewport"
-          :class="{ 'reader-page-viewport--scroll': !isPageMode }"
+          :class="{
+            'reader-page-viewport--scroll': !isPageMode,
+            'reader-page-viewport--paged': isPageMode,
+          }"
           :style="readerStyle"
           @click="onViewportClick"
           @pointerdown="onViewportPointerDown"
@@ -723,7 +742,15 @@ onUnmounted(() => {
           @pointercancel="onViewportPointerCancel"
           @scroll="onScroll"
         >
-          <article v-if="isPageMode" class="reader-page reader-page--paged">
+          <article
+            v-if="isPageMode"
+            :key="globalPageIndex"
+            class="reader-page reader-page--paged"
+            :class="{
+              'reader-page--turn-forward': settings.pageTurnAnimation && pageTurnDirection === 'forward',
+              'reader-page--turn-backward': settings.pageTurnAnimation && pageTurnDirection === 'backward',
+            }"
+          >
             <template v-if="ttsActive && pageTtsEntries.length">
               <p
                 v-for="entry in pageTtsEntries"
@@ -742,17 +769,34 @@ onUnmounted(() => {
             </template>
           </article>
           <article v-else class="reader-page reader-page--scroll">
-            <p
-              v-for="(segment, idx) in scrollDisplaySegments"
-              :key="`${chapterIndex}-${idx}`"
-              :ref="(el) => setSegmentRef(idx, el as Element | null)"
-              :class="{
-                'reader-segment--active': ttsActive && ttsCurrentSegmentIndex === idx,
-                'reader-segment--loading': ttsLoading && ttsCurrentSegmentIndex === idx,
-              }"
-            >
-              {{ segment }}
-            </p>
+            <template v-if="ttsActive">
+              <p
+                v-for="(segment, idx) in scrollDisplaySegments"
+                :key="`${chapterIndex}-${idx}`"
+                :ref="(el) => setSegmentRef(idx, el as Element | null)"
+                :class="{
+                  'reader-segment--active': ttsCurrentSegmentIndex === idx,
+                  'reader-segment--loading': ttsLoading && ttsCurrentSegmentIndex === idx,
+                }"
+              >
+                {{ segment }}
+              </p>
+            </template>
+            <template v-else>
+              <template v-for="block in scrollBlocks" :key="block.key">
+                <div
+                  v-if="block.type === 'chapter-start'"
+                  class="reader-chapter-marker"
+                  :class="{ 'reader-chapter-marker--hidden': !settings.showChapterDividers }"
+                  :data-chapter-marker="block.chapterIndex"
+                >
+                  {{ settings.showChapterDividers ? block.title : '' }}
+                </div>
+                <p v-else>
+                  {{ block.text }}
+                </p>
+              </template>
+            </template>
           </article>
         </main>
       </div>
@@ -779,7 +823,7 @@ onUnmounted(() => {
           type="button"
           class="reader-nav-btn"
           :disabled="isPageMode ? !canPrevPage : !canPrevChapter"
-          @click.stop="isPageMode ? prevPage() : goPrevChapter()"
+          @click.stop="isPageMode ? turnPrevPage() : goPrevChapter()"
         >
           <ChevronLeft :size="18" />
           {{ isPageMode ? '上一页' : '上一章' }}
@@ -789,7 +833,7 @@ onUnmounted(() => {
           type="button"
           class="reader-nav-btn"
           :disabled="isPageMode ? !canNextPage : !canNextChapter"
-          @click.stop="isPageMode ? nextPage() : goNextChapter()"
+          @click.stop="isPageMode ? turnNextPage() : goNextChapter()"
         >
           {{ isPageMode ? '下一页' : '下一章' }}
           <ChevronRight :size="18" />
