@@ -41,8 +41,10 @@ export function getMaterialSourceTitle(item: MaterialItem): string | null {
 
 export function getMaterialCardMeta(item: MaterialItem): string {
   const parts = [getMaterialCategoryLabel(item), formatMaterialDate(item.updatedAt)]
-  const source = getMaterialSourceTitle(item)
-  if (source) parts.push(`出自《${source}》`)
+  if (item.type !== 'characters') {
+    const source = getMaterialSourceTitle(item)
+    if (source) parts.push(`出自《${source}》`)
+  }
   return parts.join(' · ')
 }
 
@@ -53,17 +55,13 @@ export interface MaterialPreviewField {
 
 export function getMaterialPreviewFields(item: MaterialItem): MaterialPreviewField[] {
   const fields: MaterialPreviewField[] = []
-  const sourceTitle = item.payload?.sourceProjectTitle
-  if (typeof sourceTitle === 'string' && sourceTitle.trim()) {
-    fields.push({ label: '来源作品', value: sourceTitle.trim() })
-  }
 
   switch (item.type) {
     case 'characters': {
       const character = item.payload?.character as Character | undefined
       if (character?.identity?.trim()) fields.push({ label: '身份', value: character.identity.trim() })
+      if (character?.description?.trim()) fields.push({ label: '描述', value: character.description.trim() })
       if (character?.personality?.trim()) fields.push({ label: '性格', value: character.personality.trim() })
-      if (character?.goals?.trim()) fields.push({ label: '目标', value: character.goals.trim() })
       if (character?.abilities?.trim()) fields.push({ label: '能力', value: character.abilities.trim() })
       break
     }

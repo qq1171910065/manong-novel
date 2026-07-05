@@ -26,11 +26,13 @@ const props = withDefaults(
     readonly?: boolean
     embedded?: boolean
     stacked?: boolean
+    column?: boolean
   }>(),
   {
     readonly: false,
     embedded: false,
     stacked: false,
+    column: false,
   }
 )
 
@@ -67,7 +69,7 @@ watch(
 watch(
   () => props.focusedField,
   (field, prev) => {
-    if (!props.show || !field || field === prev) return
+    if ((!props.show && !props.column) || !field || field === prev) return
     chatHistory.value.push({
       role: 'ai',
       content: `已聚焦「${getMaterialFieldLabel(field)}」。你可以直接描述想怎么改，或点击「一键优化」。`,
@@ -129,11 +131,12 @@ function askFieldSuggestion() {
 
 <template>
   <aside
-    v-if="show"
+    v-if="show || column"
     class="material-ai-panel"
     :class="{
-      'material-ai-panel--embedded': embedded && !stacked,
+      'material-ai-panel--embedded': embedded && !stacked && !column,
       'material-ai-panel--stacked': stacked,
+      'material-ai-panel--column': column,
     }"
     :style="{ '--accent': accent }"
     aria-label="AI 编辑"
@@ -146,7 +149,13 @@ function askFieldSuggestion() {
           <p>{{ focusHint }}</p>
         </div>
       </div>
-      <button type="button" class="material-ai-panel__close" aria-label="关闭 AI 编辑" @click="emit('close')">
+      <button
+        v-if="!column"
+        type="button"
+        class="material-ai-panel__close"
+        aria-label="关闭 AI 编辑"
+        @click="emit('close')"
+      >
         <X :size="18" />
       </button>
     </header>
@@ -209,6 +218,16 @@ function askFieldSuggestion() {
   min-width: 320px;
   border-left: 1px solid var(--line);
   background: var(--surface);
+}
+
+.material-ai-panel--column {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  max-height: none;
+  border-left: none;
+  border-right: 1px solid var(--line);
+  border-radius: 0;
 }
 
 .material-ai-panel--embedded {

@@ -11,7 +11,7 @@
 1. 只修改与用户指令相关的字段，不要无关重写。
 2. 若用户指定了「聚焦字段」，优先只改该字段（及为保持一致性必须联动的字段）。
 3. **禁止**将来源作品书名作为物料标题。
-4. 角色物料：`payload.character` 内字段与 `title/summary/tags` 保持一致性；改姓名时可同步建议 title。
+4. 角色物料：`payload.character` 仅含角色自身属性（name、identity、description、personality、abilities、portrait_url），不含目标、人物关系或作品上下文；与 `title/summary/tags` 保持一致性；改姓名时可同步建议 title。
 5. 文风物料：保持 genre / style / tone / writingHints 之间语义协调。
 6. 只输出 JSON，不要 markdown 代码块外的说明。
 

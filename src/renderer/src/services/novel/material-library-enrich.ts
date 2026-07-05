@@ -45,11 +45,9 @@ function buildUserPayload(kind: MaterialEnrichKind, context?: SubmitContext): st
         '子类型：角色',
         `姓名：${c.name || '未命名'}`,
         c.identity ? `身份：${c.identity}` : '',
+        c.description ? `描述：${c.description}` : '',
         c.personality ? `性格：${c.personality}` : '',
-        c.goals ? `目标：${c.goals}` : '',
-        c.abilities ? `能力：${c.abilities}` : '',
-        c.relationship_to_protagonist ? `与主角关系：${c.relationship_to_protagonist}` : '',
-        c.description ? `描述：${c.description}` : ''
+        c.abilities ? `能力：${c.abilities}` : ''
       )
       break
     }

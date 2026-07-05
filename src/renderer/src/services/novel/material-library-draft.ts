@@ -11,9 +11,7 @@ export type MaterialFocusField =
   | 'identity'
   | 'description'
   | 'personality'
-  | 'goals'
   | 'abilities'
-  | 'relationship_to_protagonist'
   | 'genre'
   | 'style'
   | 'tone'
@@ -37,9 +35,19 @@ export function emptyCharacterDraft(): Character {
     description: '',
     identity: '',
     personality: '',
-    goals: '',
     abilities: '',
-    relationship_to_protagonist: '',
+  })
+}
+
+/** 角色库仅保留角色自身属性，不含作品上下文或人物关系 */
+export function libraryCharacterFromDraft(character: Character): Character {
+  return ensureCharacter({
+    name: character.name?.trim() || '',
+    identity: character.identity?.trim() || '',
+    description: character.description?.trim() || '',
+    personality: character.personality?.trim() || '',
+    abilities: character.abilities?.trim() || '',
+    portrait_url: character.portrait_url,
   })
 }
 
@@ -64,7 +72,9 @@ export function itemToDraft(item: MaterialItem, defaultCategory = ''): MaterialD
     summary: item.summary,
     tags: [...item.tags],
     category: String(item.payload?.category ?? defaultCategory),
-    character: character ? ensureCharacter(JSON.parse(JSON.stringify(character))) : emptyCharacterDraft(),
+    character: character
+      ? libraryCharacterFromDraft(ensureCharacter(JSON.parse(JSON.stringify(character))))
+      : emptyCharacterDraft(),
     genre: String(item.payload?.genre ?? ''),
     style: String(item.payload?.style ?? ''),
     tone: String(item.payload?.tone ?? ''),
@@ -76,7 +86,7 @@ export function draftToItemPayload(type: MaterialLibraryType, draft: MaterialDra
   if (type === 'characters') {
     return {
       category: draft.category,
-      character: ensureCharacter({
+      character: libraryCharacterFromDraft({
         ...draft.character,
         name: draft.character.name?.trim() || draft.title.trim() || '未命名角色',
       }),
@@ -131,7 +141,7 @@ export function applyMaterialAiPatch(draft: MaterialDraft, patch: MaterialAiEdit
     if (typeof patch.payload.category === 'string') next.category = patch.payload.category
     const character = patch.payload.character as Character | undefined
     if (character && typeof character === 'object') {
-      next.character = ensureCharacter({ ...next.character, ...character })
+      next.character = libraryCharacterFromDraft({ ...next.character, ...character })
     }
     if (typeof patch.payload.genre === 'string') next.genre = patch.payload.genre
     if (typeof patch.payload.style === 'string') next.style = patch.payload.style
@@ -150,9 +160,7 @@ const FIELD_LABELS: Record<MaterialFocusField, string> = {
   identity: '身份',
   description: '描述',
   personality: '性格',
-  goals: '目标',
   abilities: '能力',
-  relationship_to_protagonist: '与主角的关系',
   genre: '题材',
   style: '叙述风格',
   tone: '基调口吻',
@@ -175,9 +183,7 @@ export function listDraftChanges(before: MaterialDraft, after: MaterialDraft): s
     'identity',
     'description',
     'personality',
-    'goals',
     'abilities',
-    'relationship_to_protagonist',
   ]
   for (const key of charKeys) {
     if ((before.character[key] ?? '') !== (after.character[key] ?? '')) {
@@ -201,7 +207,7 @@ export function serializeDraftForAi(type: MaterialLibraryType, draft: MaterialDr
       summary: draft.summary,
       tags: draft.tags,
       category: draft.category,
-      character: draft.character,
+      character: libraryCharacterFromDraft(draft.character),
     }
   }
   return {

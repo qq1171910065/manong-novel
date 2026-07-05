@@ -23,7 +23,6 @@ import { enrichMaterialMetadata } from '@renderer/services/novel/material-librar
 import {
   formatMaterialDate,
   getMaterialCategoryLabel,
-  getMaterialSourceTitle,
 } from '@renderer/services/novel/material-library-utils'
 import {
   isMaterialAutoEnrichOnSave,
@@ -52,7 +51,6 @@ const readonlyMode = ref(false)
 const saving = ref(false)
 const enriching = ref(false)
 const portraitLoading = ref(false)
-const showAiPanel = ref(false)
 const focusedField = ref<MaterialFocusField | null>(null)
 const autoEnrichOnSave = ref(isMaterialAutoEnrichOnSave())
 const sourceItem = ref<MaterialItem | null>(null)
@@ -68,8 +66,6 @@ const modalSubtitle = computed(() => {
   if (isNew.value) return '填写后可保存到物料库，供开书与写作流程引用'
   const parts: string[] = []
   if (sourceItem.value) parts.push(`更新于 ${formatMaterialDate(sourceItem.value.updatedAt)}`)
-  const source = sourceItem.value ? getMaterialSourceTitle(sourceItem.value) : null
-  if (source) parts.push(`出自《${source}》`)
   if (readonlyMode.value) parts.push('内置预设 · 只读')
   return parts.join(' · ')
 })
@@ -97,13 +93,7 @@ const characterFields: Array<{
   { key: 'identity', label: '身份', placeholder: '例如：落魄剑客、帝国公主' },
   { key: 'description', label: '描述', multiline: true, placeholder: '外貌、背景或整体印象' },
   { key: 'personality', label: '性格', multiline: true, placeholder: '性格特点与行为倾向' },
-  { key: 'goals', label: '目标', multiline: true, placeholder: '角色想要达成的目标' },
   { key: 'abilities', label: '能力', placeholder: '技能、特长或优势' },
-  {
-    key: 'relationship_to_protagonist',
-    label: '与主角的关系',
-    placeholder: '与主角的关系定位',
-  },
 ]
 
 const styleFields: Array<{
@@ -128,7 +118,6 @@ function snapshotDraft() {
 }
 
 function resetState() {
-  showAiPanel.value = false
   focusedField.value = null
   saving.value = false
   enriching.value = false
@@ -177,17 +166,12 @@ async function requestClose() {
   emit('close')
 }
 
-function openAiPanel(field?: MaterialFocusField) {
-  if (readonlyMode.value) {
+function focusField(field?: MaterialFocusField) {
+  if (readonlyMode.value && field) {
     globalAlert.showError('内置预设不可编辑，请先复制为副本', '只读')
     return
   }
   focusedField.value = field ?? null
-  showAiPanel.value = true
-}
-
-function onFieldFocus(field: MaterialFocusField) {
-  focusedField.value = field
 }
 
 async function runEnrichCardMeta(silent = false) {
@@ -352,7 +336,7 @@ watch(
 <template>
   <NovelModalShell
     :show="show"
-    size="lg"
+    size="xl"
     variant="form"
     panel-class="material-edit-modal__panel"
     :title="modalTitle"
@@ -362,8 +346,20 @@ watch(
     body-class="material-edit-modal__body-shell"
     @close="requestClose"
   >
-    <div class="material-edit-modal__layout">
-      <div class="material-edit-modal__scroll">
+    <div class="material-edit-modal__split">
+      <MaterialAiEditPanel
+        column
+        :show="true"
+        :type="type"
+        :draft="draft"
+        :accent="config.accent"
+        :focused-field="focusedField"
+        :readonly="readonlyMode"
+        @apply="applyAiDraft"
+      />
+
+      <div class="material-edit-modal__form-pane">
+        <div class="material-edit-modal__scroll">
         <section v-if="type === 'characters'" class="material-edit-modal__section">
           <h3 class="material-edit-modal__section-title">角色头像</h3>
           <div class="material-edit-modal__portrait-row" :style="{ '--accent': config.accent }">
@@ -400,7 +396,7 @@ watch(
                   v-if="!readonlyMode"
                   type="button"
                   class="material-edit-modal__ai-chip"
-                  @click="openAiPanel('title')"
+                  @click="focusField('title')"
                 >
                   AI
                 </button>
@@ -412,7 +408,7 @@ watch(
                 class="md-text-field-input w-full"
                 :readonly="readonlyMode"
                 placeholder="卡片标题"
-                @focus="onFieldFocus('title')"
+                @focus="focusField('title')"
               />
             </div>
 
@@ -434,7 +430,7 @@ watch(
                   v-if="!readonlyMode"
                   type="button"
                   class="material-edit-modal__ai-chip"
-                  @click="openAiPanel('summary')"
+                  @click="focusField('summary')"
                 >
                   AI
                 </button>
@@ -446,7 +442,7 @@ watch(
                 rows="3"
                 :readonly="readonlyMode"
                 placeholder="卡片摘要，便于检索与选用"
-                @focus="onFieldFocus('summary')"
+                @focus="focusField('summary')"
               />
             </div>
 
@@ -460,7 +456,7 @@ watch(
                 :readonly="readonlyMode"
                 placeholder="玄幻, 主角"
                 @input="setTagsInput(($event.target as HTMLInputElement).value)"
-                @focus="onFieldFocus('tags')"
+                @focus="focusField('tags')"
               />
             </div>
           </div>
@@ -482,7 +478,7 @@ watch(
                   v-if="!readonlyMode"
                   type="button"
                   class="material-edit-modal__ai-chip"
-                  @click="openAiPanel(field.key)"
+                  @click="focusField(field.key)"
                 >
                   AI
                 </button>
@@ -495,7 +491,7 @@ watch(
                 rows="3"
                 :readonly="readonlyMode"
                 :placeholder="field.placeholder"
-                @focus="onFieldFocus(field.key)"
+                @focus="focusField(field.key)"
               />
               <input
                 v-else
@@ -505,7 +501,7 @@ watch(
                 class="md-text-field-input w-full"
                 :readonly="readonlyMode"
                 :placeholder="field.placeholder"
-                @focus="onFieldFocus(field.key)"
+                @focus="focusField(field.key)"
               />
             </div>
           </div>
@@ -527,7 +523,7 @@ watch(
                   v-if="!readonlyMode"
                   type="button"
                   class="material-edit-modal__ai-chip"
-                  @click="openAiPanel(field.key)"
+                  @click="focusField(field.key)"
                 >
                   AI
                 </button>
@@ -540,7 +536,7 @@ watch(
                 rows="4"
                 :readonly="readonlyMode"
                 :placeholder="field.placeholder"
-                @focus="onFieldFocus(field.key)"
+                @focus="focusField(field.key)"
               />
               <input
                 v-else
@@ -550,23 +546,12 @@ watch(
                 class="md-text-field-input w-full"
                 :readonly="readonlyMode"
                 :placeholder="field.placeholder"
-                @focus="onFieldFocus(field.key)"
+                @focus="focusField(field.key)"
               />
             </div>
           </div>
         </section>
-
-        <MaterialAiEditPanel
-          :show="showAiPanel"
-          :type="type"
-          :draft="draft"
-          :accent="config.accent"
-          :focused-field="focusedField"
-          :readonly="readonlyMode"
-          stacked
-          @close="showAiPanel = false"
-          @apply="applyAiDraft"
-        />
+        </div>
       </div>
     </div>
 
@@ -598,16 +583,6 @@ watch(
           <Sparkles v-else :size="15" />
           AI 整理卡片
         </button>
-
-        <button
-          type="button"
-          class="md-btn md-btn-tonal md-ripple"
-          :class="{ 'is-active': showAiPanel }"
-          @click="openAiPanel()"
-        >
-          <Sparkles :size="15" />
-          AI 编辑
-        </button>
       </div>
 
       <div class="material-edit-modal__foot-right">
@@ -627,18 +602,11 @@ watch(
 </template>
 
 <style scoped>
-.material-edit-modal__layout {
-  flex: 1 1 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
 .material-edit-modal__scroll {
   flex: 1 1 0;
   min-height: 0;
   overflow-y: auto;
-  padding: 4px 0 18px;
+  padding: 4px 22px 18px;
   overscroll-behavior: contain;
 }
 
@@ -764,10 +732,5 @@ watch(
   color: var(--muted);
   font-size: var(--text-2xs);
   cursor: pointer;
-}
-
-.md-btn.is-active {
-  color: var(--brand);
-  background: var(--brand-soft);
 }
 </style>

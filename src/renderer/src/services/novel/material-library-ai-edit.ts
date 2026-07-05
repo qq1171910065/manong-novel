@@ -100,7 +100,6 @@ export async function runMaterialAiEdit(input: {
 export function buildFieldAiSuggestion(field: MaterialFocusField): string {
   const suggestions: Partial<Record<MaterialFocusField, string>> = {
     personality: '把性格写得更立体，增加矛盾面',
-    goals: '补全并强化角色的核心动机',
     description: '根据现有设定补全外貌与背景描述',
     writingHints: '让写作提示更具体、可执行',
     tone: '调整基调，使其更符合题材',
