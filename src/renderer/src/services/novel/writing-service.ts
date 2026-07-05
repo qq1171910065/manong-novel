@@ -80,12 +80,14 @@ import {
 import {
   applyUserAnswerToChecklist,
   buildAutoCompletionMessage,
+  buildBlueprintConceptSupplement,
   buildChecklistPromptSupplement,
   isChecklistComplete,
   detectChapterCountLoop,
   forceCompleteChecklist,
   mergeChecklistFromModel,
   normalizeChecklist,
+  parseExpectedChapterCount,
   rebuildChecklistFromHistory,
   requiredChecklistKeys,
   resolvePendingTopicAfterResponse,
@@ -984,6 +986,54 @@ ${blueprintJson}
   }
 }
 
+function normalizeBlueprintPayload(parsed: Record<string, unknown>): Blueprint {
+  const blueprint = { ...parsed } as Blueprint
+  if (!Array.isArray(blueprint.chapter_outline)) {
+    const alt = parsed.chapters ?? parsed.outline
+    if (Array.isArray(alt)) {
+      blueprint.chapter_outline = alt as Blueprint['chapter_outline']
+    }
+  }
+  return blueprint
+}
+
+function hasUsableChapterOutline(blueprint: Blueprint | null | undefined): boolean {
+  const list = blueprint?.chapter_outline
+  if (!Array.isArray(list) || list.length === 0) return false
+  return list.some((item) => Boolean(item?.title?.trim() || item?.summary?.trim()))
+}
+
+async function repairBlueprintOutline(
+  project: NovelProject,
+  blueprint: Blueprint,
+  options?: { signal?: AbortSignal }
+): Promise<void> {
+  if (hasUsableChapterOutline(blueprint)) return
+
+  const mode = resolveWritingMode(project)
+  const { answers } = rebuildChecklistFromHistory(project.conversation_history ?? [], mode)
+  const expected = parseExpectedChapterCount(answers.chapter_count) ?? 12
+
+  project.blueprint = blueprint
+  const MAX_BATCH = 20
+  let startChapter = 1
+
+  while ((project.blueprint.chapter_outline?.length ?? 0) < expected && startChapter <= expected) {
+    const currentCount = project.blueprint.chapter_outline?.length ?? 0
+    const remaining = expected - currentCount
+    const batchSize = Math.min(MAX_BATCH, remaining)
+    const before = currentCount
+    await generateChapterOutline(project, startChapter, batchSize, options)
+    const after = project.blueprint.chapter_outline?.length ?? 0
+    if (after <= before) break
+    startChapter = after + 1
+  }
+
+  if (Array.isArray(project.blueprint.chapter_outline)) {
+    blueprint.chapter_outline = project.blueprint.chapter_outline
+  }
+}
+
 export async function generateBlueprint(
   project: NovelProject,
   options?: { signal?: AbortSignal }
@@ -992,12 +1042,20 @@ export async function generateBlueprint(
     .map((m) => `${m.role}: ${m.content}`)
     .join('\n\n')
 
-  const materialContext = buildConceptMaterialPromptSupplement(project)
-  const blueprintUserContent = materialContext
-    ? `${materialContext}\n\n请根据以下灵感对话历史生成完整小说蓝图，严格按系统提示中的 JSON 结构输出，不要附加解释。生成时必须保留并融入上述物料库预设中的文风与角色设定。\n\n${historyText}`
-    : `请根据以下灵感对话历史生成完整小说蓝图，严格按系统提示中的 JSON 结构输出，不要附加解释。\n\n${historyText}`
-
   const mode = resolveWritingMode(project)
+  const { checklist, answers } = rebuildChecklistFromHistory(project.conversation_history ?? [], mode)
+  const conceptSupplement = buildBlueprintConceptSupplement(checklist, answers, mode)
+  const materialContext = buildConceptMaterialPromptSupplement(project)
+
+  const blueprintUserContent = [
+    conceptSupplement.trim(),
+    materialContext.trim(),
+    '请根据以下灵感对话历史生成完整小说蓝图，严格按系统提示中的 JSON 结构输出，不要附加解释。必须包含 full_synopsis 与完整 chapter_outline。',
+    historyText,
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+
   const blueprintPrompt =
     mode === 'simple' ? `${screenwritingPrompt}\n${SIMPLE_BLUEPRINT_SUPPLEMENT}` : screenwritingPrompt
 
@@ -1017,7 +1075,7 @@ export async function generateBlueprint(
   )
 
   const parsed = parseJsonBlock(raw) || {}
-  const blueprint = parsed as Blueprint
+  const blueprint = normalizeBlueprintPayload(parsed)
   if (!blueprint.title) blueprint.title = project.title
   if (mode === 'simple') {
     if (!blueprint.world_setting) blueprint.world_setting = {}
@@ -1046,15 +1104,26 @@ export async function generateBlueprint(
         blueprint[key] = previousBlueprint[key]
       }
     }
+    if (!blueprint.full_synopsis?.trim() && previousBlueprint.full_synopsis?.trim()) {
+      blueprint.full_synopsis = previousBlueprint.full_synopsis
+    }
   }
+
+  await repairBlueprintOutline(project, blueprint, options)
 
   project.blueprint = blueprint
   applyWordCountPlanToBlueprint(blueprint, mode)
   project.title = blueprint.title || project.title
 
+  const chapterCount = blueprint.chapter_outline?.length ?? 0
+  const aiMessage =
+    chapterCount > 0
+      ? `蓝图已生成（含 ${chapterCount} 章大纲）。你可以继续编辑或直接开始写作。`
+      : '蓝图主体已生成，但章节大纲未能自动补全，请在「章节大纲」Tab 手动添加或重新生成。'
+
   return {
     blueprint,
-    ai_message: '蓝图已生成，你可以继续编辑或直接开始写作。',
+    ai_message: aiMessage,
   }
 }
 

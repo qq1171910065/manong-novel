@@ -274,6 +274,73 @@ export function buildAutoCompletionMessage(answers: ConceptChecklistAnswers): st
   return `完美！灵感的每一个碎片都已归位。${parts.length ? `我已记下${parts.length}项核心设定。` : ''}现在，请允许我退居幕后，将这些素材精心打磨成一份完整的小说概念蓝图。`
 }
 
+/** 从篇幅回答中解析预期章节数 */
+export function parseExpectedChapterCount(raw: string | null | undefined): number | null {
+  const text = String(raw ?? '').trim()
+  if (!text) return null
+
+  const rangeMatch = text.match(/(\d+)\s*[-~～至到]\s*(\d+)\s*章?/)
+  if (rangeMatch) {
+    const low = parseInt(rangeMatch[1], 10)
+    const high = parseInt(rangeMatch[2], 10)
+    if (Number.isFinite(low) && Number.isFinite(high)) {
+      return Math.min(800, Math.max(1, Math.round((low + high) / 2)))
+    }
+  }
+
+  const chapterMatch = text.match(/(\d+)\s*章/)
+  if (chapterMatch) {
+    const count = parseInt(chapterMatch[1], 10)
+    if (Number.isFinite(count)) return Math.min(800, Math.max(1, count))
+  }
+
+  const nums = text.match(/\d+/g)
+  if (nums?.length === 1) {
+    const count = parseInt(nums[0], 10)
+    if (Number.isFinite(count)) return Math.min(800, Math.max(1, count))
+  }
+  if (nums && nums.length >= 2) {
+    const low = parseInt(nums[0], 10)
+    const high = parseInt(nums[1], 10)
+    if (Number.isFinite(low) && Number.isFinite(high)) {
+      return Math.min(800, Math.max(1, Math.round((low + high) / 2)))
+    }
+  }
+
+  if (/超短篇/.test(text)) return 5
+  if (/短篇/.test(text)) return 12
+  if (/中篇/.test(text)) return 40
+  if (/长篇/.test(text)) return 120
+
+  return null
+}
+
+/** 蓝图生成时注入的结构化设定摘要 */
+export function buildBlueprintConceptSupplement(
+  checklist: ConceptChecklist,
+  answers: ConceptChecklistAnswers,
+  mode: WritingMode
+): string {
+  const lines = requiredChecklistKeys(mode)
+    .filter((key) => checklist[key] || answers[key])
+    .map((key) => `- ${CONCEPT_CHECKLIST_LABELS[key]}：${answers[key]?.trim() || '（对话中已确认）'}`)
+
+  const expectedChapters = parseExpectedChapterCount(answers.chapter_count)
+  const chapterRequirement = expectedChapters
+    ? `chapter_outline 必须包含 ${expectedChapters} 章（chapter_number 从 1 连续到 ${expectedChapters}），每章必须有 title、summary、target_word_count。`
+    : '必须输出完整 chapter_outline（每章含 title、summary、target_word_count），数量与对话中确认的篇幅一致。'
+
+  return `
+## 灵感对话已确认的核心设定（生成蓝图时必须完整体现）
+${lines.length ? lines.join('\n') : '（详见下方对话历史）'}
+
+## 硬性输出要求
+- full_synopsis 必须写完整故事梗概与主线情节，不可留空
+- ${chapterRequirement}
+- 角色、世界观、关系网须与上述设定一致
+`
+}
+
 export function rebuildChecklistFromHistory(
   history: Array<{ role: string; content: string }>,
   mode: WritingMode

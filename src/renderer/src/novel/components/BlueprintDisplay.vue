@@ -425,9 +425,11 @@ const formattedBlueprint = computed(() => {
   )
 
   // Chapters section with enhanced styling
-  const chaptersHTML = `
+  const chapterList = blueprint.chapter_outline || []
+  const chaptersHTML = chapterList.length
+    ? `
     <div class="space-y-4">
-      ${(blueprint.chapter_outline || []).map((ch) => `
+      ${chapterList.map((ch) => `
         <div class="group relative overflow-hidden bg-gradient-to-r from-gray-50 to-white border border-gray-200 rounded-lg p-5 hover:shadow-md transition-all duration-300">
           <div class="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-indigo-500 to-purple-600 transform origin-top group-hover:scale-y-110 transition-transform duration-300"></div>
           <div class="flex items-start">
@@ -443,6 +445,7 @@ const formattedBlueprint = computed(() => {
       `).join('')}
     </div>
   `
+    : '<p class="text-gray-500 italic">暂无章节大纲。可返回对话补充篇幅要求后重新生成，或在项目详情「章节大纲」Tab 手动添加。</p>'
 
   return `
     ${headerHTML}
