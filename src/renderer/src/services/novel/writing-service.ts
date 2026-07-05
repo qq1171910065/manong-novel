@@ -74,6 +74,10 @@ import {
   setChapterGenProgress,
 } from '@renderer/novel/composables/chapter-generation-progress'
 import {
+  buildConceptMaterialPromptSupplement,
+  seedConceptChecklistFromMaterials,
+} from './material-library-apply'
+import {
   applyUserAnswerToChecklist,
   buildAutoCompletionMessage,
   buildChecklistPromptSupplement,
@@ -575,6 +579,9 @@ export async function converseConcept(
     formattedInput.value,
     mode
   )
+  if (history.length <= 1) {
+    ;({ checklist, answers } = seedConceptChecklistFromMaterials(checklist, answers, project))
+  }
   const substantiveUserTurns = countSubstantiveUserTurns(history)
   ;({ checklist, answers } = autoFillRemainingChecklist(checklist, answers, mode, substantiveUserTurns))
 
@@ -588,11 +595,12 @@ export async function converseConcept(
   }
 
   const checklistSupplement = buildChecklistPromptSupplement(checklist, answers, mode)
+  const materialSupplement = buildConceptMaterialPromptSupplement(project)
   const conceptSystem =
     mode === 'simple' ? `${conceptPrompt}\n${SIMPLE_CONCEPT_SUPPLEMENT}` : conceptPrompt
 
   const raw = await chat(
-    `${conceptSystem}\n${JSON_RESPONSE_INSTRUCTION}\n${checklistSupplement}`,
+    `${conceptSystem}\n${JSON_RESPONSE_INSTRUCTION}\n${checklistSupplement}${materialSupplement}`,
     history.map((m) => ({ role: m.role, content: m.content })),
     projectChatOpts(project, {
       temperature: 0.8,
@@ -975,6 +983,11 @@ export async function generateBlueprint(
     .map((m) => `${m.role}: ${m.content}`)
     .join('\n\n')
 
+  const materialContext = buildConceptMaterialPromptSupplement(project)
+  const blueprintUserContent = materialContext
+    ? `${materialContext}\n\n请根据以下灵感对话历史生成完整小说蓝图，严格按系统提示中的 JSON 结构输出，不要附加解释。生成时必须保留并融入上述物料库预设中的文风与角色设定。\n\n${historyText}`
+    : `请根据以下灵感对话历史生成完整小说蓝图，严格按系统提示中的 JSON 结构输出，不要附加解释。\n\n${historyText}`
+
   const mode = resolveWritingMode(project)
   const blueprintPrompt =
     mode === 'simple' ? `${screenwritingPrompt}\n${SIMPLE_BLUEPRINT_SUPPLEMENT}` : screenwritingPrompt
@@ -984,7 +997,7 @@ export async function generateBlueprint(
     [
       {
         role: 'user',
-        content: `请根据以下灵感对话历史生成完整小说蓝图，严格按系统提示中的 JSON 结构输出，不要附加解释。\n\n${historyText}`,
+        content: blueprintUserContent,
       },
     ],
     projectChatOpts(project, {
@@ -1003,6 +1016,29 @@ export async function generateBlueprint(
     blueprint.world_setting.factions = []
     blueprint.relationships = []
   }
+
+  const previousBlueprint = project.blueprint
+  if (previousBlueprint) {
+    if (previousBlueprint.characters?.length) {
+      const generated = blueprint.characters ?? []
+      const merged = previousBlueprint.characters.map((preset) => {
+        const matched = generated.find(
+          (item) => item.name?.trim() && item.name.trim() === preset.name?.trim()
+        )
+        return matched ? { ...preset, ...matched } : preset
+      })
+      for (const item of generated) {
+        if (!merged.some((entry) => entry.name?.trim() === item.name?.trim())) merged.push(item)
+      }
+      blueprint.characters = merged
+    }
+    for (const key of ['genre', 'style', 'tone'] as const) {
+      if (!blueprint[key]?.trim() && previousBlueprint[key]?.trim()) {
+        blueprint[key] = previousBlueprint[key]
+      }
+    }
+  }
+
   project.blueprint = blueprint
   applyWordCountPlanToBlueprint(blueprint, mode)
   project.title = blueprint.title || project.title
