@@ -2,8 +2,12 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { BookOpen, CirclePause, Loader2, X, XCircle } from 'lucide-vue-next'
 import { navigate } from '@renderer/router'
+import { openReadingWindow } from '@renderer/services/reading-service'
 import {
+  backgroundTaskKindLabel,
+  backgroundTaskProgressLabel,
   dismissBackgroundTask,
+  removeBackgroundTask,
   type BackgroundTask,
   useBackgroundTasks,
 } from '@renderer/services/background-task-service'
@@ -53,11 +57,6 @@ function statusClass(task: BackgroundTask): string {
   return `arena-task-item--${task.status}`
 }
 
-function openProject(task: BackgroundTask) {
-  closePanel()
-  navigate(`/detail/${task.projectId}`)
-}
-
 function pauseTask(task: BackgroundTask) {
   if (task.kind !== 'auto_write') return
   autoWrite.pause()
@@ -69,8 +68,22 @@ function resumeTask(task: BackgroundTask) {
 }
 
 function cancelTask(task: BackgroundTask) {
-  if (task.kind !== 'auto_write') return
-  autoWrite.cancel()
+  if (task.kind === 'auto_write') {
+    autoWrite.cancel()
+    return
+  }
+  if (task.kind === 'tts_preload') {
+    removeBackgroundTask('tts_preload', task.projectId)
+  }
+}
+
+function openProject(task: BackgroundTask) {
+  closePanel()
+  if (task.kind === 'tts_preload') {
+    void openReadingWindow(task.projectId, task.projectTitle)
+    return
+  }
+  navigate(`/detail/${task.projectId}`)
 }
 
 function dismissTask(task: BackgroundTask) {
@@ -109,17 +122,17 @@ onUnmounted(() => document.removeEventListener('click', onDocumentClick))
       </div>
 
       <div v-if="!hasTasks" class="arena-task-popover__empty">
-        AI 接管创作等后台任务会显示在这里
+        AI 接管创作、听书预合成等后台任务会显示在这里
       </div>
 
       <ul v-else class="arena-task-list">
         <li v-for="task in visibleTasks" :key="task.id" class="arena-task-item" :class="statusClass(task)">
           <div class="arena-task-item__main">
             <p class="arena-task-item__title">{{ task.projectTitle }}</p>
+            <p class="arena-task-item__kind">{{ backgroundTaskKindLabel(task.kind) }}</p>
             <p class="arena-task-item__message">{{ task.message || '等待处理…' }}</p>
-            <div v-if="task.totalCount > 0" class="arena-task-item__meta">
-              <span>{{ task.completedCount }}/{{ task.totalCount }} 章</span>
-              <span v-if="task.currentChapter">· 第 {{ task.currentChapter }} 章</span>
+            <div v-if="backgroundTaskProgressLabel(task)" class="arena-task-item__meta">
+              <span>{{ backgroundTaskProgressLabel(task) }}</span>
             </div>
             <div v-if="task.totalCount > 0" class="arena-task-item__bar">
               <div class="arena-task-item__bar-fill" :style="{ width: `${Math.max(4, task.progressPercent)}%` }" />
@@ -130,7 +143,7 @@ onUnmounted(() => document.removeEventListener('click', onDocumentClick))
             <span class="arena-task-item__status">{{ statusLabel(task) }}</span>
             <div class="arena-task-item__buttons">
               <button
-                v-if="task.status === 'running'"
+                v-if="task.status === 'running' && task.kind === 'auto_write'"
                 type="button"
                 class="arena-task-item__btn"
                 title="暂停"
@@ -139,7 +152,7 @@ onUnmounted(() => document.removeEventListener('click', onDocumentClick))
                 <CirclePause :size="14" />
               </button>
               <button
-                v-if="task.status === 'paused'"
+                v-if="task.status === 'paused' && task.kind === 'auto_write'"
                 type="button"
                 class="arena-task-item__btn arena-task-item__btn--primary"
                 title="继续"
@@ -148,7 +161,7 @@ onUnmounted(() => document.removeEventListener('click', onDocumentClick))
                 继续
               </button>
               <button
-                v-if="task.status === 'running' || task.status === 'paused'"
+                v-if="(task.status === 'running' || task.status === 'paused') && task.kind !== 'tts_preload'"
                 type="button"
                 class="arena-task-item__btn"
                 title="取消"
@@ -157,12 +170,21 @@ onUnmounted(() => document.removeEventListener('click', onDocumentClick))
                 <X :size="14" />
               </button>
               <button
+                v-if="task.status === 'running' && task.kind === 'tts_preload'"
                 type="button"
                 class="arena-task-item__btn"
-                title="打开作品"
+                title="取消预合成"
+                @click="cancelTask(task)"
+              >
+                <X :size="14" />
+              </button>
+              <button
+                type="button"
+                class="arena-task-item__btn"
+                title="打开"
                 @click="openProject(task)"
               >
-                查看
+                {{ task.kind === 'tts_preload' ? '听书' : '查看' }}
               </button>
               <button
                 v-if="canDismiss(task)"
@@ -320,6 +342,12 @@ onUnmounted(() => document.removeEventListener('click', onDocumentClick))
   color: var(--text);
   font-size: var(--text-sm);
   font-weight: 650;
+}
+
+.arena-task-item__kind {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .arena-task-item__message {

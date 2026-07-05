@@ -1,3 +1,10 @@
+import {
+  READING_TTS_DEFAULT_STYLE,
+  READING_TTS_DEFAULT_VOICE,
+  READING_TTS_STYLES,
+  READING_TTS_VOICES,
+} from './reading-tts'
+
 export type ReadingTheme = 'light' | 'dark' | 'sepia'
 export type ReadingInteractionMode = 'page' | 'scroll'
 
@@ -12,6 +19,8 @@ export interface ReadingSettings {
   autoTurnSeconds: number
   bossKeyEnabled: boolean
   bossKeyAccelerator: string
+  ttsVoice: string
+  ttsStyle: string
 }
 
 const STORAGE_KEY = 'novel_reading_settings_v1'
@@ -27,6 +36,8 @@ export const READING_DEFAULTS: ReadingSettings = {
   autoTurnSeconds: 12,
   bossKeyEnabled: true,
   bossKeyAccelerator: 'Control+Shift+H',
+  ttsVoice: READING_TTS_DEFAULT_VOICE,
+  ttsStyle: READING_TTS_DEFAULT_STYLE,
 }
 
 function readSettings(): ReadingSettings {
@@ -50,6 +61,16 @@ function readSettings(): ReadingSettings {
         typeof parsed.bossKeyAccelerator === 'string' && parsed.bossKeyAccelerator.trim()
           ? parsed.bossKeyAccelerator.trim()
           : READING_DEFAULTS.bossKeyAccelerator,
+      ttsVoice:
+        typeof parsed.ttsVoice === 'string' &&
+        READING_TTS_VOICES.some((item) => item.id === parsed.ttsVoice)
+          ? parsed.ttsVoice
+          : READING_DEFAULTS.ttsVoice,
+      ttsStyle:
+        typeof parsed.ttsStyle === 'string' &&
+        READING_TTS_STYLES.some((item) => item.id === parsed.ttsStyle)
+          ? parsed.ttsStyle
+          : READING_DEFAULTS.ttsStyle,
     }
   } catch {
     return { ...READING_DEFAULTS }

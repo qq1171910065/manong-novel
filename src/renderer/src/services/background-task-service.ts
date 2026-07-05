@@ -1,6 +1,6 @@
 import { computed, readonly, ref } from 'vue'
 
-export type BackgroundTaskKind = 'auto_write'
+export type BackgroundTaskKind = 'auto_write' | 'tts_preload'
 export type BackgroundTaskStatus = 'running' | 'paused' | 'completed' | 'failed' | 'cancelled'
 
 export interface BackgroundTask {
@@ -64,6 +64,27 @@ export function getBackgroundTask(kind: BackgroundTaskKind, projectId: string): 
 export function removeBackgroundTask(kind: BackgroundTaskKind, projectId: string): void {
   const id = taskId(kind, projectId)
   tasks.value = tasks.value.filter((item) => item.id !== id)
+}
+
+export function backgroundTaskKindLabel(kind: BackgroundTaskKind): string {
+  switch (kind) {
+    case 'auto_write':
+      return 'AI 接管创作'
+    case 'tts_preload':
+      return '听书预合成'
+    default:
+      return kind
+  }
+}
+
+export function backgroundTaskProgressLabel(task: BackgroundTask): string | null {
+  if (task.totalCount <= 0) return null
+  if (task.kind === 'tts_preload') {
+    return `${task.completedCount}/${task.totalCount} 段`
+  }
+  const chapterPart =
+    task.currentChapter != null ? ` · 第 ${task.currentChapter} 章` : ''
+  return `${task.completedCount}/${task.totalCount} 章${chapterPart}`
 }
 
 export function dismissBackgroundTask(taskIdValue: string): void {

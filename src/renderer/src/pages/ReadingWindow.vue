@@ -2,9 +2,13 @@
 import {
   ChevronLeft,
   ChevronRight,
+  Headphones,
   Minus,
   Moon,
+  Pause,
+  Play,
   Settings2,
+  Square,
   Sun,
   SunMedium,
   X,
@@ -12,21 +16,25 @@ import {
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { route } from '@renderer/router'
 import { useNovelStore } from '@renderer/stores/novel'
+import ReadingSettingsSheet from '@renderer/components/reading/ReadingSettingsSheet.vue'
 import { bossHideReadingWindow, closeReadingWindow } from '@renderer/services/reading-service'
 import {
-  estimateCharsPerPage,
-  paginateChapterText,
-  readingProgressService,
   readingSettingsService,
-  type ReadingInteractionMode,
   type ReadingSettings,
   type ReadingTheme,
 } from '@renderer/services/reading-settings'
 import {
   acceleratorFromKeyboardEvent,
   eventMatchesAccelerator,
-  formatAcceleratorLabel,
 } from '@renderer/composables/shortcut-utils'
+import { useReadingNavigation } from '@renderer/composables/useReadingNavigation'
+import { useReadingTts } from '@renderer/composables/useReadingTts'
+import { useReadingTtsPreload } from '@renderer/composables/useReadingTtsPreload'
+import {
+  READING_TTS_STYLES,
+  buildTtsChapterLayout,
+  resolveStartSegmentIndex,
+} from '@renderer/services/reading-tts'
 
 const windowControls = window.windowControls
 const novelStore = useNovelStore()
@@ -35,8 +43,6 @@ const loading = ref(true)
 const loadError = ref('')
 const showSettings = ref(false)
 const settings = ref<ReadingSettings>(readingSettingsService.get())
-const chapterIndex = ref(0)
-const pageIndex = ref(0)
 const pageViewportRef = ref<HTMLElement | null>(null)
 const showChrome = ref(true)
 const readingStarted = ref(false)
@@ -44,7 +50,6 @@ const recordingBossKey = ref(false)
 const sheetDragOffset = ref(0)
 const sheetDragging = ref(false)
 
-let autoTurnTimer: number | undefined
 let wheelLock = false
 let chromeHideTimer: number | undefined
 let scrollSaveTimer: number | undefined
@@ -52,69 +57,182 @@ let scrollbarHideTimer: number | undefined
 let sheetDragStartY = 0
 let sheetDragStartOffset = 0
 let viewportPointerDown = false
+let viewportDragActive = false
+let viewportDragMoved = false
+let viewportDragStartY = 0
+let viewportDragStartScrollTop = 0
+let ttsAdvancingChapter = false
+let ttsAdvancingPage = false
+let stopTtsImpl = () => {}
+const ttsActiveRef = ref(false)
 
 const projectId = computed(() => route.value.segments[1] || '')
 const project = computed(() => novelStore.currentProject)
-const isPageMode = computed(() => settings.value.interactionMode === 'page')
 
-interface ReadableChapter {
-  chapterNumber: number
-  title: string
-  content: string
+function enterImmersiveReading() {
+  readingStarted.value = true
+  showChrome.value = false
+  clearChromeHideTimer()
 }
 
-const readableChapters = computed<ReadableChapter[]>(() => {
-  const current = project.value
-  if (!current) return []
+function onReadingTurn() {
+  if (!readingStarted.value) {
+    enterImmersiveReading()
+    return
+  }
+  if (showChrome.value) {
+    showChrome.value = false
+    clearChromeHideTimer()
+  }
+}
 
-  const fromChapters = [...(current.chapters || [])]
-    .filter((ch) => ch.content?.trim() || ch.summary?.trim())
-    .sort((a, b) => a.chapter_number - b.chapter_number)
-    .map((ch) => ({
-      chapterNumber: ch.chapter_number,
-      title: ch.title || `第 ${ch.chapter_number} 章`,
-      content: ch.content?.trim() || ch.summary?.trim() || '',
-    }))
-
-  if (fromChapters.length) return fromChapters
-
-  const outline = current.blueprint?.chapter_outline || []
-  return outline.map((item) => ({
-    chapterNumber: item.chapter_number,
-    title: item.title || `第 ${item.chapter_number} 章`,
-    content: item.summary?.trim() || '本章尚未写作，可在创作台生成正文。',
-  }))
+const navigation = useReadingNavigation({
+  projectId,
+  settings,
+  pageViewportRef,
+  novelStore,
+  onReadingTurn,
+  ttsActive: ttsActiveRef,
+  stopTts: () => stopTtsImpl(),
+  isTtsAdvancingChapter: () => ttsAdvancingChapter,
+  isTtsAdvancingPage: () => ttsAdvancingPage,
+  setTtsAdvancingChapter: (value) => {
+    ttsAdvancingChapter = value
+  },
 })
 
-const currentChapter = computed(() => readableChapters.value[chapterIndex.value])
+const {
+  chapterIndex,
+  pageIndex,
+  readableChapters,
+  currentChapter,
+  isPageMode,
+  charsPerPage,
+  currentPageText,
+  scrollChapterParagraphs,
+  canPrevPage,
+  canNextPage,
+  canPrevChapter,
+  canNextChapter,
+  progressLabel,
+  persistProgress,
+  ensureChapterLoaded,
+  resetAutoTurn,
+  disposeAutoTurn,
+  prevPage,
+  nextPage,
+  prevChapter,
+  nextChapter,
+  restoreProgress,
+} = navigation
 
-const charsPerPage = computed(() => {
-  const el = pageViewportRef.value
-  const width = el?.clientWidth ?? 420
-  const height = el?.clientHeight ?? 560
-  return estimateCharsPerPage(settings.value.fontSize, settings.value.lineHeight, width, height)
+const ttsPreload = useReadingTtsPreload({
+  projectId,
+  projectTitle: computed(() => project.value?.title || '阅读听书'),
+  isActive: ttsActiveRef,
+  getNextChapterText: () => readableChapters.value[chapterIndex.value + 1]?.content || null,
+  getVoice: () => settings.value.ttsVoice,
+  getStyleId: () => settings.value.ttsStyle,
 })
 
-const pages = computed(() => {
-  const chapter = currentChapter.value
-  if (!chapter) return ['暂无章节内容']
-  return paginateChapterText(chapter.content, charsPerPage.value)
+const tts = useReadingTts({
+  getChapterText: () => currentChapter.value?.content || '',
+  canNextChapter,
+  onRequestNextChapter: async () => {
+    if (!canNextChapter.value) return
+    ttsAdvancingChapter = true
+    nextChapter()
+    await nextTick()
+    const chapter = readableChapters.value[chapterIndex.value]
+    if (chapter) await ensureChapterLoaded(chapter)
+    ttsAdvancingChapter = false
+  },
+  onSegmentChange: (index, element) => {
+    if (index < 0) return
+    if (isPageMode.value) {
+      const targetPage = ttsPageBySegment.value[index] ?? 0
+      if (targetPage !== pageIndex.value) {
+        ttsAdvancingPage = true
+        pageIndex.value = targetPage
+        persistProgress()
+        void nextTick(() => {
+          ttsAdvancingPage = false
+        })
+      }
+      return
+    }
+    scrollToActiveSegment(element)
+  },
+  onNearChapterEnd: (remaining) => {
+    const next = readableChapters.value[chapterIndex.value + 1]
+    if (next) void ensureChapterLoaded(next)
+    ttsPreload.maybePreloadNextChapter(remaining)
+  },
+  getVoice: () => settings.value.ttsVoice,
+  getStyleId: () => settings.value.ttsStyle,
 })
 
-const currentPageText = computed(() => pages.value[pageIndex.value] ?? pages.value[0] ?? '')
-const scrollChapterParagraphs = computed(() => {
+const {
+  isActive: ttsActive,
+  isPlaying: ttsPlaying,
+  isPaused: ttsPaused,
+  isLoading: ttsLoading,
+  currentSegmentIndex: ttsCurrentSegmentIndex,
+  segments: ttsSegments,
+  errorMessage: ttsErrorMessage,
+  setSegmentElement,
+  start: startTts,
+  pause: pauseTts,
+  resume: resumeTts,
+  stop: stopTts,
+  toggle: toggleTts,
+} = tts
+
+stopTtsImpl = () => {
+  stopTts()
+  ttsPreload.stop()
+}
+
+watch(ttsActive, (active) => {
+  ttsActiveRef.value = active
+  resetAutoTurn()
+}, { immediate: true })
+
+const scrollDisplaySegments = computed(() => {
   const chapter = currentChapter.value
   if (!chapter?.content) return ['暂无章节内容']
-  return chapter.content.split(/\n+/).filter(Boolean)
+  if (ttsActive.value && ttsSegments.value.length) return ttsSegments.value
+  return scrollChapterParagraphs.value
 })
 
-const totalPages = computed(() => pages.value.length)
-const canPrevPage = computed(() => pageIndex.value > 0 || chapterIndex.value > 0)
-const canNextPage = computed(
-  () => pageIndex.value < totalPages.value - 1 || chapterIndex.value < readableChapters.value.length - 1
-)
-const canPrevChapter = computed(() => chapterIndex.value > 0)
-const canNextChapter = computed(() => chapterIndex.value < readableChapters.value.length - 1)
+const ttsStyleLabel = computed(() => {
+  return READING_TTS_STYLES.find((item) => item.id === settings.value.ttsStyle)?.label || '自然朗读'
+})
+
+const ttsChapterLayout = computed(() => {
+  const chapter = currentChapter.value
+  if (!chapter?.content) {
+    return { segments: [] as string[], pageBySegment: [] as number[] }
+  }
+  const layout = buildTtsChapterLayout(chapter.content, charsPerPage.value)
+  return { segments: layout.segments, pageBySegment: layout.pageBySegment }
+})
+
+const ttsPageBySegment = computed(() => ttsChapterLayout.value.pageBySegment)
+const ttsFallbackSegmentCount = computed(() => ttsChapterLayout.value.segments.length)
+
+const pageTtsEntries = computed(() => {
+  if (!ttsActive.value) return []
+  const segments = ttsSegments.value.length ? ttsSegments.value : ttsChapterLayout.value.segments
+  const pageMap = ttsPageBySegment.value
+  return segments
+    .map((text, globalIndex) => ({
+      text,
+      globalIndex,
+      page: pageMap[globalIndex] ?? 0,
+    }))
+    .filter((entry) => entry.page === pageIndex.value)
+})
 
 const readerStyle = computed(() => ({
   fontSize: `${settings.value.fontSize}px`,
@@ -136,31 +254,62 @@ function showScrollbarTemporarily() {
   }, 900)
 }
 
-function jumpScrollTop(value = 0) {
-  const el = pageViewportRef.value
-  if (!el) return
-  el.scrollTop = value
+function scrollToActiveSegment(element: HTMLElement | null) {
+  const viewport = pageViewportRef.value
+  if (!viewport || !element) return
+
+  const viewportRect = viewport.getBoundingClientRect()
+  const targetRect = element.getBoundingClientRect()
+  const targetTop = targetRect.top - viewportRect.top + viewport.scrollTop
+  const idealTop = targetTop - viewport.clientHeight * 0.28
+
+  viewport.scrollTo({
+    top: Math.max(0, idealTop),
+    behavior: ttsActive.value ? 'smooth' : 'auto',
+  })
 }
 
-const progressLabel = computed(() => {
-  const chapterPart = `第 ${chapterIndex.value + 1}/${readableChapters.value.length} 章`
-  if (!isPageMode.value) return chapterPart
-  return `${chapterPart} · ${pageIndex.value + 1}/${totalPages.value} 页`
-})
+function setSegmentRef(index: number, element: Element | null) {
+  setSegmentElement(index, element instanceof HTMLElement ? element : null)
+}
+
+function resolveTtsStartIndex(): number {
+  const chapterText = currentChapter.value?.content || ''
+  const viewport = pageViewportRef.value
+  return resolveStartSegmentIndex({
+    chapterText,
+    charsPerPage: charsPerPage.value,
+    isPageMode: isPageMode.value,
+    pageIndex: pageIndex.value,
+    scrollTop: viewport?.scrollTop ?? 0,
+    scrollHeight: viewport?.scrollHeight ?? 0,
+    clientHeight: viewport?.clientHeight ?? 0,
+  })
+}
+
+function startListening() {
+  enterImmersiveReading()
+  void startTts(resolveTtsStartIndex())
+}
+
+function stopListening() {
+  stopTtsImpl()
+}
+
+function toggleListening() {
+  if (ttsActive.value) {
+    if (ttsPlaying.value) pauseTts()
+    else if (ttsPaused.value) resumeTts()
+    else toggleTts()
+    return
+  }
+  startListening()
+}
 
 function themeIcon(theme: ReadingTheme) {
   if (theme === 'dark') return Moon
   if (theme === 'sepia') return SunMedium
   return Sun
-}
-
-function persistProgress(scrollTop?: number) {
-  if (!projectId.value) return
-  readingProgressService.save(projectId.value, {
-    chapterIndex: chapterIndex.value,
-    pageIndex: pageIndex.value,
-    scrollTop,
-  })
 }
 
 function applyWindowEffects() {
@@ -176,26 +325,6 @@ function updateSettings(partial: Partial<ReadingSettings>) {
   settings.value = readingSettingsService.save(partial)
   applyWindowEffects()
   resetAutoTurn()
-}
-
-function adjustFontSize(delta: number) {
-  updateSettings({ fontSize: Math.min(28, Math.max(14, settings.value.fontSize + delta)) })
-}
-
-function adjustLineHeight(delta: number) {
-  updateSettings({ lineHeight: Math.min(2.4, Math.max(1.4, +(settings.value.lineHeight + delta).toFixed(2))) })
-}
-
-function adjustOpacity(delta: number) {
-  updateSettings({ opacity: Math.min(1, Math.max(0.55, +(settings.value.opacity + delta).toFixed(2))) })
-}
-
-function toggleSetting(key: 'alwaysOnTop' | 'autoTurn' | 'bossKeyEnabled') {
-  updateSettings({ [key]: !settings.value[key] })
-}
-
-function setInteractionMode(mode: ReadingInteractionMode) {
-  updateSettings({ interactionMode: mode })
 }
 
 function cycleTheme() {
@@ -217,23 +346,6 @@ function scheduleChromeAutoHide() {
   }, 3200)
 }
 
-function enterImmersiveReading() {
-  readingStarted.value = true
-  showChrome.value = false
-  clearChromeHideTimer()
-}
-
-function onReadingTurn() {
-  if (!readingStarted.value) {
-    enterImmersiveReading()
-    return
-  }
-  if (showChrome.value) {
-    showChrome.value = false
-    clearChromeHideTimer()
-  }
-}
-
 function revealChrome() {
   showChrome.value = true
   scheduleChromeAutoHide()
@@ -241,7 +353,7 @@ function revealChrome() {
 
 function onViewportClick(event: MouseEvent) {
   if (showSettings.value) return
-  if (viewportPointerDown) return
+  if (viewportPointerDown || viewportDragMoved) return
   const selection = window.getSelection()
   if (selection && !selection.isCollapsed && selection.toString().trim()) return
   if (event.detail > 1) return
@@ -255,12 +367,53 @@ function onViewportClick(event: MouseEvent) {
   }
 }
 
-function onViewportPointerDown() {
+function onViewportPointerDown(event: PointerEvent) {
   viewportPointerDown = false
+  viewportDragMoved = false
+
+  if (event.button !== 0 || showSettings.value || isPageMode.value) return
+
+  const el = pageViewportRef.value
+  if (!el) return
+
+  viewportDragActive = true
+  viewportDragStartY = event.clientY
+  viewportDragStartScrollTop = el.scrollTop
+  el.classList.add('is-dragging')
+  el.setPointerCapture(event.pointerId)
 }
 
-function onViewportPointerMove() {
+function onViewportPointerMove(event: PointerEvent) {
+  if (viewportDragActive) {
+    const el = pageViewportRef.value
+    if (!el) return
+    const delta = event.clientY - viewportDragStartY
+    if (Math.abs(delta) > 4) {
+      viewportDragMoved = true
+      viewportPointerDown = true
+    }
+    el.scrollTop = viewportDragStartScrollTop - delta
+    showScrollbarTemporarily()
+    return
+  }
+
   viewportPointerDown = true
+}
+
+function onViewportPointerUp(event: PointerEvent) {
+  if (!viewportDragActive) return
+  viewportDragActive = false
+  const el = pageViewportRef.value
+  el?.classList.remove('is-dragging')
+  el?.releasePointerCapture(event.pointerId)
+}
+
+function onViewportPointerCancel(event: PointerEvent) {
+  if (!viewportDragActive) return
+  viewportDragActive = false
+  const el = pageViewportRef.value
+  el?.classList.remove('is-dragging')
+  el?.releasePointerCapture(event.pointerId)
 }
 
 function resetSheetDrag() {
@@ -290,10 +443,6 @@ function finishSheetDrag(event: PointerEvent) {
   const shouldClose = sheetDragOffset.value > 96
   resetSheetDrag()
   if (shouldClose) showSettings.value = false
-}
-
-function onSheetDragCancel() {
-  resetSheetDrag()
 }
 
 function onWheel(event: WheelEvent) {
@@ -355,78 +504,6 @@ function onScroll() {
   }, 180)
 }
 
-function resetAutoTurn() {
-  if (autoTurnTimer) window.clearInterval(autoTurnTimer)
-  autoTurnTimer = undefined
-  if (!settings.value.autoTurn || !isPageMode.value) return
-  autoTurnTimer = window.setInterval(() => {
-    if (canNextPage.value) nextPage()
-  }, settings.value.autoTurnSeconds * 1000)
-}
-
-function prevPage() {
-  if (pageIndex.value > 0) {
-    pageIndex.value -= 1
-    persistProgress()
-    onReadingTurn()
-    return
-  }
-  if (chapterIndex.value > 0) {
-    chapterIndex.value -= 1
-    pageIndex.value = Math.max(
-      0,
-      paginateChapterText(readableChapters.value[chapterIndex.value]?.content || '', charsPerPage.value).length - 1
-    )
-    persistProgress()
-    onReadingTurn()
-  }
-}
-
-function nextPage() {
-  if (pageIndex.value < totalPages.value - 1) {
-    pageIndex.value += 1
-    persistProgress()
-    onReadingTurn()
-    return
-  }
-  if (chapterIndex.value < readableChapters.value.length - 1) {
-    chapterIndex.value += 1
-    pageIndex.value = 0
-    persistProgress()
-    onReadingTurn()
-  }
-}
-
-function prevChapter() {
-  if (!canPrevChapter.value) return
-  chapterIndex.value -= 1
-  pageIndex.value = 0
-  persistProgress(0)
-  onReadingTurn()
-  void nextTick().then(() => jumpScrollTop(0))
-}
-
-function nextChapter() {
-  if (!canNextChapter.value) return
-  chapterIndex.value += 1
-  pageIndex.value = 0
-  persistProgress(0)
-  onReadingTurn()
-  void nextTick().then(() => jumpScrollTop(0))
-}
-
-async function ensureChapterLoaded(chapter: ReadableChapter) {
-  const current = project.value
-  if (!current) return
-  const existing = current.chapters?.find((ch) => ch.chapter_number === chapter.chapterNumber)
-  if (existing?.content?.trim()) return
-  try {
-    await novelStore.loadChapter(chapter.chapterNumber)
-  } catch {
-    /* ignore missing chapter */
-  }
-}
-
 async function loadReader() {
   loading.value = true
   loadError.value = ''
@@ -435,20 +512,7 @@ async function loadReader() {
   try {
     if (!projectId.value) throw new Error('未指定作品')
     await novelStore.loadProject(projectId.value, true)
-
-    const saved = readingProgressService.get(projectId.value)
-    if (saved) {
-      chapterIndex.value = saved.chapterIndex
-      pageIndex.value = saved.pageIndex
-    }
-
-    const first = readableChapters.value[chapterIndex.value]
-    if (first) await ensureChapterLoaded(first)
-    if (!isPageMode.value) {
-      await nextTick()
-      const saved = readingProgressService.get(projectId.value)
-      jumpScrollTop(saved?.scrollTop ?? 0)
-    }
+    await restoreProgress()
   } catch (error) {
     loadError.value = error instanceof Error ? error.message : '加载失败'
   } finally {
@@ -518,32 +582,6 @@ function onKeydown(event: KeyboardEvent) {
   }
 }
 
-function startBossKeyRecording() {
-  recordingBossKey.value = true
-}
-
-function cancelBossKeyRecording() {
-  recordingBossKey.value = false
-}
-
-watch(chapterIndex, async (index) => {
-  const chapter = readableChapters.value[index]
-  if (chapter) await ensureChapterLoaded(chapter)
-  pageIndex.value = 0
-  persistProgress(isPageMode.value ? undefined : 0)
-  if (!isPageMode.value) {
-    await nextTick()
-    jumpScrollTop(0)
-  }
-})
-
-watch(
-  () => [settings.value.fontSize, settings.value.lineHeight, charsPerPage.value, settings.value.interactionMode],
-  () => {
-    if (isPageMode.value) pageIndex.value = 0
-  }
-)
-
 watch(showSettings, (open) => {
   if (open) {
     showChrome.value = true
@@ -568,10 +606,11 @@ watch(pageViewportRef, (el, _, onCleanup) => {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown, true)
-  if (autoTurnTimer) window.clearInterval(autoTurnTimer)
+  disposeAutoTurn()
   if (scrollSaveTimer) window.clearTimeout(scrollSaveTimer)
   if (scrollbarHideTimer) window.clearTimeout(scrollbarHideTimer)
   clearChromeHideTimer()
+  stopListening()
   if (typeof window.api.setAlwaysOnTop === 'function') {
     void window.api.setAlwaysOnTop(false)
   }
@@ -588,6 +627,7 @@ onUnmounted(() => {
         'reader--chrome-visible': chromeVisible,
         'reader--immersive': readingStarted && !chromeVisible,
         'reader--scroll-mode': !isPageMode,
+        'reader--listening': ttsActive,
       },
     ]"
     :data-theme="settings.theme"
@@ -598,6 +638,17 @@ onUnmounted(() => {
         <span v-if="currentChapter">{{ currentChapter.title }}</span>
       </div>
       <div class="reader-titlebar__actions no-drag">
+        <button
+          type="button"
+          class="reader-icon-btn"
+          :class="{ 'is-active': ttsActive }"
+          :title="ttsActive ? '听书控制' : '开始听书'"
+          @click="toggleListening"
+        >
+          <Pause v-if="ttsPlaying" :size="16" />
+          <Play v-else-if="ttsPaused" :size="16" />
+          <Headphones v-else :size="16" />
+        </button>
         <button type="button" class="reader-icon-btn" title="切换主题" @click="cycleTheme">
           <component :is="themeIcon(settings.theme)" :size="16" />
         </button>
@@ -645,15 +696,59 @@ onUnmounted(() => {
         @click="onViewportClick"
         @pointerdown="onViewportPointerDown"
         @pointermove="onViewportPointerMove"
+        @pointerup="onViewportPointerUp"
+        @pointercancel="onViewportPointerCancel"
         @scroll="onScroll"
       >
         <article v-if="isPageMode" class="reader-page reader-page--paged">
-          <p v-for="(paragraph, idx) in currentPageText.split('\n\n')" :key="idx">{{ paragraph }}</p>
+          <template v-if="ttsActive && pageTtsEntries.length">
+            <p
+              v-for="entry in pageTtsEntries"
+              :key="`${chapterIndex}-${pageIndex}-${entry.globalIndex}`"
+              :ref="(el) => setSegmentRef(entry.globalIndex, el as Element | null)"
+              :class="{
+                'reader-segment--active': ttsCurrentSegmentIndex === entry.globalIndex,
+                'reader-segment--loading': ttsLoading && ttsCurrentSegmentIndex === entry.globalIndex,
+              }"
+            >
+              {{ entry.text }}
+            </p>
+          </template>
+          <template v-else>
+            <p v-for="(paragraph, idx) in currentPageText.split('\n\n')" :key="idx">{{ paragraph }}</p>
+          </template>
         </article>
         <article v-else class="reader-page reader-page--scroll">
-          <p v-for="(paragraph, idx) in scrollChapterParagraphs" :key="idx">{{ paragraph }}</p>
+          <p
+            v-for="(segment, idx) in scrollDisplaySegments"
+            :key="`${chapterIndex}-${idx}`"
+            :ref="(el) => setSegmentRef(idx, el as Element | null)"
+            :class="{
+              'reader-segment--active': ttsActive && ttsCurrentSegmentIndex === idx,
+              'reader-segment--loading': ttsLoading && ttsCurrentSegmentIndex === idx,
+            }"
+          >
+            {{ segment }}
+          </p>
         </article>
       </main>
+
+      <div v-if="ttsActive" class="reader-tts-bar reader-chrome no-drag">
+        <div class="reader-tts-bar__meta">
+          <strong>听书中</strong>
+          <span>{{ ttsStyleLabel }} · 第 {{ ttsCurrentSegmentIndex + 1 }}/{{ ttsSegments.length || ttsFallbackSegmentCount }} 段</span>
+          <span v-if="ttsErrorMessage" class="reader-tts-bar__error">{{ ttsErrorMessage }}</span>
+        </div>
+        <div class="reader-tts-bar__actions">
+          <button type="button" class="reader-tts-btn" title="播放/暂停" @click="toggleTts()">
+            <Pause v-if="ttsPlaying" :size="16" />
+            <Play v-else :size="16" />
+          </button>
+          <button type="button" class="reader-tts-btn reader-tts-btn--stop" title="停止听书" @click="stopListening()">
+            <Square :size="14" />
+          </button>
+        </div>
+      </div>
 
       <footer class="reader-footer reader-chrome no-drag">
         <button
@@ -678,142 +773,23 @@ onUnmounted(() => {
       </footer>
     </template>
 
-    <Transition name="reader-sheet">
-      <div v-if="showSettings" class="reader-sheet-mask no-drag" @click.self="showSettings = false">
-        <aside
-          class="reader-sheet"
-          :class="{ 'is-dragging': sheetDragging }"
-          :style="sheetDragOffset > 0 ? { transform: `translateY(${sheetDragOffset}px)` } : undefined"
-        >
-          <div
-            class="reader-sheet__handle"
-            aria-hidden="true"
-            @pointerdown="onSheetDragStart"
-            @pointermove="onSheetDragMove"
-            @pointerup="finishSheetDrag"
-            @pointercancel="onSheetDragCancel"
-          />
-          <header class="reader-sheet__head">
-            <h3>阅读设置</h3>
-            <button type="button" class="reader-sheet__done" @click="showSettings = false">完成</button>
-          </header>
-
-          <div class="reader-sheet__body">
-            <section class="reader-sheet__section">
-              <p class="reader-sheet__label">阅读方式</p>
-              <div class="reader-segment">
-                <button
-                  type="button"
-                  class="reader-segment__btn"
-                  :class="{ active: settings.interactionMode === 'page' }"
-                  @click="setInteractionMode('page')"
-                >
-                  翻页
-                </button>
-                <button
-                  type="button"
-                  class="reader-segment__btn"
-                  :class="{ active: settings.interactionMode === 'scroll' }"
-                  @click="setInteractionMode('scroll')"
-                >
-                  滚动
-                </button>
-              </div>
-            </section>
-
-            <section class="reader-sheet__section">
-              <p class="reader-sheet__label">主题</p>
-              <div class="reader-segment reader-segment--3">
-                <button
-                  v-for="item in (['light', 'sepia', 'dark'] as ReadingTheme[])"
-                  :key="item"
-                  type="button"
-                  class="reader-segment__btn"
-                  :class="{ active: settings.theme === item }"
-                  @click="updateSettings({ theme: item })"
-                >
-                  {{ item === 'light' ? '浅色' : item === 'dark' ? '深色' : '护眼' }}
-                </button>
-              </div>
-            </section>
-
-            <section class="reader-sheet__section">
-              <div class="reader-sheet__row">
-                <span>字号</span>
-                <div class="reader-stepper">
-                  <button type="button" aria-label="减小字号" @click="adjustFontSize(-1)">−</button>
-                  <strong>{{ settings.fontSize }}</strong>
-                  <button type="button" aria-label="增大字号" @click="adjustFontSize(1)">+</button>
-                </div>
-              </div>
-              <div class="reader-sheet__row">
-                <span>行距</span>
-                <div class="reader-stepper">
-                  <button type="button" aria-label="减小行距" @click="adjustLineHeight(-0.1)">−</button>
-                  <strong>{{ settings.lineHeight.toFixed(1) }}</strong>
-                  <button type="button" aria-label="增大行距" @click="adjustLineHeight(0.1)">+</button>
-                </div>
-              </div>
-              <div class="reader-sheet__row">
-                <span>透明度</span>
-                <div class="reader-stepper">
-                  <button type="button" aria-label="降低透明度" @click="adjustOpacity(-0.05)">−</button>
-                  <strong>{{ Math.round(settings.opacity * 100) }}%</strong>
-                  <button type="button" aria-label="提高透明度" @click="adjustOpacity(0.05)">+</button>
-                </div>
-              </div>
-            </section>
-
-            <section class="reader-sheet__section">
-              <button type="button" class="reader-sheet__toggle" @click="toggleSetting('alwaysOnTop')">
-                <span>窗口置顶</span>
-                <i class="reader-switch" :class="{ 'is-on': settings.alwaysOnTop }" />
-              </button>
-              <button
-                v-if="isPageMode"
-                type="button"
-                class="reader-sheet__toggle"
-                @click="toggleSetting('autoTurn')"
-              >
-                <span>自动翻页</span>
-                <i class="reader-switch" :class="{ 'is-on': settings.autoTurn }" />
-              </button>
-              <div v-if="isPageMode && settings.autoTurn" class="reader-sheet__row">
-                <span>翻页间隔</span>
-                <div class="reader-stepper">
-                  <button type="button" @click="updateSettings({ autoTurnSeconds: Math.max(5, settings.autoTurnSeconds - 1) })">−</button>
-                  <strong>{{ settings.autoTurnSeconds }} 秒</strong>
-                  <button type="button" @click="updateSettings({ autoTurnSeconds: Math.min(120, settings.autoTurnSeconds + 1) })">+</button>
-                </div>
-              </div>
-            </section>
-
-            <section class="reader-sheet__section">
-              <button type="button" class="reader-sheet__toggle" @click="toggleSetting('bossKeyEnabled')">
-                <span>老板键</span>
-                <i class="reader-switch" :class="{ 'is-on': settings.bossKeyEnabled }" />
-              </button>
-              <button
-                type="button"
-                class="reader-sheet__key"
-                :class="{ 'reader-sheet__key--recording': recordingBossKey }"
-                :disabled="!settings.bossKeyEnabled"
-                @click="startBossKeyRecording"
-              >
-                {{ recordingBossKey ? '按下快捷键…' : formatAcceleratorLabel(settings.bossKeyAccelerator) }}
-              </button>
-              <button
-                v-if="recordingBossKey"
-                type="button"
-                class="reader-sheet__link"
-                @click="cancelBossKeyRecording"
-              >
-                取消录制
-              </button>
-            </section>
-          </div>
-        </aside>
-      </div>
-    </Transition>
+    <ReadingSettingsSheet
+      v-if="showSettings"
+      :settings="settings"
+      :is-page-mode="isPageMode"
+      :tts-active="ttsActive"
+      :recording-boss-key="recordingBossKey"
+      :sheet-dragging="sheetDragging"
+      :sheet-drag-offset="sheetDragOffset"
+      @close="showSettings = false"
+      @update:settings="updateSettings"
+      @start-listening="startListening()"
+      @start-boss-key-recording="recordingBossKey = true"
+      @cancel-boss-key-recording="recordingBossKey = false"
+      @sheet-drag-start="onSheetDragStart"
+      @sheet-drag-move="onSheetDragMove"
+      @sheet-drag-end="finishSheetDrag"
+      @sheet-drag-cancel="resetSheetDrag()"
+    />
   </div>
 </template>
