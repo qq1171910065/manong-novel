@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { Copy, Eye, Heart, MoreVertical, Pencil, Trash2 } from 'lucide-vue-next'
+import { Copy, Eye, Feather, Heart, MoreVertical, Pencil, Trash2 } from 'lucide-vue-next'
 
 withDefaults(
   defineProps<{
@@ -8,6 +8,8 @@ withDefaults(
     showPreview?: boolean
     showFavorite?: boolean
     showEdit?: boolean
+    showCreate?: boolean
+    showRead?: boolean
     showDuplicate?: boolean
     showDelete?: boolean
   }>(),
@@ -16,6 +18,8 @@ withDefaults(
     showPreview: true,
     showFavorite: false,
     showEdit: true,
+    showCreate: false,
+    showRead: false,
     showDuplicate: false,
     showDelete: true,
   }
@@ -24,6 +28,8 @@ withDefaults(
 const emit = defineEmits<{
   preview: []
   edit: []
+  create: []
+  read: []
   duplicate: []
   favorite: []
   delete: []
@@ -59,6 +65,16 @@ function closeMenu() {
 function onEdit() {
   closeMenu()
   emit('edit')
+}
+
+function onCreate() {
+  closeMenu()
+  emit('create')
+}
+
+function onRead() {
+  closeMenu()
+  emit('read')
 }
 
 function onDuplicate() {
@@ -135,6 +151,26 @@ onBeforeUnmount(() => {
         >
           <Pencil :size="15" />
           <span>编辑</span>
+        </button>
+        <button
+          v-if="showCreate"
+          type="button"
+          class="material-library-card-menu__item"
+          role="menuitem"
+          @click="onCreate"
+        >
+          <Feather :size="15" />
+          <span>创作</span>
+        </button>
+        <button
+          v-if="showRead"
+          type="button"
+          class="material-library-card-menu__item"
+          role="menuitem"
+          @click="onRead"
+        >
+          <Eye :size="15" />
+          <span>阅读</span>
         </button>
         <button
           v-if="showDuplicate"

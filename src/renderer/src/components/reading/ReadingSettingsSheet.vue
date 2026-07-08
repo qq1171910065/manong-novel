@@ -202,7 +202,7 @@ function shortStyleLabel(label: string) {
               <button
                 type="button"
                 aria-label="降低滚动速度"
-                @click="patchSettings({ autoScrollSpeed: Math.max(15, settings.autoScrollSpeed - 5) })"
+                @click="patchSettings({ autoScrollSpeed: Math.max(120, settings.autoScrollSpeed - 20) })"
               >
                 −
               </button>
@@ -210,7 +210,7 @@ function shortStyleLabel(label: string) {
               <button
                 type="button"
                 aria-label="提高滚动速度"
-                @click="patchSettings({ autoScrollSpeed: Math.min(120, settings.autoScrollSpeed + 5) })"
+                @click="patchSettings({ autoScrollSpeed: Math.min(600, settings.autoScrollSpeed + 20) })"
               >
                 +
               </button>

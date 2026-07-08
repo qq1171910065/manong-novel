@@ -15,11 +15,13 @@ const props = withDefaults(
     recommendedIds?: string[]
     loading?: boolean
     emptyHint?: string
+    hideScrollbar?: boolean
   }>(),
   {
     recommendedIds: () => [],
     loading: false,
     emptyHint: '暂无可用模型，请先刷新网关连接。',
+    hideScrollbar: false,
   }
 )
 
@@ -77,7 +79,11 @@ function isSelected(id: string) {
         <NEmpty size="small" :description="emptyHint" />
       </div>
 
-      <div v-else class="gateway-model-picker__scroll">
+      <div
+        v-else
+        class="gateway-model-picker__scroll"
+        :class="{ 'gateway-model-picker__scroll--no-scrollbar': hideScrollbar }"
+      >
         <section v-if="recommendedFiltered.length" class="gateway-model-picker__section">
           <h4 class="gateway-model-picker__heading">推荐</h4>
           <div class="gateway-model-picker__list">
@@ -156,6 +162,12 @@ function isSelected(id: string) {
   max-height: min(52vh, 420px);
   overflow: auto;
   padding-right: 2px;
+}
+
+.gateway-model-picker__scroll--no-scrollbar {
+  max-height: none;
+  overflow: visible;
+  padding-right: 0;
 }
 
 .gateway-model-picker__section {

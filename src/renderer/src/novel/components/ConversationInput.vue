@@ -77,6 +77,8 @@ interface Props {
   uiControl: UIControl | null
   loading: boolean
   variant?: 'chat' | 'polish'
+  /** 用于 sessionStorage 暂存未发送草稿，关闭弹窗后可恢复 */
+  draftStorageKey?: string
 }
 
 const SEND_HINT = 'Enter 发送，Shift+Enter 换行'
@@ -151,6 +153,37 @@ const adjustTextareaHeight = () => {
 
 const handleTextareaInput = () => {
   adjustTextareaHeight()
+  persistDraft()
+}
+
+function loadDraft() {
+  if (!props.draftStorageKey || typeof sessionStorage === 'undefined') return
+  try {
+    const saved = sessionStorage.getItem(props.draftStorageKey)
+    if (saved) textInput.value = saved
+  } catch {
+    /* ignore */
+  }
+}
+
+function persistDraft() {
+  if (!props.draftStorageKey || typeof sessionStorage === 'undefined') return
+  try {
+    const value = textInput.value
+    if (value.trim()) sessionStorage.setItem(props.draftStorageKey, value)
+    else sessionStorage.removeItem(props.draftStorageKey)
+  } catch {
+    /* ignore */
+  }
+}
+
+function clearDraft() {
+  if (!props.draftStorageKey || typeof sessionStorage === 'undefined') return
+  try {
+    sessionStorage.removeItem(props.draftStorageKey)
+  } catch {
+    /* ignore */
+  }
 }
 
 const handleOptionSelect = (id: string, label: string) => {
@@ -196,6 +229,7 @@ const handleTextSubmit = () => {
   if (!canSubmitText()) return
   emit('submit', { id: 'text_input', value: textInput.value.trim() })
   textInput.value = ''
+  clearDraft()
   nextTick(() => adjustTextareaHeight())
 }
 
@@ -210,6 +244,7 @@ watch(
   async (newControl) => {
     isManualInput.value = false
     textInput.value = ''
+    clearDraft()
     selectedOptionIds.value = new Set()
     await nextTick()
     adjustTextareaHeight()
@@ -227,6 +262,8 @@ watch(isChoiceMode, async () => {
 })
 
 onMounted(() => {
+  loadDraft()
+  nextTick(() => adjustTextareaHeight())
   if (typeof ResizeObserver === 'undefined') return
   choicesResizeObserver = new ResizeObserver(() => {
     reportChoicesHeight()
@@ -238,6 +275,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  persistDraft()
   choicesResizeObserver?.disconnect()
   choicesResizeObserver = null
 })

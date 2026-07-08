@@ -59,25 +59,15 @@
 
         <!-- 章节列表 -->
         <div
-          ref="listContainer"
           class="flex-1 min-h-0 overflow-y-auto"
           :class="embedded ? 'wd-no-scrollbar wd-sidebar__list' : ''"
         >
           <div :class="embedded ? 'wd-sidebar__list-head' : 'p-6 pb-4'">
             <div class="flex items-center justify-between" :class="embedded ? '' : 'mb-4'">
               <h3 :class="embedded ? 'wd-sidebar__title' : 'md-title-medium font-semibold'">章节大纲</h3>
-              <div class="flex items-center gap-2">
-                <button
-                  v-if="hasIncompleteChapters"
-                  @click.stop="scrollToFirstIncompleteChapter"
-                  class="md-btn md-btn-text md-ripple"
-                >
-                  定位到未完成
-                </button>
-                <span :class="embedded ? 'wd-sidebar__count' : 'md-chip md-chip-filter selected'">
-                  {{ totalChapters }} 章
-                </span>
-              </div>
+              <span :class="embedded ? 'wd-sidebar__count' : 'md-chip md-chip-filter selected'">
+                {{ totalChapters }} 章
+              </span>
             </div>
           </div>
 
@@ -89,7 +79,6 @@
               <li
                 v-for="(chapter, index) in project.blueprint.chapter_outline"
                 :key="chapter.chapter_number"
-                :ref="el => setChapterRef(chapter.chapter_number, el)"
                 class="nd-timeline__item wd-outline-timeline__item"
                 :class="{
                   'is-selected': selectedChapterNumber === chapter.chapter_number,
@@ -111,36 +100,17 @@
                   <div class="nd-timeline__head">
                     <h4 class="nd-timeline__title">{{ chapter.title || `第${chapter.chapter_number}章` }}</h4>
                     <div class="wd-outline-timeline__actions">
-                      <span class="wd-outline-timeline__status">{{ chapterStatusLabel(chapter.chapter_number) }}</span>
-                      <button
-                        v-if="!isChapterCompleted(chapter.chapter_number)"
-                        @click.stop="$emit('editChapter', chapter)"
-                        class="md-icon-btn md-ripple wd-outline-timeline__action"
-                        title="编辑大纲"
-                      >
-                        <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
-                          <path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z"></path>
-                          <path fill-rule="evenodd" d="M2 6a2 2 0 012-2h4a1 1 0 010 2H4v10h10v-4a1 1 0 112 0v4a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" clip-rule="evenodd"></path>
-                        </svg>
-                      </button>
-                      <button
-                        v-if="canGenerateChapter(chapter.chapter_number) || isChapterFailed(chapter.chapter_number) || hasChapterInProgress(chapter.chapter_number)"
-                        @click.stop="confirmGenerateChapter(chapter.chapter_number)"
-                        :disabled="autoWriteLocked || generatingChapter === chapter.chapter_number || isChapterGenerating(chapter.chapter_number)"
-                        class="md-icon-btn md-ripple wd-outline-timeline__action disabled:opacity-50"
-                        style="color: var(--md-primary);"
-                        :title="isChapterCompleted(chapter.chapter_number) ? '重新生成' : isChapterFailed(chapter.chapter_number) ? '重试' : hasChapterInProgress(chapter.chapter_number) ? '重新生成版本' : '开始创作'"
-                      >
-                        <svg v-if="generatingChapter === chapter.chapter_number || isChapterGenerating(chapter.chapter_number)" class="w-3.5 h-3.5 animate-spin" fill="currentColor" viewBox="0 0 20 20">
-                          <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"></path>
-                        </svg>
-                        <svg v-else class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
-                          <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"></path>
-                        </svg>
-                      </button>
+                      <span v-if="chapterWordCountLabel(chapter.chapter_number)" class="wd-outline-timeline__meta">
+                        {{ chapterWordCountLabel(chapter.chapter_number) }}
+                      </span>
                     </div>
                   </div>
-                  <p v-if="chapter.summary" class="nd-timeline__summary">{{ chapter.summary }}</p>
+                  <p
+                    v-if="chapter.summary"
+                    class="nd-timeline__summary wd-outline-timeline__summary-preview"
+                  >
+                    {{ chapter.summary }}
+                  </p>
                   <p v-else class="nd-timeline__summary wd-outline-timeline__empty">暂无摘要</p>
                 </div>
               </li>
@@ -150,7 +120,6 @@
               <div
                 v-for="(chapter, index) in project.blueprint.chapter_outline"
                 :key="chapter.chapter_number"
-                :ref="el => setChapterRef(chapter.chapter_number, el)"
                 @click="$emit('selectChapter', chapter.chapter_number)"
                 :class="[
                   'group cursor-pointer p-4 m3-chapter-card m3-stagger',
@@ -259,17 +228,6 @@
                   <!-- 章节操作按钮 -->
                   <div class="flex items-center opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                     <button
-                      v-if="!isChapterCompleted(chapter.chapter_number)"
-                      @click.stop="$emit('editChapter', chapter)"
-                      class="md-icon-btn md-ripple"
-                      title="编辑大纲"
-                    >
-                      <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                        <path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z"></path>
-                        <path fill-rule="evenodd" d="M2 6a2 2 0 012-2h4a1 1 0 010 2H4v10h10v-4a1 1 0 112 0v4a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" clip-rule="evenodd"></path>
-                      </svg>
-                    </button>
-                    <button
                       v-if="canGenerateChapter(chapter.chapter_number) || isChapterFailed(chapter.chapter_number) || hasChapterInProgress(chapter.chapter_number)"
                       @click.stop="confirmGenerateChapter(chapter.chapter_number)"
                       :disabled="autoWriteLocked || generatingChapter === chapter.chapter_number || isChapterGenerating(chapter.chapter_number)"
@@ -295,7 +253,7 @@
               </svg>
               <p>暂无章节大纲</p>
             </div>
-            <div v-if="selectedForDeletion.length > 0" class="mt-4">
+            <div v-if="!embedded && selectedForDeletion.length > 0" class="mt-4">
               <button
                 @click="handleDeleteSelected"
                 class="md-btn md-btn-filled md-ripple w-full flex items-center justify-center gap-2"
@@ -307,7 +265,7 @@
                 <span>删除选中的 {{ selectedForDeletion.length }} 章</span>
               </button>
             </div>
-            <div class="mt-4">
+            <div v-if="!embedded" class="mt-4">
               <button
                 @click="$emit('generateOutline')"
                 :disabled="autoWriteLocked || props.isGeneratingOutline"
@@ -330,8 +288,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, nextTick } from 'vue'
-import type { ComponentPublicInstance } from 'vue'
+import { computed, ref } from 'vue'
+import { countChapterChars } from '@shared/novel/chapter-length-plan'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
 import type { NovelProject } from '@renderer/services/novel/api'
 import Tooltip from '@renderer/novel/components/Tooltip.vue'
@@ -352,11 +310,9 @@ const props = withDefaults(defineProps<Props>(), {
   autoWriteLocked: false,
 })
 
-const emit = defineEmits(['closeSidebar', 'selectChapter', 'generateChapter', 'editChapter', 'deleteChapter', 'generateOutline'])
+const emit = defineEmits(['closeSidebar', 'selectChapter', 'generateChapter', 'deleteChapter', 'clearChapter', 'generateOutline'])
 
 const selectedForDeletion = ref<number[]>([])
-const listContainer = ref<HTMLElement | null>(null)
-const chapterRefs = ref<Record<number, HTMLElement | null>>({})
 
 const characterCount = computed(() => {
   return props.project?.blueprint?.characters?.length || 0
@@ -375,11 +331,6 @@ const lastChapterNumber = computed(() => {
 
 const totalChapters = computed(() => {
   return props.project?.blueprint?.chapter_outline?.length || 0
-})
-
-const hasIncompleteChapters = computed(() => {
-  if (!props.project?.blueprint?.chapter_outline) return false
-  return props.project.blueprint.chapter_outline.some(ch => !isChapterCompleted(ch.chapter_number))
 })
 
 function toggleSelection(chapterNumber: number) {
@@ -418,35 +369,6 @@ async function confirmGenerateChapter(chapterNumber: number) {
   const confirmed = await globalAlert.showConfirm('重新生成会覆盖当前章节的生成结果，确定继续吗？', '重新生成确认')
   if (confirmed) {
     emit('generateChapter', chapterNumber)
-  }
-}
-
-function setChapterRef(chapterNumber: number, el: Element | ComponentPublicInstance | null) {
-  if (!el) {
-    delete chapterRefs.value[chapterNumber]
-    return
-  }
-
-  const element = el instanceof Element ? el : (el.$el instanceof Element ? el.$el : null)
-
-  if (element) {
-    chapterRefs.value[chapterNumber] = element as HTMLElement
-  }
-}
-
-const scrollToFirstIncompleteChapter = async () => {
-  if (!props.project?.blueprint?.chapter_outline) return
-  const sorted = [...props.project.blueprint.chapter_outline].sort((a, b) => a.chapter_number - b.chapter_number)
-  const target = sorted.find(chapter => !isChapterCompleted(chapter.chapter_number))
-  if (!target) return
-  await nextTick()
-  const element = chapterRefs.value[target.chapter_number]
-  if (!element) return
-  const container = listContainer.value
-  if (container) {
-    element.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' })
-  } else {
-    element.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }
 }
 
@@ -509,14 +431,14 @@ const canGenerateChapter = (chapterNumber: number) => {
   return true
 }
 
-function chapterStatusLabel(chapterNumber: number): string {
-  if (isChapterCompleted(chapterNumber)) return '已完成'
-  if (isChapterGenerating(chapterNumber)) return '生成中'
-  if (isChapterSelecting(chapterNumber)) return '选择中'
-  if (isChapterEvaluating(chapterNumber)) return '评审中'
-  if (isChapterFailed(chapterNumber)) return '失败'
-  if (hasChapterInProgress(chapterNumber)) return '待选版本'
-  return '未开始'
+function chapterWordCountLabel(chapterNumber: number): string {
+  const chapter = props.project?.chapters?.find((ch) => ch.chapter_number === chapterNumber)
+  if (!chapter) return ''
+  const count =
+    chapter.word_count ||
+    (chapter.content?.trim() ? countChapterChars(chapter.content) : 0)
+  if (count <= 0) return ''
+  return `${count} 字`
 }
 
 function chapterBadgeClass(chapterNumber: number): string {
@@ -567,7 +489,7 @@ function chapterBadgeClass(chapterNumber: number): string {
 
 .wd-sidebar--embedded {
   width: 300px;
-  border-right: 1px solid color-mix(in srgb, var(--line, var(--md-outline-variant)) 55%, transparent);
+  border-right: 1px solid color-mix(in srgb, var(--line, var(--md-outline-variant)) 88%, var(--text) 12%);
   background: transparent;
 }
 
@@ -602,11 +524,11 @@ function chapterBadgeClass(chapterNumber: number): string {
 }
 
 .wd-outline-timeline__item:hover {
-  background: color-mix(in srgb, var(--brand, var(--md-primary)) 6%, transparent);
+  background: color-mix(in srgb, var(--brand, var(--md-primary)) 2.5%, transparent);
 }
 
 .wd-outline-timeline__item.is-selected {
-  background: color-mix(in srgb, var(--brand, var(--md-primary)) 10%, transparent);
+  background: color-mix(in srgb, var(--brand, var(--md-primary)) 4%, transparent);
 }
 
 .wd-outline-timeline__item.is-danger {
@@ -624,11 +546,13 @@ function chapterBadgeClass(chapterNumber: number): string {
   flex-shrink: 0;
 }
 
-.wd-outline-timeline__status {
+.wd-outline-timeline__meta {
   font-size: var(--text-2xs);
   font-weight: 600;
   color: var(--soft);
   white-space: nowrap;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
 }
 
 .wd-outline-timeline__action {
@@ -645,6 +569,17 @@ function chapterBadgeClass(chapterNumber: number): string {
 
 .wd-outline-timeline__empty {
   font-style: italic;
+}
+
+.wd-outline-timeline__summary-preview {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-top: 4px;
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  white-space: normal;
 }
 
 .nd-timeline__badge.is-done {

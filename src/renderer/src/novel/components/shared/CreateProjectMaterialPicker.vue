@@ -4,7 +4,6 @@ import { PenLine, Users } from 'lucide-vue-next'
 import type { MaterialItem } from '@renderer/services/novel/material-library-service'
 import { materialLibraryService } from '@renderer/services/novel/material-library-service'
 import { getMaterialImageUrl } from '@renderer/services/novel/material-library-utils'
-import { navigate } from '@renderer/router'
 
 const props = defineProps<{
   disabled?: boolean
@@ -37,11 +36,6 @@ function toggleCharacter(id: string) {
   selectedCharacterIds.value = [...next]
 }
 
-function openLibrary(path: '/library/styles' | '/library/characters') {
-  if (props.disabled) return
-  navigate(path)
-}
-
 watch(
   () => props.active,
   (active) => {
@@ -53,18 +47,11 @@ watch(
 
 <template>
   <section class="create-material-picker">
-    <div class="create-material-picker__head">
-      <h4>选用物料（可选）</h4>
-      <p>从文风库与角色库带入预设，创建后自动写入蓝图</p>
-    </div>
-
     <div class="create-material-picker__block">
       <div class="create-material-picker__label">
         <PenLine :size="15" />
         <span>文风</span>
-        <button type="button" class="create-material-picker__link" :disabled="disabled" @click="openLibrary('/library/styles')">
-          管理文风库
-        </button>
+        <span v-if="selectedStyleId" class="create-material-picker__count">已选 1 项</span>
       </div>
       <div v-if="styleItems.length" class="create-material-picker__chips">
         <button
@@ -79,21 +66,16 @@ watch(
           {{ item.title }}
         </button>
       </div>
-      <p v-else class="create-material-picker__empty">文风库暂无条目，可先跳过或前往文风库添加</p>
+      <p v-else class="create-material-picker__empty">暂无文风预设，可跳过此步</p>
     </div>
 
     <div class="create-material-picker__block">
       <div class="create-material-picker__label">
         <Users :size="15" />
         <span>角色</span>
-        <button
-          type="button"
-          class="create-material-picker__link"
-          :disabled="disabled"
-          @click="openLibrary('/library/characters')"
-        >
-          管理角色库
-        </button>
+        <span v-if="selectedCharacterIds.length" class="create-material-picker__count">
+          已选 {{ selectedCharacterIds.length }} 项
+        </span>
       </div>
       <div v-if="characterItems.length" class="create-material-picker__characters">
         <button
@@ -112,7 +94,7 @@ watch(
           <span class="create-material-picker__character-name">{{ item.title }}</span>
         </button>
       </div>
-      <p v-else class="create-material-picker__empty">角色库暂无条目，可先跳过或前往角色库添加</p>
+      <p v-else class="create-material-picker__empty">暂无角色预设，可跳过此步</p>
     </div>
   </section>
 </template>
@@ -121,22 +103,6 @@ watch(
 .create-material-picker {
   display: grid;
   gap: 18px;
-  margin-top: 8px;
-  padding-top: 20px;
-  border-top: 1px solid var(--border);
-}
-
-.create-material-picker__head h4 {
-  margin: 0 0 4px;
-  font-size: var(--text-base);
-  font-weight: 700;
-  color: var(--text);
-}
-
-.create-material-picker__head p {
-  margin: 0;
-  font-size: var(--text-sm);
-  color: var(--muted);
 }
 
 .create-material-picker__block {
@@ -153,19 +119,11 @@ watch(
   font-weight: 650;
 }
 
-.create-material-picker__link {
+.create-material-picker__count {
   margin-left: auto;
-  border: 0;
-  background: transparent;
-  color: var(--primary);
-  font: inherit;
-  font-size: var(--text-xs);
-  cursor: pointer;
-}
-
-.create-material-picker__link:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  color: var(--brand, var(--primary));
 }
 
 .create-material-picker__chips {
@@ -176,9 +134,9 @@ watch(
 
 .create-material-picker__chip {
   padding: 8px 12px;
-  border: 1px solid var(--border);
+  border: 1px solid color-mix(in srgb, var(--line, rgba(0, 0, 0, 0.1)) 70%, transparent);
   border-radius: 999px;
-  background: var(--surface-soft);
+  background: transparent;
   color: var(--text-secondary);
   font: inherit;
   font-size: var(--text-sm);
@@ -190,9 +148,9 @@ watch(
 }
 
 .create-material-picker__chip.is-active {
-  border-color: var(--primary);
-  background: color-mix(in srgb, var(--primary) 10%, var(--surface-soft));
-  color: var(--primary);
+  border-color: color-mix(in srgb, var(--brand, var(--primary)) 40%, transparent);
+  background: color-mix(in srgb, var(--brand, var(--primary)) 8%, transparent);
+  color: var(--brand, var(--primary));
   font-weight: 650;
 }
 
@@ -212,9 +170,9 @@ watch(
   gap: 8px;
   justify-items: center;
   padding: 10px 8px;
-  border: 1px solid var(--border);
+  border: 1px solid color-mix(in srgb, var(--line, rgba(0, 0, 0, 0.1)) 70%, transparent);
   border-radius: 14px;
-  background: var(--surface-soft);
+  background: transparent;
   cursor: pointer;
   transition:
     border-color 160ms ease,
@@ -223,9 +181,9 @@ watch(
 }
 
 .create-material-picker__character.is-active {
-  border-color: var(--primary);
-  background: color-mix(in srgb, var(--primary) 8%, var(--surface-soft));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 20%, transparent);
+  border-color: color-mix(in srgb, var(--brand, var(--primary)) 40%, transparent);
+  background: color-mix(in srgb, var(--brand, var(--primary)) 6%, transparent);
+  box-shadow: inset 3px 0 0 var(--brand, var(--primary));
 }
 
 .create-material-picker__character:disabled {
@@ -240,8 +198,8 @@ watch(
   height: 52px;
   overflow: hidden;
   border-radius: 14px;
-  background: color-mix(in srgb, var(--primary) 12%, transparent);
-  color: var(--primary);
+  background: color-mix(in srgb, var(--brand, var(--primary)) 10%, transparent);
+  color: var(--brand, var(--primary));
   font-size: var(--text-lg);
   font-weight: 700;
 }

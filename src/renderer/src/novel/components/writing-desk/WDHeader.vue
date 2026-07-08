@@ -45,6 +45,7 @@
             <span class="hidden md:inline">退出登录</span>
           </button>
           <button
+            v-if="!embedded"
             @click="$emit('toggleSidebar')"
             class="md-icon-btn md-ripple lg:hidden"
           >

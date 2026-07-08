@@ -1,5 +1,26 @@
 type FileDialogFilters = Array<{ name: string; extensions: string[] }>
 
+export async function saveTextFile(defaultName: string, content: string): Promise<boolean> {
+  if (window.api.saveFileDialog && window.api.writeTextFile) {
+    const picked = await window.api.saveFileDialog(defaultName, {
+      filters: [{ name: '文本文件', extensions: ['txt'] }],
+    })
+    if (!picked.success || !picked.path) return false
+    const written = await window.api.writeTextFile(picked.path, content)
+    if (!written.success) throw new Error(written.error || '写入文件失败')
+    return true
+  }
+
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = defaultName
+  link.click()
+  URL.revokeObjectURL(url)
+  return true
+}
+
 export async function saveJsonFile(defaultName: string, data: unknown): Promise<boolean> {
   const json = JSON.stringify(data, null, 2)
   if (window.api.saveFileDialog && window.api.writeTextFile) {

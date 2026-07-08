@@ -17,6 +17,10 @@ export function getMaterialImageUrl(item: MaterialItem): string | null {
     const url = character?.portrait_url
     if (typeof url === 'string' && url.trim()) return url.trim()
   }
+  if (item.type === 'styles') {
+    const url = item.payload?.cover_url
+    if (typeof url === 'string' && url.trim()) return url.trim()
+  }
   return null
 }
 

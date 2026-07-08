@@ -45,5 +45,8 @@ export interface NovelApi {
   novelFactoryResetStore: (userId: string) => Promise<import('@shared/novel/types').NovelStoreStats>
   openReadingWindow?: (projectId: string) => Promise<{ ok: boolean; error?: string }>
   closeReadingWindow?: () => Promise<{ ok: boolean }>
+  returnToMainFromReading?: () => Promise<{ ok: boolean }>
+  toggleBossHide?: () => Promise<{ ok: boolean }>
+  syncReadingBossKey?: (payload: { enabled: boolean; accelerator: string }) => Promise<{ ok: boolean }>
   bossHideReadingWindow?: () => Promise<{ ok: boolean }>
 }

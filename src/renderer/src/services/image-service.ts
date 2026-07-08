@@ -15,7 +15,7 @@ export interface NovelVisualContext {
   synopsis?: string
 }
 
-export type ImagePromptKind = 'cover' | 'portrait'
+export type ImagePromptKind = 'cover' | 'portrait' | 'style'
 
 export function buildCoverPrompt(context: NovelVisualContext): string {
   const title = context.title?.trim() || '未命名小说'
@@ -95,8 +95,8 @@ export async function analyzeImagePrompt(
           content:
             '你是专业的 AI 绘画提示词工程师。' +
             portraitRules +
-            '可使用中文与英文关键词混合，描述画面主体、风格、构图、光影。' +
-            '只输出提示词正文，不要解释，不要加引号或标题。',
+            '必须使用中文撰写提示词，完整描述画面主体、风格、构图、光影与氛围。' +
+            '不要输出英文，不要解释，不要加引号或标题。',
         },
         {
           role: 'user',
@@ -110,6 +110,52 @@ export async function analyzeImagePrompt(
   } catch {
     return base
   }
+}
+
+export function buildStyleCoverPrompt(input: {
+  title?: string
+  summary?: string
+  genre?: string
+  style?: string
+  tone?: string
+  writingHints?: string
+  tags?: string[]
+}): string {
+  const title = input.title?.trim() || '文风预设'
+  const genre = input.genre?.trim() || '文学'
+  const style = input.style?.trim() || '诗意叙事'
+  const tone = input.tone?.trim() || '沉静悠远'
+  const summary = input.summary?.trim()
+  const hints = input.writingHints?.trim()
+  const tags = input.tags?.filter(Boolean).join('、')
+  return [
+    `为写作风格「${title}」创作一张抽象氛围封面图。`,
+    `题材：${genre}，叙述风格：${style}，基调口吻：${tone}。`,
+    summary ? `风格综述：${summary.slice(0, 160)}。` : '',
+    hints ? `笔触意象：${hints.slice(0, 120)}。` : '',
+    tags ? `关键词：${tags}。` : '',
+    '横版 16:9 构图，以色调、光影、质感与抽象意象表达文字风格，不要人物特写，不要书籍实物，不要任何文字、水印或 logo，高质量插画。',
+  ]
+    .filter(Boolean)
+    .join('')
+}
+
+export async function generateStyleCoverImage(
+  input: {
+    title?: string
+    summary?: string
+    genre?: string
+    style?: string
+    tone?: string
+    writingHints?: string
+    tags?: string[]
+  },
+  project?: ProjectModelPrefs | null
+): Promise<string> {
+  const prompt = buildStyleCoverPrompt(input)
+  const model = await resolveProjectImageModelId(project)
+  const dataUrl = await gatewayImageGenerate({ prompt, size: '1792x1024', model })
+  return ensureLocalImageDataUrl(dataUrl)
 }
 
 export async function generateCoverImage(

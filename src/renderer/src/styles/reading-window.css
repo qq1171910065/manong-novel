@@ -22,6 +22,16 @@
   background: var(--reader-bg);
   border-radius: 14px;
   box-shadow: 0 24px 60px rgba(20, 16, 10, 0.28);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.reader input,
+.reader textarea,
+.reader select,
+.reader [contenteditable='true'] {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .reader--listening {
@@ -74,6 +84,8 @@
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   pointer-events: auto;
+  user-select: none;
+  -webkit-user-select: none;
   transition:
     transform 0.24s ease,
     opacity 0.24s ease;
@@ -110,6 +122,8 @@
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .reader-titlebar__drag span {
@@ -120,6 +134,8 @@
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .reader-titlebar__actions {
@@ -234,6 +250,12 @@
   );
 }
 
+.reader-page-viewport--scroll.is-auto-scrolling {
+  scroll-behavior: auto;
+  overflow-anchor: none;
+  will-change: scroll-position;
+}
+
 .reader-page-viewport--scroll.is-dragging {
   cursor: grabbing;
   scroll-behavior: auto;
@@ -267,6 +289,11 @@
   display: block;
   height: var(--reader-chapter-spacer-bottom);
   content: '';
+}
+
+.reader--scroll-mode .reader-page--scroll::before,
+.reader--scroll-mode .reader-page--scroll::after {
+  display: none;
 }
 
 .reader-page--paged {
@@ -342,8 +369,8 @@
 }
 
 .reader-chapter-marker {
-  margin: 1.6em 0 0.8em;
-  padding-top: 0.4em;
+  margin: 0 0 0.8em;
+  padding-top: 0;
   color: var(--reader-muted);
   font-size: 0.82em;
   font-weight: 600;
@@ -354,8 +381,14 @@
   -webkit-user-select: none;
 }
 
-.reader-chapter-marker:first-child {
-  margin-top: 0;
+.reader-chapter-spacer-top {
+  height: var(--reader-chapter-spacer-top);
+  flex-shrink: 0;
+}
+
+.reader-chapter-spacer-bottom {
+  height: var(--reader-chapter-spacer-bottom);
+  flex-shrink: 0;
 }
 
 .reader-chapter-marker--hidden {
@@ -532,8 +565,70 @@
 }
 
 .reader-progress {
+  display: inline-flex;
+  align-items: center;
+  justify-self: center;
+  gap: 5px;
+  border: 0;
+  background: transparent;
+  color: var(--reader-muted);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.reader-progress svg {
+  flex-shrink: 0;
+  opacity: 0.82;
+}
+
+.reader-progress:hover {
+  color: var(--reader-accent);
+}
+
+.reader-catalog-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--reader-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.reader-catalog-item:hover {
+  background: color-mix(in srgb, var(--reader-accent) 8%, transparent);
+}
+
+.reader-catalog-item.is-active {
+  background: color-mix(in srgb, var(--reader-accent) 14%, transparent);
+  color: var(--reader-accent);
+}
+
+.reader-catalog-item__index {
+  flex-shrink: 0;
   color: var(--reader-muted);
   font-size: 12px;
+  white-space: nowrap;
+}
+
+.reader-catalog-item.is-active .reader-catalog-item__index {
+  color: var(--reader-accent);
+}
+
+.reader-catalog-item__title {
+  overflow: hidden;
+  font-size: 14px;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -610,6 +705,8 @@
   overflow-x: hidden;
   transition: transform 0.24s ease;
   pointer-events: auto;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .reader-sheet.is-dragging {
@@ -635,13 +732,17 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
+  min-height: 52px;
+  margin-bottom: 4px;
+  padding: 2px 0 10px;
+  border-bottom: 1px solid var(--reader-border);
 }
 
 .reader-sheet__head h3 {
   margin: 0;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 650;
+  line-height: 1.2;
 }
 
 .reader-sheet__done {
@@ -657,9 +758,10 @@
 .reader-sheet__body {
   display: grid;
   gap: 10px;
-  max-height: calc(min(78vh, 560px) - 56px);
+  max-height: calc(min(78vh, 560px) - 88px);
   touch-action: manipulation;
   pointer-events: auto;
+  padding-top: 8px;
   padding-bottom: 4px;
   overflow-x: hidden;
   overflow-y: auto;
@@ -681,6 +783,12 @@
 }
 
 .reader-sheet__section:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.reader-sheet__section--catalog {
+  gap: 4px;
   padding-bottom: 0;
   border-bottom: 0;
 }

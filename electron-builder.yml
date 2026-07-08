@@ -1,5 +1,5 @@
-appId: com.mntools.arena
-productName: Manong Arena
+appId: com.mntools.novel
+productName: Manong Novel
 directories:
   buildResources: build
 files:
@@ -31,7 +31,7 @@ npmRebuild: false
 # Release 由 .github/workflows/release.yml 上传产物，不在 electron-builder 内自动 publish
 publish: null
 win:
-  executableName: arena
+  executableName: manong-novel
   icon: icon.ico
   target:
     - nsis

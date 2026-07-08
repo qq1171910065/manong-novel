@@ -20,7 +20,7 @@ export type {
 } from '@shared/novel/types'
 
 export type AnalysisSectionType = 'emotion_curve' | 'foreshadowing'
-export type InsightSectionType = 'activity_log' | 'stats' | 'pipeline'
+export type InsightSectionType = 'activity_log' | 'stats' | 'pipeline' | 'pipeline_log' | 'prompt_templates' | 'data'
 export type WorldViewSectionType = 'world_rules' | 'world_locations' | 'world_factions'
 export type AllSectionType =
   | NovelSectionType
@@ -63,6 +63,7 @@ import {
 } from './import-service'
 import { readNovelTextFile } from './file-text'
 import { countChapterChars } from '@shared/novel/chapter-length-plan'
+import { exportProjectJson, exportProjectTxt } from './project-export'
 
 export type { ImportParseProgress }
 
@@ -75,26 +76,52 @@ export class NovelAPI {
     return novelClient.createProject(title, initialPrompt, writingMode)
   }
 
-  static async importNovel(file: File): Promise<{ id: string }> {
-    const text = await readNovelTextFile(file)
-    let payload: Partial<NovelProject> | null = null
-    try {
-      payload = JSON.parse(text) as Partial<NovelProject>
-    } catch {
-      payload = null
-    }
+  static async importNovel(
+    file: File,
+    kind: 'txt' | 'project' = file.name.toLowerCase().endsWith('.json') ? 'project' : 'txt'
+  ): Promise<{ id: string }> {
+    if (kind === 'project') {
+      const text = await readNovelTextFile(file)
+      let payload: Partial<NovelProject> & { projects?: Record<string, NovelProject> } | null = null
+      try {
+        payload = JSON.parse(text) as Partial<NovelProject> & { projects?: Record<string, NovelProject> }
+      } catch {
+        throw new Error('项目文件格式无效，请上传 .json 文件')
+      }
 
-    if (payload?.blueprint || payload?.chapters) {
+      let source = payload
+      if (payload?.projects && typeof payload.projects === 'object') {
+        const projects = Object.values(payload.projects)
+        if (projects.length === 0) throw new Error('备份文件中没有项目')
+        source = projects[0]
+      }
+
+      if (!source?.title && !source?.chapters?.length && !source?.blueprint) {
+        throw new Error('无法识别的项目文件')
+      }
+
       const project = await novelClient.createProject(
-        payload.title || '导入作品',
-        payload.initial_prompt || text.slice(0, 2000)
+        source.title || '导入作品',
+        source.initial_prompt || '',
+        source.writing_mode
       )
-      if (payload.blueprint) project.blueprint = payload.blueprint as Blueprint
-      if (payload.chapters) project.chapters = payload.chapters as NovelProject['chapters']
-      await novelClient.saveProject(project)
+      const merged: NovelProject = {
+        ...project,
+        ...source,
+        id: project.id,
+        title: source.title || project.title,
+        initial_prompt: source.initial_prompt || project.initial_prompt,
+        chapters: source.chapters ?? [],
+        conversation_history: source.conversation_history ?? [],
+        section_polish_history: source.section_polish_history,
+        section_polish_state: source.section_polish_state,
+        updated_at: new Date().toISOString(),
+      }
+      await novelClient.saveProject(merged)
       return { id: project.id }
     }
 
+    const text = await readNovelTextFile(file)
     const title = file.name.replace(/\.[^.]+$/, '')
     const chapters = splitIntoChapters(text)
     if (chapters.length === 0) {
@@ -132,6 +159,16 @@ export class NovelAPI {
     const blueprint = await analyzeImportedNovel(project, options)
     applyImportAnalysis(project, blueprint)
     return novelClient.saveProject(project)
+  }
+
+  static async exportNovelTxt(projectId: string): Promise<boolean> {
+    const project = await novelClient.getProject(projectId)
+    return exportProjectTxt(project)
+  }
+
+  static async exportNovelProject(projectId: string): Promise<boolean> {
+    const project = await novelClient.getProject(projectId)
+    return exportProjectJson(project)
   }
 
   static getNovel(projectId: string): Promise<NovelProject> {
@@ -379,11 +416,11 @@ export class NovelAPI {
     if (!chapter) throw new Error('章节不存在')
     if (!chapter.content?.trim()) throw new Error('章节内容为空，无法确认')
 
-    if (!chapter.summary?.trim()) {
-      try {
-        chapter.summary = await writing.summarizeChapter(chapter.content)
-      } catch (error) {
-        console.warn('[confirmChapter] summary generation failed:', error)
+    try {
+      chapter.summary = await writing.summarizeChapter(chapter.content)
+    } catch (error) {
+      console.warn('[confirmChapter] summary generation failed:', error)
+      if (!chapter.summary?.trim()) {
         const outline = project.blueprint?.chapter_outline?.find(
           (item) => item.chapter_number === chapterNumber
         )
@@ -426,6 +463,17 @@ export class NovelAPI {
         (c) => !chapterNumbers.includes(c.chapter_number)
       )
     }
+    return novelClient.saveProject(project)
+  }
+
+  /** 清除章节正文记录，保留大纲，便于选择性重写 */
+  static async clearChapterContent(
+    projectId: string,
+    chapterNumbers: number[]
+  ): Promise<NovelProject> {
+    const project = await novelClient.getProject(projectId)
+    const toClear = new Set(chapterNumbers)
+    project.chapters = (project.chapters || []).filter((c) => !toClear.has(c.chapter_number))
     return novelClient.saveProject(project)
   }
 

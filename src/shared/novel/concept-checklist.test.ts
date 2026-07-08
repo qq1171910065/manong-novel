@@ -1,19 +1,34 @@
 import { describe, expect, it } from 'vitest'
 import {
   applyUserAnswerToChecklist,
+  applyChapterCountFromUserText,
   composeConceptBriefFromAnswers,
+  deriveLockedFields,
+  detectUserEditTopics,
   extractMultiTopicHintsFromMessage,
   isRefinedConceptAnswer,
   mergeChecklistAnswersFromModel,
+  mergeChecklistAnswersWithLocks,
   mergeConceptBriefFromModel,
+  mergeConceptBriefForTurn,
+  patchConceptBriefSections,
   enrichBlueprintFromConcept,
+  buildConceptBlueprintPreview,
   buildFallbackRelationshipsFromConcept,
+  reconcileConceptConversationState,
   resolveBlueprintExpectedChapterCount,
   parseExpectedChapterCount,
   resolveConceptBriefForDisplay,
   resolveFinalConceptAnswers,
   resolveFinalConceptBrief,
+  requiredChecklistKeys,
+  shouldUsePartialConceptUpdate,
 } from './concept-checklist'
+import {
+  FULL_MODE_DEFAULT_CHAPTERS,
+  SIMPLE_MODE_DEFAULT_CHAPTERS,
+  SIMPLE_MODE_MAX_CHAPTERS,
+} from './writing-mode'
 
 describe('extractMultiTopicHintsFromMessage', () => {
   it('识别一句多设定', () => {
@@ -202,7 +217,46 @@ describe('resolveBlueprintExpectedChapterCount', () => {
         answers: { chapter_count: '（预期篇幅已在对话中确认）' },
         mode: 'full',
       })
-    ).toBe(12)
+    ).toBe(FULL_MODE_DEFAULT_CHAPTERS)
+  })
+
+  it('简易版无明确章数时默认 6 章', () => {
+    expect(
+      resolveBlueprintExpectedChapterCount({
+        answers: { chapter_count: '（预期篇幅已在对话中确认）' },
+        mode: 'simple',
+      })
+    ).toBe(SIMPLE_MODE_DEFAULT_CHAPTERS)
+  })
+
+  it('简易版将过长篇幅限制在 12 章以内', () => {
+    expect(
+      resolveBlueprintExpectedChapterCount({
+        answers: { chapter_count: '约 70 章的中长篇' },
+        mode: 'simple',
+      })
+    ).toBe(SIMPLE_MODE_MAX_CHAPTERS)
+  })
+
+  it('用户明确章数优先于概念综述', () => {
+    expect(
+      resolveBlueprintExpectedChapterCount({
+        answers: { chapter_count: '5 章左右' },
+        conceptBrief: '中篇故事，规划 40 章完成主线',
+        conversationText: '助手：建议规划 30 章',
+        mode: 'full',
+      })
+    ).toBe(5)
+  })
+
+  it('从用户对话提取章数，忽略助手建议', () => {
+    expect(
+      resolveBlueprintExpectedChapterCount({
+        answers: {},
+        conversationText: '用户：写5章\n\n助手：建议 30 章',
+        mode: 'full',
+      })
+    ).toBe(5)
   })
 
   it('从概念综述提取章数', () => {
@@ -213,6 +267,133 @@ describe('resolveBlueprintExpectedChapterCount', () => {
         mode: 'full',
       })
     ).toBe(40)
+  })
+
+  it('draft 中的章数可用于蓝图', () => {
+    expect(
+      resolveBlueprintExpectedChapterCount({
+        answers: { chapter_count: '（预期篇幅已在对话中确认）' },
+        drafts: { chapter_count: '5 章左右' },
+        conceptBrief: '规划 30 章',
+        mode: 'full',
+      })
+    ).toBe(5)
+  })
+
+  it('draft 章数优先于旧的 answers', () => {
+    expect(
+      resolveBlueprintExpectedChapterCount({
+        answers: { chapter_count: '约 70 章的中长篇' },
+        drafts: { chapter_count: '5 章左右' },
+        mode: 'full',
+      })
+    ).toBe(5)
+  })
+})
+
+describe('parseExpectedChapterCount', () => {
+  it('识别写 N 章', () => {
+    expect(parseExpectedChapterCount('写5章')).toBe(5)
+    expect(parseExpectedChapterCount('就写 8 章')).toBe(8)
+    expect(parseExpectedChapterCount('减少到5章')).toBe(5)
+  })
+})
+
+describe('applyUserAnswerToChecklist revision', () => {
+  it('返回改章数时直接更新 answers', () => {
+    const result = applyUserAnswerToChecklist(
+      {
+        checklist: { chapter_count: true },
+        checklist_answers: { chapter_count: '约 70 章的中长篇' },
+      },
+      '减少到5章，只是作为测试使用',
+      'full'
+    )
+    expect(result.answers.chapter_count).toBe('5 章左右')
+  })
+})
+
+describe('mergeChecklistAnswersFromModel chapter_count', () => {
+  it('不因模型长描述覆盖用户已改章数', () => {
+    const merged = mergeChecklistAnswersFromModel(
+      { chapter_count: '5 章左右' },
+      { chapter_count: '约 70 章的中长篇规划，适合完整主线展开' }
+    )
+    expect(merged.chapter_count).toBe('5 章左右')
+  })
+})
+
+describe('applyChapterCountFromUserText', () => {
+  it('强制写入用户章数', () => {
+    const answers = applyChapterCountFromUserText(
+      { chapter_count: '约 70 章' },
+      '减少到5章'
+    )
+    expect(answers.chapter_count).toBe('5 章左右')
+  })
+})
+
+describe('reconcileConceptConversationState', () => {
+  it('用户历史章数覆盖旧的 answers', () => {
+    const reconciled = reconcileConceptConversationState(
+      {
+        checklist: { chapter_count: true },
+        checklist_answers: { chapter_count: '约60-80章，适合中长篇深度叙事' },
+        concept_brief: '篇幅：5章精简测试版',
+      },
+      'full',
+      {
+        history: [
+          { role: 'user', content: JSON.stringify({ value: '减少到5章，只是作为测试使用' }) },
+        ],
+      }
+    )
+    expect(reconciled.checklist_answers?.chapter_count).toBe('5 章左右')
+  })
+
+  it('buildConceptBlueprintPreview 与 reconcile 后 answers 一致', () => {
+    const state = reconcileConceptConversationState(
+      {
+        checklist: { spark: true, chapter_count: true },
+        checklist_answers: {
+          spark: '核心火花',
+          chapter_count: '约60-80章，适合中长篇深度叙事',
+        },
+        concept_brief: '5章精简测试版',
+      },
+      'full',
+      {
+        history: [
+          { role: 'user', content: JSON.stringify({ value: '减少到5章' }) },
+        ],
+      }
+    )
+    const preview = buildConceptBlueprintPreview(state, 'full')
+    const chapterItem = preview.items.find((item) => item.key === 'chapter_count')
+    expect(chapterItem?.value).toContain('5')
+    expect(preview.expectedChaptersLabel).toContain('5')
+  })
+})
+
+describe('buildConceptBlueprintPreview', () => {
+  it('组装蓝图生成前预览', () => {
+    const preview = buildConceptBlueprintPreview(
+      {
+        checklist: { spark: true, protagonist: true, chapter_count: true },
+        checklist_answers: {
+          spark: '一场雨夜谋杀',
+          protagonist: '林默，私家侦探',
+          working_title: '雨夜档案',
+          chapter_count: '写12章',
+        },
+        concept_brief: '林默追查雨夜里被掩盖的真相。',
+      },
+      'simple'
+    )
+    expect(preview.workingTitle).toBe('雨夜档案')
+    expect(preview.expectedChaptersLabel).toContain('12')
+    expect(preview.blueprintSections.some((s) => s.includes('章节大纲'))).toBe(true)
+    expect(preview.items.find((i) => i.key === 'spark')?.value).toContain('雨夜')
   })
 })
 
@@ -229,5 +410,93 @@ describe('buildFallbackRelationshipsFromConcept', () => {
     expect(relationships[0]?.character_from).toBe('林默')
     expect(relationships[0]?.character_to).toBe('顾深')
     expect(relationships[0]?.description).toContain('谎言')
+  })
+})
+
+describe('concept locking and partial updates', () => {
+  it('简易模式包含文风共 7 项', () => {
+    expect(requiredChecklistKeys('simple')).toHaveLength(7)
+    expect(requiredChecklistKeys('simple')).toContain('prose_style')
+  })
+
+  it('文风确认后自动锁定', () => {
+    const locked = deriveLockedFields(
+      {
+        spark: true,
+        genre_tone: true,
+        prose_style: true,
+        protagonist: false,
+        central_conflict: false,
+        antagonist: false,
+        inciting_incident: false,
+        core_theme: false,
+        working_title: false,
+        chapter_count: false,
+      },
+      {
+        genre_tone: '近未来赛博朋克',
+        prose_style: '冷峻短句、第一人称',
+      },
+      [],
+      'simple'
+    )
+    expect(locked).toContain('genre_tone')
+    expect(locked).toContain('prose_style')
+  })
+
+  it('锁定项不被模型覆盖，除非用户本轮编辑', () => {
+    const merged = mergeChecklistAnswersWithLocks(
+      { prose_style: '冷峻短句', genre_tone: '黑色幽默' },
+      { prose_style: '华丽长句', genre_tone: '轻松喜剧', protagonist: '侦探林默' },
+      ['prose_style', 'genre_tone'],
+      ['protagonist']
+    )
+    expect(merged.prose_style).toBe('冷峻短句')
+    expect(merged.genre_tone).toBe('黑色幽默')
+    expect(merged.protagonist).toContain('林默')
+  })
+
+  it('局部更新只改相关段落', () => {
+    const base = '核心火花段落。\n\n主角：旧主角设定。\n\n预期篇幅：20 章左右'
+    const patched = patchConceptBriefSections(base, { protagonist: '林默，能品尝谎言的侦探' }, [
+      'protagonist',
+    ])
+    expect(patched).toContain('林默')
+    expect(patched).not.toContain('旧主角')
+    expect(patched).toContain('核心火花')
+    expect(patched).toContain('20 章')
+  })
+
+  it('局部模式下服务端合并综述', () => {
+    const merged = mergeConceptBriefForTurn(
+      '主角：旧主角。\n\n预期篇幅：10 章左右',
+      '通篇被模型重写的无关内容',
+      {
+        partialUpdate: true,
+        changedKeys: ['protagonist'],
+        answers: { protagonist: '林默，私家侦探' },
+        mode: 'simple',
+      }
+    )
+    expect(merged).toContain('林默')
+    expect(merged).not.toContain('旧主角')
+    expect(merged).toContain('10 章')
+    expect(merged).not.toContain('通篇被模型重写')
+  })
+
+  it('识别用户本轮编辑主题', () => {
+    const topics = detectUserEditTopics('把主角改成失忆少女', null)
+    expect(topics).toContain('protagonist')
+  })
+
+  it('已有综述且存在锁定项时启用局部更新', () => {
+    expect(
+      shouldUsePartialConceptUpdate({
+        lockedFields: ['prose_style'],
+        changedFields: ['protagonist'],
+        completedCount: 2,
+        hasBaseBrief: true,
+      })
+    ).toBe(true)
   })
 })

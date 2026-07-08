@@ -1,11 +1,11 @@
 <template>
-  <div class="novel-confirm-panel novel-confirm-panel--polish">
-    <div class="novel-confirm-panel__badge novel-confirm-panel__badge--polish">
+  <div class="novel-confirm-panel novel-confirm-panel--polish" :class="{ 'novel-confirm-panel--modal': hideChrome }">
+    <div v-if="!hideChrome" class="novel-confirm-panel__badge novel-confirm-panel__badge--polish">
       <Sparkles :size="14" aria-hidden="true" />
       <span>{{ replaceEntireBlueprint ? '重构方案' : '修改完成' }}</span>
     </div>
 
-    <h2 class="novel-confirm-panel__title">
+    <h2 v-if="!hideChrome" class="novel-confirm-panel__title">
       {{ replaceEntireBlueprint ? '应用全书框架重构？' : '应用设定修改？' }}
     </h2>
 
@@ -78,7 +78,7 @@
 
     <div class="novel-confirm-panel__message prose" v-html="renderedAiMessage" />
 
-    <p class="novel-confirm-panel__hint">
+    <p v-if="!hideChrome" class="novel-confirm-panel__hint">
       <template v-if="replaceEntireBlueprint">
         确认后将<strong>整本替换</strong>蓝图框架。已写章节可能与新版设定不符，请对照上方 diff 后谨慎确认。
       </template>
@@ -87,7 +87,7 @@
       </template>
     </p>
 
-    <div class="novel-confirm-panel__actions">
+    <div v-if="!hideChrome" class="novel-confirm-panel__actions">
       <button type="button" class="novel-btn novel-btn--text" @click="$emit('back')">
         继续调整
       </button>
@@ -117,6 +117,7 @@ const props = defineProps<{
   replaceEntireBlueprint?: boolean
   beforeBlueprint?: Blueprint | null
   blueprintUpdates?: Partial<Blueprint> | null
+  hideChrome?: boolean
 }>()
 
 defineEmits<{
@@ -139,6 +140,10 @@ const diffGroups = computed(() => groupBlueprintDiffBySection(diffSummary.value.
 <style scoped>
 .novel-confirm-panel--polish {
   padding: 28px 24px 32px;
+}
+
+.novel-confirm-panel--modal {
+  padding: 0;
 }
 
 .novel-confirm-panel__badge--polish {

@@ -22,6 +22,7 @@ export interface MaterialDraft {
   summary: string
   tags: string[]
   category: string
+  coverUrl: string
   character: Character
   genre: string
   style: string
@@ -57,6 +58,7 @@ export function emptyMaterialDraft(category = ''): MaterialDraft {
     summary: '',
     tags: [],
     category,
+    coverUrl: '',
     character: emptyCharacterDraft(),
     genre: '',
     style: '',
@@ -72,6 +74,7 @@ export function itemToDraft(item: MaterialItem, defaultCategory = ''): MaterialD
     summary: item.summary,
     tags: [...item.tags],
     category: String(item.payload?.category ?? defaultCategory),
+    coverUrl: String(item.payload?.cover_url ?? ''),
     character: character
       ? libraryCharacterFromDraft(ensureCharacter(JSON.parse(JSON.stringify(character))))
       : emptyCharacterDraft(),
@@ -95,6 +98,7 @@ export function draftToItemPayload(type: MaterialLibraryType, draft: MaterialDra
   }
   return {
     category: draft.category,
+    cover_url: draft.coverUrl.trim(),
     genre: draft.genre.trim(),
     style: draft.style.trim(),
     tone: draft.tone.trim(),
@@ -144,6 +148,7 @@ export function applyMaterialAiPatch(draft: MaterialDraft, patch: MaterialAiEdit
       next.character = libraryCharacterFromDraft({ ...next.character, ...character })
     }
     if (typeof patch.payload.genre === 'string') next.genre = patch.payload.genre
+    if (typeof patch.payload.cover_url === 'string') next.coverUrl = patch.payload.cover_url
     if (typeof patch.payload.style === 'string') next.style = patch.payload.style
     if (typeof patch.payload.tone === 'string') next.tone = patch.payload.tone
     if (typeof patch.payload.writingHints === 'string') next.writingHints = patch.payload.writingHints
@@ -192,6 +197,7 @@ export function listDraftChanges(before: MaterialDraft, after: MaterialDraft): s
   }
 
   if (before.genre !== after.genre) changes.push(FIELD_LABELS.genre)
+  if (before.coverUrl !== after.coverUrl) changes.push('封面图')
   if (before.style !== after.style) changes.push(FIELD_LABELS.style)
   if (before.tone !== after.tone) changes.push(FIELD_LABELS.tone)
   if (before.writingHints !== after.writingHints) changes.push(FIELD_LABELS.writingHints)
@@ -216,6 +222,7 @@ export function serializeDraftForAi(type: MaterialLibraryType, draft: MaterialDr
     summary: draft.summary,
     tags: draft.tags,
     category: draft.category,
+    coverUrl: draft.coverUrl,
     genre: draft.genre,
     style: draft.style,
     tone: draft.tone,

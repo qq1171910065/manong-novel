@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 
-export type ChapterGenPhase = 'starting' | 'writing' | 'processing' | 'evaluating' | 'confirming'
+export type ChapterGenPhase = 'starting' | 'planning' | 'writing' | 'processing' | 'evaluating' | 'confirming'
 
 export interface ChapterGenProgress {
   projectId: string
@@ -9,6 +9,8 @@ export interface ChapterGenProgress {
   versionIndex: number
   versionTotal: number
   chars: number
+  /** 当前版本目标字数，用于进度条估算 */
+  targetChars?: number
   message: string
   /** 流式生成中的正文预览（末尾片段） */
   streamPreview?: string
@@ -36,6 +38,7 @@ export function useChapterGenProgress() {
 
 export const CHAPTER_GEN_PHASE_LABELS: Record<ChapterGenPhase, string> = {
   starting: '准备上下文',
+  planning: '导演脚本',
   writing: '撰写正文',
   processing: '整理正文',
   evaluating: '版本评审',

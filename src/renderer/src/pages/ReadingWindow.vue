@@ -2,31 +2,27 @@
 import {
   ChevronLeft,
   ChevronRight,
-  Headphones,
-  Minus,
-  Moon,
+  Home,
+  List,
   Pause,
   Play,
   Settings2,
   Square,
-  Sun,
-  SunMedium,
   X,
 } from 'lucide-vue-next'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { route } from '@renderer/router'
 import { useNovelStore } from '@renderer/stores/novel'
 import ReadingSettingsSheet from '@renderer/components/reading/ReadingSettingsSheet.vue'
-import { bossHideReadingWindow, closeReadingWindow } from '@renderer/services/reading-service'
+import ReadingChapterPicker from '@renderer/components/reading/ReadingChapterPicker.vue'
+import { closeReadingWindow, returnToMainFromReading, syncReadingBossKey } from '@renderer/services/reading-service'
 import { clearSessionTtsCache, purgeLegacyTtsIndexedDb } from '@renderer/services/reading-tts-cache'
 import {
   readingSettingsService,
   type ReadingSettings,
-  type ReadingTheme,
 } from '@renderer/services/reading-settings'
 import {
   acceleratorFromKeyboardEvent,
-  eventMatchesAccelerator,
 } from '@renderer/composables/shortcut-utils'
 import { useReadingNavigation } from '@renderer/composables/useReadingNavigation'
 import { useReadingTts } from '@renderer/composables/useReadingTts'
@@ -37,13 +33,13 @@ import {
   resolveStartSegmentIndex,
 } from '@renderer/services/reading-tts'
 
-const windowControls = window.windowControls
 const novelStore = useNovelStore()
 
 const loading = ref(true)
 const loadError = ref('')
 const showSettings = ref(false)
-const settings = ref<ReadingSettings>(readingSettingsService.get())
+const showChapterPicker = ref(false)
+const settings = ref<ReadingSettings>({ ...readingSettingsService.get(), autoScroll: false })
 const pageViewportRef = ref<HTMLElement | null>(null)
 const showChrome = ref(true)
 const readingStarted = ref(false)
@@ -76,23 +72,11 @@ function enterImmersiveReading() {
   clearChromeHideTimer()
 }
 
-function onReadingTurn() {
-  if (!readingStarted.value) {
-    enterImmersiveReading()
-    return
-  }
-  if (showChrome.value) {
-    showChrome.value = false
-    clearChromeHideTimer()
-  }
-}
-
 const navigation = useReadingNavigation({
   projectId,
   settings,
   pageViewportRef,
   novelStore,
-  onReadingTurn,
   ttsActive: ttsActiveRef,
   stopTts: () => stopTtsImpl(),
   isTtsAdvancingChapter: () => ttsAdvancingChapter,
@@ -128,6 +112,7 @@ const {
   nextPage,
   prevChapter,
   nextChapter,
+  scrollToChapter,
   syncChapterFromScroll,
   restoreProgress,
 } = navigation
@@ -251,7 +236,9 @@ const readerStyle = computed(() => ({
   lineHeight: String(settings.value.lineHeight),
 }))
 
-const chromeVisible = computed(() => showChrome.value || showSettings.value || loading.value)
+const chromeVisible = computed(
+  () => showChrome.value || showSettings.value || showChapterPicker.value || loading.value
+)
 
 function scrollToActiveSegment(element: HTMLElement | null) {
   const viewport = pageViewportRef.value
@@ -295,22 +282,6 @@ function stopListening() {
   stopTtsImpl()
 }
 
-function toggleListening() {
-  if (ttsActive.value) {
-    if (ttsPlaying.value) pauseTts()
-    else if (ttsPaused.value) resumeTts()
-    else toggleTts()
-    return
-  }
-  startListening()
-}
-
-function themeIcon(theme: ReadingTheme) {
-  if (theme === 'dark') return Moon
-  if (theme === 'sepia') return SunMedium
-  return Sun
-}
-
 function applyWindowEffects() {
   if (typeof window.api.setWindowOpacity === 'function') {
     void window.api.setWindowOpacity(settings.value.opacity)
@@ -324,12 +295,13 @@ function applySettingsPatch(partial: Partial<ReadingSettings>) {
   settings.value = readingSettingsService.save(partial, settings.value)
   applyWindowEffects()
   resetAutoTurn()
+  if ('bossKeyEnabled' in partial || 'bossKeyAccelerator' in partial) {
+    void syncBossKeyToMain()
+  }
 }
 
-function cycleTheme() {
-  const order: ReadingTheme[] = ['light', 'sepia', 'dark']
-  const idx = order.indexOf(settings.value.theme)
-  settings.value = readingSettingsService.save({ theme: order[(idx + 1) % order.length] }, settings.value)
+function syncBossKeyToMain() {
+  void syncReadingBossKey(settings.value.bossKeyEnabled, settings.value.bossKeyAccelerator)
 }
 
 function clearChromeHideTimer() {
@@ -345,9 +317,32 @@ function scheduleChromeAutoHide() {
   }, 3200)
 }
 
+function hideChrome() {
+  if (!readingStarted.value || showSettings.value) return
+  showChrome.value = false
+  clearChromeHideTimer()
+}
+
 function revealChrome() {
   showChrome.value = true
   scheduleChromeAutoHide()
+}
+
+function toggleChrome() {
+  if (!readingStarted.value || showSettings.value) return
+  if (showChrome.value) hideChrome()
+  else revealChrome()
+}
+
+function openChapterPicker() {
+  showChapterPicker.value = true
+  revealChrome()
+}
+
+function jumpToChapter(index: number) {
+  pauseAutoScroll()
+  showChapterPicker.value = false
+  void scrollToChapter(index)
 }
 
 function turnPrevPage() {
@@ -395,9 +390,7 @@ function onViewportClick(event: MouseEvent) {
     }
   }
 
-  if (!showChrome.value) {
-    revealChrome()
-  }
+  toggleChrome()
 }
 
 function goPrevChapter() {
@@ -428,19 +421,15 @@ function onViewportPointerDown(event: PointerEvent) {
 }
 
 function onViewportPointerMove(event: PointerEvent) {
-  if (viewportDragActive) {
-    const el = pageViewportRef.value
-    if (!el) return
-    const delta = event.clientY - viewportDragStartY
-    if (Math.abs(delta) > 4) {
-      viewportDragMoved = true
-      viewportPointerDown = true
-    }
-    el.scrollTop = viewportDragStartScrollTop - delta
-    return
+  if (!viewportDragActive) return
+  const el = pageViewportRef.value
+  if (!el) return
+  const delta = event.clientY - viewportDragStartY
+  if (Math.abs(delta) > 4) {
+    viewportDragMoved = true
+    viewportPointerDown = true
   }
-
-  viewportPointerDown = true
+  el.scrollTop = viewportDragStartScrollTop - delta
 }
 
 function onViewportPointerUp(event: PointerEvent) {
@@ -470,7 +459,7 @@ function resetSheetDrag() {
   sheetDragStartOffset = 0
 }
 
-function onSheetDragStart(event: PointerEvent) {
+function onSheetDragStart(event: PointerEvent, closeSheet: () => void) {
   if (event.button !== 0) return
   event.preventDefault()
   sheetDragStartY = event.clientY
@@ -490,7 +479,7 @@ function onSheetDragStart(event: PointerEvent) {
   const onEnd = () => {
     const shouldClose = sheetDragging.value && sheetDragOffset.value > 96
     resetSheetDrag()
-    if (shouldClose) showSettings.value = false
+    if (shouldClose) closeSheet()
   }
 
   const cleanup = () => {
@@ -507,7 +496,7 @@ function onSheetDragStart(event: PointerEvent) {
 }
 
 function onWheel(event: WheelEvent) {
-  if (showSettings.value) return
+  if (showSettings.value || showChapterPicker.value) return
 
   if (!isPageMode.value) {
     pauseAutoScroll()
@@ -528,9 +517,9 @@ function onWheel(event: WheelEvent) {
 
 function onScroll() {
   if (isPageMode.value) return
-  if (!isAutoScrollDriving()) pauseAutoScroll()
+  if (isAutoScrollDriving()) return
+  pauseAutoScroll()
   syncChapterFromScroll()
-  onReadingTurn()
   if (scrollSaveTimer) window.clearTimeout(scrollSaveTimer)
   scrollSaveTimer = window.setTimeout(() => {
     persistProgress(pageViewportRef.value?.scrollTop ?? 0)
@@ -542,6 +531,7 @@ async function loadReader() {
   loadError.value = ''
   showChrome.value = true
   readingStarted.value = false
+  settings.value = { ...readingSettingsService.get(), autoScroll: false }
   try {
     if (!projectId.value) throw new Error('未指定作品')
     await novelStore.loadProject(projectId.value, true)
@@ -553,11 +543,6 @@ async function loadReader() {
     applyWindowEffects()
     resetAutoTurn()
   }
-}
-
-function triggerBossKey() {
-  showSettings.value = false
-  void bossHideReadingWindow()
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -572,13 +557,8 @@ function onKeydown(event: KeyboardEvent) {
     return
   }
 
-  if (
-    settings.value.bossKeyEnabled &&
-    settings.value.bossKeyAccelerator &&
-    eventMatchesAccelerator(event, settings.value.bossKeyAccelerator)
-  ) {
-    event.preventDefault()
-    triggerBossKey()
+  if (showChapterPicker.value && event.key === 'Escape') {
+    showChapterPicker.value = false
     return
   }
 
@@ -615,6 +595,17 @@ function onKeydown(event: KeyboardEvent) {
   }
 }
 
+watch(showChapterPicker, (open) => {
+  if (open) {
+    showChrome.value = true
+    clearChromeHideTimer()
+    resetSheetDrag()
+    pauseAutoScroll()
+    return
+  }
+  resetSheetDrag()
+})
+
 watch(showSettings, (open) => {
   if (open) {
     showChrome.value = true
@@ -631,6 +622,7 @@ watch(showSettings, (open) => {
 onMounted(() => {
   void purgeLegacyTtsIndexedDb()
   void loadReader()
+  void syncBossKeyToMain()
   window.addEventListener('keydown', onKeydown, true)
 })
 
@@ -660,7 +652,7 @@ onUnmounted(() => {
     :class="[
       `reader--${settings.theme}`,
       {
-        'reader--settings-open': showSettings,
+        'reader--settings-open': showSettings || showChapterPicker,
         'reader--chrome-visible': chromeVisible,
         'reader--immersive': readingStarted && !chromeVisible,
         'reader--scroll-mode': !isPageMode,
@@ -679,30 +671,16 @@ onUnmounted(() => {
         <button
           type="button"
           class="reader-icon-btn"
-          :class="{ 'is-active': ttsActive }"
-          :title="ttsActive ? '听书控制' : '开始听书'"
-          @click="toggleListening"
-        >
-          <Pause v-if="ttsPlaying" :size="16" />
-          <Play v-else-if="ttsPaused" :size="16" />
-          <Headphones v-else :size="16" />
-        </button>
-        <button type="button" class="reader-icon-btn" title="切换主题" @click="cycleTheme">
-          <component :is="themeIcon(settings.theme)" :size="16" />
-        </button>
-        <button
-          type="button"
-          class="reader-icon-btn"
           :class="{ 'is-active': showSettings }"
           title="阅读设置"
           @click="showSettings = !showSettings"
         >
           <Settings2 :size="16" />
         </button>
-        <button type="button" class="reader-icon-btn" title="最小化" @click="windowControls.minimize()">
-          <Minus :size="16" />
+        <button type="button" class="reader-icon-btn" title="回到主窗口" @click="returnToMainFromReading()">
+          <Home :size="16" />
         </button>
-        <button type="button" class="reader-icon-btn reader-icon-btn--close" title="退出阅读" @click="closeReadingWindow()">
+        <button type="button" class="reader-icon-btn reader-icon-btn--close" title="关闭" @click="closeReadingWindow()">
           <X :size="16" />
         </button>
       </div>
@@ -716,13 +694,13 @@ onUnmounted(() => {
     <div v-else-if="loadError" class="reader-state">
       <strong>无法阅读</strong>
       <span>{{ loadError }}</span>
-      <button type="button" class="reader-btn" @click="closeReadingWindow()">返回</button>
+      <button type="button" class="reader-btn" @click="returnToMainFromReading()">返回</button>
     </div>
 
     <div v-else-if="!readableChapters.length" class="reader-state">
       <strong>暂无可读章节</strong>
       <span>请先在创作台生成章节正文。</span>
-      <button type="button" class="reader-btn" @click="closeReadingWindow()">返回</button>
+      <button type="button" class="reader-btn" @click="returnToMainFromReading()">返回</button>
     </div>
 
     <template v-else>
@@ -785,13 +763,21 @@ onUnmounted(() => {
             <template v-else>
               <template v-for="block in scrollBlocks" :key="block.key">
                 <div
-                  v-if="block.type === 'chapter-start'"
+                  v-if="block.type === 'chapter-spacer-top'"
+                  class="reader-chapter-spacer-top"
+                  :data-chapter-marker="block.chapterIndex"
+                />
+                <div
+                  v-else-if="block.type === 'chapter-start'"
                   class="reader-chapter-marker"
                   :class="{ 'reader-chapter-marker--hidden': !settings.showChapterDividers }"
-                  :data-chapter-marker="block.chapterIndex"
                 >
                   {{ settings.showChapterDividers ? block.title : '' }}
                 </div>
+                <div
+                  v-else-if="block.type === 'chapter-spacer-bottom'"
+                  class="reader-chapter-spacer-bottom"
+                />
                 <p v-else>
                   {{ block.text }}
                 </p>
@@ -828,7 +814,10 @@ onUnmounted(() => {
           <ChevronLeft :size="18" />
           {{ isPageMode ? '上一页' : '上一章' }}
         </button>
-        <span class="reader-progress">{{ progressLabel }}</span>
+        <button type="button" class="reader-progress" @click.stop="openChapterPicker">
+          <List :size="14" />
+          <span>{{ progressLabel }}</span>
+        </button>
         <button
           type="button"
           class="reader-nav-btn"
@@ -840,6 +829,17 @@ onUnmounted(() => {
         </button>
       </footer>
     </template>
+
+    <ReadingChapterPicker
+      v-if="showChapterPicker"
+      :chapters="readableChapters"
+      :current-index="chapterIndex"
+      :sheet-dragging="sheetDragging"
+      :sheet-drag-offset="sheetDragOffset"
+      @close="showChapterPicker = false"
+      @select="jumpToChapter"
+      @sheet-drag-start="onSheetDragStart($event, () => { showChapterPicker = false })"
+    />
 
     <ReadingSettingsSheet
       v-if="showSettings"
@@ -854,7 +854,7 @@ onUnmounted(() => {
       @start-listening="startListening()"
       @start-boss-key-recording="recordingBossKey = true"
       @cancel-boss-key-recording="recordingBossKey = false"
-      @sheet-drag-start="onSheetDragStart"
+      @sheet-drag-start="onSheetDragStart($event, () => { showSettings = false })"
     />
   </div>
 </template>

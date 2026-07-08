@@ -2,6 +2,8 @@ import conceptPrompt from '@shared/novel/prompts/concept.md?raw'
 import outlinePrompt from '@shared/novel/prompts/outline_generation.md?raw'
 import screenwritingPrompt from '@shared/novel/prompts/screenwriting.md?raw'
 import writingPrompt from '@shared/novel/prompts/writing_v2.md?raw'
+import chapterPlanPrompt from '@shared/novel/prompts/chapter_plan.md?raw'
+import constitutionCheckPrompt from '@shared/novel/prompts/constitution_check.md?raw'
 import evaluationPrompt from '@shared/novel/prompts/evaluation.md?raw'
 import extractionPrompt from '@shared/novel/prompts/extraction.md?raw'
 import optimizeDialoguePrompt from '@shared/novel/prompts/optimize_dialogue.md?raw'
@@ -19,6 +21,7 @@ import {
   parseChapterOutlineFromLlm,
   parseLlmJsonObject,
   pickBestLlmPayload,
+  pickContentOnlyPayload,
   resolveDisplayAiMessage,
 } from './json-utils'
 import {
@@ -71,11 +74,38 @@ import {
   buildChapterRewriteHint,
   detectRepetitionIssues,
   extractBannedPhrases,
-  formatWordCountFeedback,
-  hasSevereRepetition,
+  formatInternalRepetitionRewriteHint,
+  hasInternalRepetitionNeedingRewrite,
   sanitizeChapterContent,
+  stripAuthoringMetaCommentary,
   truncateChapterToMaxChars,
+  VERNACULAR_PROSE_HINT,
 } from '@shared/novel/chapter-content-guard'
+import {
+  buildNovelConstitutionText,
+  formatConstitutionRewriteHint,
+  mergeLlmConstitutionViolations,
+  needsConstitutionRewrite,
+  runChapterConstitutionCheck,
+} from '@shared/novel/chapter-constitution-check'
+import {
+  assertChapterGenerationAllowed,
+  buildChapterPlanPayload,
+  buildFallbackChapterMission,
+  buildForbiddenCharacterNames,
+  buildContinuityBridgeBlock,
+  buildForeshadowingWritingHints,
+  buildRollingRecapSummaries,
+  buildTrimmedBlueprintSnapshot,
+  formatChapterMissionBlock,
+  formatForbiddenCharactersBlock,
+  formatRollingRecapBlock,
+  formatTrimmedBlueprintBlock,
+  parseChapterMissionFromLlm,
+  resolvePriorChapterContext,
+  type ChapterMission,
+  type PriorChapterContext,
+} from '@shared/novel/chapter-writing-context'
 import { extractSingleChapterContent } from './chapter-splitter'
 import {
   patchChapterGenProgress,
@@ -92,14 +122,17 @@ import {
 } from './material-library-apply'
 import {
   applyUserAnswerToChecklist,
-  buildAutoCompletionMessage,
+  applyChapterCountFromUserText,
   buildBlueprintConceptSupplement,
   buildChecklistPromptSupplement,
+  countConceptCompleteness,
+  deriveLockedFields,
+  detectUserEditTopics,
   enrichBlueprintFromConcept,
-  isChecklistComplete,
   detectChapterCountLoop,
   forceCompleteChecklist,
   mergeChecklistAnswersFromModel,
+  mergeChecklistAnswersWithLocks,
   mergeChecklistDrafts,
   mergeChecklistFromModel,
   composeConceptBriefFromAnswers,
@@ -109,16 +142,18 @@ import {
   pruneDraftsForConfirmed,
   rebuildChecklistFromHistory,
   rebuildFullConceptStateFromHistory,
+  reconcileConceptConversationState,
   requiredChecklistKeys,
   resolveFinalConceptAnswers,
-  resolveFinalConceptBrief,
   resolvePendingTopicAfterResponse,
+  shouldUsePartialConceptUpdate,
   type ConceptChecklistKey,
   type ConceptConversationState,
 } from '@shared/novel/concept-checklist'
 
 const STREAM_TIMEOUT_MS = 120_000
 const LONG_STREAM_TIMEOUT_MS = 1_800_000
+const CHAPTER_STREAM_IDLE_MS = 45_000
 const OUTLINE_GENERATION_TIMEOUT_MS = 300_000
 const OUTLINE_REPAIR_BATCH_SIZE = 6
 const OUTLINE_REPAIR_MAX_BATCHES = 12
@@ -197,6 +232,10 @@ export async function chat(
     signal?: AbortSignal
     pipelineStep?: PipelineStep
     pipelineLabel?: string
+    /** 章节正文等场景：仅使用 content 字段，忽略 reasoning/thinking，且不合并二者 */
+    contentOnly?: boolean
+    /** contentOnly 模式下，正文已有输出后若长时间无新 content 则主动收尾 */
+    streamIdleMs?: number
   }
 ): Promise<string> {
   const model = await resolveProjectChatModelId(params?.project)
@@ -225,6 +264,7 @@ export async function chat(
   let timedOut = false
   let outputLimitReached = false
   let timeoutId: number | undefined
+  let streamIdleId: number | undefined
   let abortListener: (() => void) | undefined
 
   const resetTimeout = () => {
@@ -269,6 +309,25 @@ export async function chat(
 
     const throttled = createThrottledStreamEmitter((raw) => emitStream(raw))
 
+    const clearStreamIdle = () => {
+      if (streamIdleId) {
+        window.clearTimeout(streamIdleId)
+        streamIdleId = undefined
+      }
+    }
+
+    const scheduleStreamIdleFinalize = () => {
+      if (!params?.contentOnly || !params?.streamIdleMs) return
+      if (countChapterChars(contentText) < 80) return
+      clearStreamIdle()
+      streamIdleId = window.setTimeout(() => {
+        if (settled || !contentText.trim()) return
+        outputLimitReached = true
+        cancelStream?.()
+        void window.api.cancelSSE()
+      }, params.streamIdleMs)
+    }
+
     const pushVisibleChunk = (chunk: string) => {
       if (!chunk) return
       resetTimeout()
@@ -296,9 +355,11 @@ export async function chat(
             void window.api.cancelSSE()
           }
           pushVisibleChunk(chunk)
+          scheduleStreamIdleFinalize()
         },
         onReasoningChunk: (chunk) => {
           reasoningText += chunk
+          if (params?.contentOnly) return
           if (!contentText.trim()) {
             pushVisibleChunk(chunk)
           }
@@ -307,11 +368,14 @@ export async function chat(
           usage = { ...usage, ...u }
         },
         onEnd: () => {
+          clearStreamIdle()
           throttled.flush()
           if (settled) return
           settled = true
           if (streamHandlers?.onChunk) {
-            const finalRaw = pickBestLlmPayload(contentText, reasoningText)
+            const finalRaw = params?.contentOnly
+              ? pickContentOnlyPayload(contentText)
+              : pickBestLlmPayload(contentText, reasoningText)
             streamHandlers.onChunk({
               raw: finalRaw,
               display: resolveDisplayAiMessage(finalRaw),
@@ -321,12 +385,15 @@ export async function chat(
           resolve({ content: contentText, reasoning: reasoningText, usage })
         },
         onError: (err) => {
+          clearStreamIdle()
           if (settled) return
           if (outputLimitReached && contentText.trim()) {
             settled = true
             throttled.flush()
             if (streamHandlers?.onChunk) {
-              const finalRaw = pickBestLlmPayload(contentText, reasoningText)
+              const finalRaw = params?.contentOnly
+                ? pickContentOnlyPayload(contentText)
+                : pickBestLlmPayload(contentText, reasoningText)
               streamHandlers.onChunk({
                 raw: finalRaw,
                 display: resolveDisplayAiMessage(finalRaw),
@@ -353,6 +420,7 @@ export async function chat(
   try {
     const { content, reasoning, usage } = await streamPromise
     if (timeoutId) window.clearTimeout(timeoutId)
+    if (streamIdleId) window.clearTimeout(streamIdleId)
     if (params?.signal && abortListener) {
       params.signal.removeEventListener('abort', abortListener)
     }
@@ -363,13 +431,19 @@ export async function chat(
     if (statsProjectId) {
       projectStatsService.recordAiCall(statsProjectId, usage)
     }
-    const result = pickBestLlmPayload(content, reasoning)
+    const result = params?.contentOnly
+      ? pickContentOnlyPayload(content)
+      : pickBestLlmPayload(content, reasoning)
+    if (params?.contentOnly && !result.trim()) {
+      throw new Error('模型未返回章节正文，请重试或更换模型')
+    }
     if (pipelineId) {
       pipelineLogService.finish(pipelineId, { response: result, usage })
     }
     return result
   } catch (error) {
     if (timeoutId) window.clearTimeout(timeoutId)
+    if (streamIdleId) window.clearTimeout(streamIdleId)
     if (params?.signal && abortListener) {
       params.signal.removeEventListener('abort', abortListener)
     }
@@ -414,6 +488,8 @@ function projectChatOpts(
     signal?: AbortSignal
     pipelineStep?: PipelineStep
     pipelineLabel?: string
+    contentOnly?: boolean
+    streamIdleMs?: number
   }
 ) {
   return {
@@ -448,6 +524,26 @@ ui_control 规则：
 - conversation_state.concept_brief：**每轮必填**。对照整段对话**整体改写**故事概念（2-5 段连贯 prose，像策划案梗概）。这是用户左侧唯一可见的设定板：禁止粘贴用户原话、禁止问答式分条罗列
 - conversation_state.checklist / checklist_answers：内部进度与结构化备份，每轮同步更新；用户可见内容只在 concept_brief 中体现
 - 用户补充或修改设定时，应合并进 concept_brief 整体叙述，而非另起一条问答记录
+不要输出额外的文本或解释。
+`
+
+const JSON_RESPONSE_INSTRUCTION_PARTIAL = `
+IMPORTANT: 你的回复必须是合法的 JSON 对象，并严格包含以下字段：
+{
+  "ai_message": "string",
+  "ui_control": { "type": "text_input | single_choice | multiple_choice | info_display", "options": [], "placeholder": "string" },
+  "conversation_state": {
+    "concept_brief": "可与上一版相同；仅局部改写本轮变更项相关段落",
+    "checklist": { "spark": true },
+    "checklist_answers": { "spark": "仅更新本轮变更字段" }
+  },
+  "is_complete": false
+}
+局部更新规则（必须遵守）：
+- **禁止通篇重写** concept_brief；未涉及的段落必须与上一版一致
+- 优先更新 checklist_answers 中与用户本轮诉求相关的字段；concept_brief 可只做最小改动
+- 已锁定设定不得擅自修改；用户未提及的项保持 checklist_answers 原值
+- ai_message 聚焦本轮变更，不要重复已确定的全书综述
 不要输出额外的文本或解释。
 `
 
@@ -613,48 +709,6 @@ function mergeConceptStateFromHistory(
   }
 }
 
-function buildConceptCompletionResponse(
-  project: NovelProject,
-  history: ConversationMessage[],
-  conversationState: Record<string, unknown>,
-  checklist: ReturnType<typeof normalizeChecklist>,
-  answers: Record<string, string | undefined>,
-  mode: ReturnType<typeof resolveWritingMode>
-): ConverseResponse {
-  const aiMessage = buildAutoCompletionMessage(answers)
-  const conceptBrief = resolveFinalConceptBrief(
-    conversationState as ConceptConversationState,
-    answers,
-    mode
-  )
-  const nextConversationState: Record<string, unknown> = {
-    ...conversationState,
-    concept_brief: conceptBrief,
-    checklist,
-    checklist_answers: answers,
-    pending_topic: null,
-    ready_for_blueprint: true,
-  }
-  const uiControl: UIControl = { type: 'text_input', placeholder: '对话已完成' }
-  const assistantPayload = JSON.stringify({
-    ai_message: aiMessage,
-    ui_control: uiControl,
-    conversation_state: nextConversationState,
-    is_complete: true,
-    ready_for_blueprint: true,
-  })
-  history.push({ role: 'assistant', content: assistantPayload })
-  project.conversation_history = history
-
-  return {
-    ai_message: aiMessage,
-    ui_control: uiControl,
-    conversation_state: nextConversationState,
-    is_complete: true,
-    ready_for_blueprint: true,
-  }
-}
-
 export async function converseConcept(
   project: NovelProject,
   userInput: { id?: string | null; value?: string | null } | null,
@@ -674,8 +728,12 @@ export async function converseConcept(
     mode
   )
   drafts = mergeChecklistDrafts(conceptState.checklist_drafts ?? {}, drafts)
+  let lockedFields = [...(conceptState.locked_fields ?? [])]
   if (history.length <= 1) {
-    ;({ checklist, answers } = seedConceptChecklistFromMaterials(checklist, answers, project))
+    const seeded = seedConceptChecklistFromMaterials(checklist, answers, project)
+    checklist = seeded.checklist
+    answers = seeded.answers
+    lockedFields = [...new Set([...lockedFields, ...seeded.lockedFields])]
   }
   const substantiveUserTurns = countSubstantiveUserTurns(history)
   ;({ checklist, answers } = autoFillRemainingChecklist(
@@ -690,33 +748,37 @@ export async function converseConcept(
     ;({ checklist, answers } = forceCompleteChecklist(checklist, answers, drafts, mode))
   }
 
-  const checklistDone = isChecklistComplete(checklist, mode)
+  const userChangedKeys = detectUserEditTopics(formattedInput.value, pendingTopic)
+  lockedFields = deriveLockedFields(checklist, answers, lockedFields, mode)
+  const completeness = countConceptCompleteness(checklist, mode)
+  const baseBrief = conceptState.concept_brief?.trim() || ''
   const inRevision = Boolean(conceptState.revision_mode)
-  if (checklistDone && formattedInput.value && !inRevision) {
-    const finalizedAnswers = resolveFinalConceptAnswers(checklist, answers, drafts, mode)
-    return buildConceptCompletionResponse(
-      project,
-      history,
-      conversationState,
-      checklist,
-      finalizedAnswers,
-      mode
-    )
-  }
+  const partialUpdate = shouldUsePartialConceptUpdate({
+    inRevision,
+    lockedFields,
+    changedFields: userChangedKeys,
+    completedCount: completeness.completed,
+    hasBaseBrief: Boolean(baseBrief),
+  })
 
   const checklistSupplement = buildChecklistPromptSupplement(checklist, answers, mode, {
     drafts,
     forcedNextTopic: pendingTopic ?? undefined,
+    lockedFields,
+    changedFields: userChangedKeys,
+    partialUpdate,
+    baseBrief,
   })
   const materialSupplement = buildConceptMaterialPromptSupplement(project)
   const revisionSupplement = inRevision
-    ? '\n\n【调整模式】用户从蓝图确认/预览返回，希望继续修改设定。请根据用户最新输入更新 checklist 与 checklist_answers；在用户明确表示满意、可以生成蓝图时再设置 ready_for_blueprint: true 与 is_complete: true。'
+    ? '\n\n【调整模式】用户从蓝图确认/预览返回，希望继续修改设定。请**仅按用户本轮诉求局部更新** checklist_answers 与 concept_brief 相关段落；已锁定项不得擅自改动；不要设置 is_complete 或 ready_for_blueprint。'
     : ''
   const conceptSystem =
     mode === 'simple' ? `${conceptPrompt}\n${SIMPLE_CONCEPT_SUPPLEMENT}` : conceptPrompt
+  const jsonInstruction = partialUpdate ? JSON_RESPONSE_INSTRUCTION_PARTIAL : JSON_RESPONSE_INSTRUCTION
 
   const raw = await chat(
-    `${conceptSystem}\n${JSON_RESPONSE_INSTRUCTION}\n${checklistSupplement}${materialSupplement}${revisionSupplement}`,
+    `${conceptSystem}\n${jsonInstruction}\n${checklistSupplement}${materialSupplement}${revisionSupplement}`,
     history.map((m) => ({ role: m.role, content: m.content })),
     projectChatOpts(project, {
       temperature: 0.8,
@@ -731,12 +793,14 @@ export async function converseConcept(
   const aiMessage = resolveAiMessage(raw, parsed)
   const modelState = (parsed.conversation_state ?? {}) as ConceptConversationState
   let mergedChecklist = mergeChecklistFromModel(checklist, modelState.checklist)
-  let mergedAnswers = mergeChecklistAnswersFromModel(answers, modelState.checklist_answers)
-  let mergedDrafts = pruneDraftsForConfirmed(
-    mergeChecklistDrafts(conceptState.checklist_drafts ?? {}, drafts),
-    mergedChecklist,
-    mergedAnswers
+  let mergedAnswers = mergeChecklistAnswersWithLocks(
+    answers,
+    modelState.checklist_answers,
+    lockedFields,
+    userChangedKeys
   )
+  mergedAnswers = applyChapterCountFromUserText(mergedAnswers, formattedInput.value)
+  let mergedDrafts = mergeChecklistDrafts(conceptState.checklist_drafts ?? {}, drafts)
   ;({ checklist: mergedChecklist, answers: mergedAnswers } = autoFillRemainingChecklist(
     mergedChecklist,
     mergedAnswers,
@@ -754,71 +818,54 @@ export async function converseConcept(
   }
   const uiControl = parseUiControl(parsed.ui_control, aiMessage)
   const pendingTopicAfter = resolvePendingTopicAfterResponse(aiMessage, mergedChecklist, mode)
-  const allChecklistDone = isChecklistComplete(mergedChecklist, mode)
+  lockedFields = deriveLockedFields(mergedChecklist, mergedAnswers, lockedFields, mode)
 
-  if (allChecklistDone && !inRevision) {
-    const finalizedAnswers = resolveFinalConceptAnswers(
-      mergedChecklist,
-      mergedAnswers,
-      mergedDrafts,
-      mode
-    )
-    return buildConceptCompletionResponse(
-      project,
-      history,
-      conversationState,
-      mergedChecklist,
-      finalizedAnswers,
-      mode
-    )
-  }
-
-  let mergedBrief = mergeConceptBriefFromModel(conceptState.concept_brief, modelState.concept_brief)
+  let mergedBrief = mergeConceptBriefFromModel(conceptState.concept_brief, modelState.concept_brief, {
+    partialUpdate,
+    changedKeys: userChangedKeys,
+    answers: mergedAnswers,
+    mode,
+  })
   if (!mergedBrief) {
     mergedBrief = composeConceptBriefFromAnswers(mergedAnswers, mode)
   }
+
+  const reconciled = reconcileConceptConversationState(
+    {
+      ...(conversationState as ConceptConversationState),
+      concept_brief: mergedBrief,
+      checklist: mergedChecklist,
+      checklist_answers: mergedAnswers,
+      checklist_drafts: mergedDrafts,
+      pending_topic: pendingTopicAfter,
+      locked_fields: lockedFields,
+      revision_mode: inRevision,
+    },
+    mode,
+    { history, latestUserValue: formattedInput.value }
+  )
+  mergedAnswers = reconciled.checklist_answers ?? mergedAnswers
+  mergedBrief = reconciled.concept_brief ?? mergedBrief
+  mergedDrafts = pruneDraftsForConfirmed(mergedDrafts, mergedChecklist, mergedAnswers)
 
   const nextConversationState: Record<string, unknown> = {
     ...conversationState,
     concept_brief: mergedBrief,
     checklist: mergedChecklist,
     checklist_answers: mergedAnswers,
+    checklist_drafts: mergedDrafts,
     pending_topic: pendingTopicAfter,
+    locked_fields: lockedFields,
     revision_mode: inRevision,
-  }
-
-  const explicitlyComplete =
-    Boolean(parsed.is_complete) ||
-    Boolean(parsed.ready_for_blueprint) ||
-    (checklistDone && !inRevision)
-  const ready = inRevision
-    ? Boolean(parsed.is_complete) || Boolean(parsed.ready_for_blueprint)
-    : allChecklistDone ||
-      Boolean(nextConversationState.ready_for_blueprint) ||
-      (explicitlyComplete && substantiveUserTurns >= 1)
-
-  if (ready) {
-    nextConversationState.ready_for_blueprint = true
-    nextConversationState.revision_mode = false
-    nextConversationState.checklist_answers = resolveFinalConceptAnswers(
-      mergedChecklist,
-      mergedAnswers,
-      mergedDrafts,
-      mode
-    )
-    nextConversationState.concept_brief = resolveFinalConceptBrief(
-      { ...(conversationState as ConceptConversationState), concept_brief: mergedBrief },
-      nextConversationState.checklist_answers as Record<string, string | undefined>,
-      mode
-    )
+    ready_for_blueprint: false,
   }
 
   const assistantPayload = JSON.stringify({
     ai_message: aiMessage,
     ui_control: uiControl,
     conversation_state: nextConversationState,
-    is_complete: ready,
-    ready_for_blueprint: ready,
+    is_complete: false,
+    ready_for_blueprint: false,
   })
   history.push({ role: 'assistant', content: assistantPayload })
   project.conversation_history = history
@@ -827,8 +874,8 @@ export async function converseConcept(
     ai_message: aiMessage,
     ui_control: uiControl,
     conversation_state: nextConversationState,
-    is_complete: ready,
-    ready_for_blueprint: ready,
+    is_complete: false,
+    ready_for_blueprint: false,
   }
 }
 
@@ -1284,7 +1331,9 @@ async function repairBlueprintOutline(
         rebuilt.drafts,
         mode
       ),
+      drafts: rebuilt.drafts,
       conceptBrief: options?.conceptBrief,
+      conversationText: formatConversationHistoryForBlueprint(project.conversation_history ?? []),
       mode,
     })
 
@@ -1428,6 +1477,7 @@ export async function generateBlueprint(
   const materialContext = buildConceptMaterialPromptSupplement(project)
   const expectedChapters = resolveBlueprintExpectedChapterCount({
     answers: finalizedAnswers,
+    drafts: rebuilt.drafts,
     conceptBrief,
     conversationText: historyText,
     mode,
@@ -1537,7 +1587,7 @@ export async function generateBlueprint(
   const chapterCount = countUsableChapterOutline(blueprint)
   const aiMessage =
     chapterCount > 0
-      ? `蓝图已生成（含 ${chapterCount} 章大纲）。你可以继续编辑或直接开始写作。`
+      ? `蓝图已生成（含 ${chapterCount} 章大纲）。确认后写入项目，可在各板块继续编辑，再用「一键连写」或写作台逐章生成。`
       : '蓝图主体已生成，但章节大纲未能自动补全，请在「章节大纲」Tab 手动添加或重新生成。'
 
   return {
@@ -1550,21 +1600,164 @@ function chapterOutlineEntry(project: NovelProject, chapterNumber: number) {
   return project.blueprint?.chapter_outline?.find((c) => c.chapter_number === chapterNumber)
 }
 
-function buildPriorChapterContext(project: NovelProject, chapterNumber: number) {
-  const priorChapter = (project.chapters || [])
-    .filter((c) => c.chapter_number < chapterNumber && c.content?.trim())
-    .sort((a, b) => b.chapter_number - a.chapter_number)[0]
+async function generateChapterMission(
+  project: NovelProject,
+  chapterNumber: number,
+  outline: ReturnType<typeof chapterOutlineEntry>,
+  prior: PriorChapterContext,
+  options?: { signal?: AbortSignal }
+): Promise<ChapterMission> {
+  const payload = buildChapterPlanPayload(project, chapterNumber, outline, prior)
+  try {
+    const raw = await chat(
+      chapterPlanPrompt,
+      [{ role: 'user', content: JSON.stringify(payload, null, 2) }],
+      projectChatOpts(project, {
+        temperature: 0.45,
+        timeoutMs: STREAM_TIMEOUT_MS,
+        signal: options?.signal,
+        pipelineStep: 'chapter_plan',
+        pipelineLabel: `规划第 ${chapterNumber} 章导演脚本`,
+      })
+    )
+    const parsed = parseJsonBlock(raw)
+    const mission = parsed ? parseChapterMissionFromLlm(parsed) : null
+    if (mission) return mission
+  } catch {
+    // fallback below
+  }
+  return buildFallbackChapterMission(project, outline, prior)
+}
 
-  if (!priorChapter?.content?.trim()) {
-    return { priorEnding: '', priorSummary: '', priorContent: null as string | null }
+function fillConstitutionCheckPrompt(input: {
+  constitution: string
+  chapterNumber: number
+  chapterTitle: string
+  chapterContent: string
+}): string {
+  return constitutionCheckPrompt
+    .replace(/\{\{constitution\}\}/g, input.constitution)
+    .replace(/\{\{chapter_number\}\}/g, String(input.chapterNumber))
+    .replace(/\{\{chapter_title\}\}/g, input.chapterTitle)
+    .replace(/\{\{chapter_content\}\}/g, input.chapterContent.slice(0, 8000))
+}
+
+async function runLlmConstitutionCheck(
+  project: NovelProject,
+  input: {
+    chapterNumber: number
+    chapterTitle: string
+    content: string
+    blueprintSnapshot: ReturnType<typeof buildTrimmedBlueprintSnapshot>
+  },
+  options?: { signal?: AbortSignal }
+): Promise<Record<string, unknown> | null> {
+  const constitution = buildNovelConstitutionText(project, input.blueprintSnapshot)
+  const userMessage = fillConstitutionCheckPrompt({
+    constitution,
+    chapterNumber: input.chapterNumber,
+    chapterTitle: input.chapterTitle,
+    chapterContent: input.content,
+  })
+
+  try {
+    const raw = await chat(
+      '你是严格的小说宪法编辑，只输出 JSON。',
+      [{ role: 'user', content: userMessage }],
+      projectChatOpts(project, {
+        temperature: 0.2,
+        timeoutMs: STREAM_TIMEOUT_MS,
+        signal: options?.signal,
+        pipelineStep: 'chapter_constitution',
+        pipelineLabel: `宪法合规检查第 ${input.chapterNumber} 章`,
+      })
+    )
+    return parseJsonBlock(raw)
+  } catch {
+    return null
+  }
+}
+
+async function runConstitutionGateAndRewrite(input: {
+  project: NovelProject
+  chapterNumber: number
+  chapterTitle: string
+  mission: ChapterMission
+  content: string
+  priorContent: string | null
+  targetWordCount: number
+  buildMessage: (rewriteHint?: string) => string
+  signal?: AbortSignal
+  onStream?: (chars: number, preview: string) => void
+}): Promise<string> {
+  const prefs = getCreationWorkflowPrefs()
+  const blueprintSnapshot = buildTrimmedBlueprintSnapshot(
+    input.project,
+    input.chapterNumber,
+    chapterOutlineEntry(input.project, input.chapterNumber)
+  )
+  const forbiddenNames = buildForbiddenCharacterNames(
+    input.project,
+    input.chapterNumber,
+    input.mission
+  )
+
+  let ruleResult = runChapterConstitutionCheck({
+    content: input.content,
+    chapterNumber: input.chapterNumber,
+    mission: input.mission,
+    forbiddenNames,
+    blueprintSnapshot,
+  })
+
+  if (
+    prefs.enableConstitutionLlmCheck &&
+    (!ruleResult.overall_compliance || ruleResult.violations.some((v) => v.severity === 'warning'))
+  ) {
+    patchChapterGenProgress({
+      phase: 'processing',
+      message: `正在检查第 ${input.chapterNumber} 章合规性…`,
+    })
+    const llmRaw = await runLlmConstitutionCheck(
+      input.project,
+      {
+        chapterNumber: input.chapterNumber,
+        chapterTitle: input.chapterTitle,
+        content: input.content,
+        blueprintSnapshot,
+      },
+      { signal: input.signal }
+    )
+    ruleResult = mergeLlmConstitutionViolations(ruleResult, llmRaw)
   }
 
-  const content = priorChapter.content.trim()
-  return {
-    priorEnding: content.slice(-600),
-    priorSummary: priorChapter.summary?.trim() || '',
-    priorContent: content,
+  if (!needsConstitutionRewrite(ruleResult)) {
+    return input.content
   }
+
+  const constitutionHint = formatConstitutionRewriteHint(ruleResult)
+  if (!constitutionHint) return input.content
+
+  patchChapterGenProgress({
+    phase: 'writing',
+    chars: 0,
+    streamPreview: undefined,
+    message: `检测到宪法违规，正在修正第 ${input.chapterNumber} 章…`,
+  })
+
+  const rewritten = await generateChapterDraft(input.project, input.buildMessage(constitutionHint), {
+    signal: input.signal,
+    pipelineLabel: `重写第 ${input.chapterNumber} 章（宪法合规）`,
+    targetWordCount: input.targetWordCount,
+    temperature: 0.62,
+    onStream: input.onStream,
+  })
+
+  return normalizeGeneratedChapterContent(
+    rewritten,
+    input.chapterNumber,
+    input.priorContent
+  ).content
 }
 
 function buildChapterGenerationUserMessage(input: {
@@ -1573,31 +1766,70 @@ function buildChapterGenerationUserMessage(input: {
   outline: ReturnType<typeof chapterOutlineEntry>
   wordCountHint: string
   recentStats: string
-  priorSummary: string
-  priorEnding: string
-  priorContent: string | null
+  prior: PriorChapterContext
+  mission: ChapterMission
+  rollingRecap: ReturnType<typeof buildRollingRecapSummaries>
   styleHint?: string
   rewriteHint?: string
 }) {
-  const bannedPhrases = extractBannedPhrases(input.priorContent)
+  const { priorEnding, priorSummary, priorContent, continuityWarnings } = input.prior
+  const bannedPhrases = extractBannedPhrases(priorContent)
+  const trimmedBlueprint = buildTrimmedBlueprintSnapshot(
+    input.project,
+    input.chapterNumber,
+    input.outline
+  )
+  const forbiddenNames = buildForbiddenCharacterNames(
+    input.project,
+    input.chapterNumber,
+    input.mission
+  )
+  const foreshadowHints = buildForeshadowingWritingHints(
+    input.project,
+    input.chapterNumber,
+    input.outline
+  )
+  const continuityBridge = buildContinuityBridgeBlock(
+    input.project,
+    input.prior,
+    input.outline,
+    input.mission
+  )
+
   return [
-    `书名：${input.project.title}`,
-    `蓝图摘要：${input.project.blueprint?.full_synopsis || input.project.initial_prompt}`,
-    `当前章节：第${input.chapterNumber}章 ${input.outline?.title || ''}`,
-    `章节纲要：${input.outline?.summary || '按蓝图推进'}`,
+    formatTrimmedBlueprintBlock(trimmedBlueprint),
+    formatRollingRecapBlock(input.rollingRecap),
+    priorSummary ? `[上一章摘要]\n${priorSummary}` : '',
+    priorEnding ? `[上一章结尾]\n${priorEnding}` : '',
+    continuityBridge,
+    formatChapterMissionBlock(input.mission),
+    `[当前章节目标]\n第 ${input.chapterNumber} 章《${input.outline?.title || ''}》\n${input.outline?.summary || '按蓝图推进'}`,
+    formatForbiddenCharactersBlock(forbiddenNames),
     input.wordCountHint,
     input.recentStats ? `近期章节字数（保持体量一致）：\n${input.recentStats}` : '',
+    continuityWarnings.length
+      ? `[衔接警告]\n${continuityWarnings.map((w) => `- ${w}`).join('\n')}`
+      : '',
+    foreshadowHints.length
+      ? `[伏笔提醒]\n${foreshadowHints.map((h) => `- ${h}`).join('\n')}`
+      : '',
     `衔接要求：仅承接上一章结尾最后一拍，推进新信息；禁止复述上一章已写情节、对话、环境描写。`,
+    continuityBridge
+      ? `开场硬约束：本章前 3 段必须执行 [衔接桥接] 中的指令，写完后自检是否断层。`
+      : '',
     `反重复要求：每个动作/情绪/环境细节在本章内只写一次；禁止插入与正文无关的重复小段或同义句。`,
     bannedPhrases.length
       ? `以下表达已在上一章出现，本章禁止原样或换词重复：\n${bannedPhrases.map((item) => `- ${item}`).join('\n')}`
       : '',
-    input.priorSummary ? `上一章摘要：${input.priorSummary}` : '',
-    input.priorEnding ? `上一章结尾片段（仅供衔接，禁止复述）：\n${input.priorEnding}` : '',
+    VERNACULAR_PROSE_HINT,
+    trimmedBlueprint.style
+      ? `蓝图指定文风：${trimmedBlueprint.style}（在不违背白话叙事的前提下执行）`
+      : '',
     input.styleHint ? `写作风格提示：${input.styleHint}` : '',
     input.rewriteHint || '',
     `只写第 ${input.chapterNumber} 章正文；禁止写下一章内容，禁止输出「第 X 章」章节标题行。`,
     `请直接输出章节正文，不要输出 JSON 或解释。`,
+    `禁止输出创作思路、写作计划、自我复盘、约束清单或「我觉得/思考下来/还需要注意」类元叙述；这些只能在内部思考，不得出现在正文里。`,
   ]
     .filter(Boolean)
     .join('\n\n')
@@ -1650,11 +1882,14 @@ async function generateChapterDraft(
       signal: options?.signal,
       pipelineStep: 'chapter_write',
       pipelineLabel: options?.pipelineLabel || '撰写章节正文',
+      contentOnly: true,
+      streamIdleMs: CHAPTER_STREAM_IDLE_MS,
       stream: options?.onStream
         ? {
             onChunk: ({ raw }) => {
-              const chars = countChapterChars(raw)
-              const preview = prefs.showStreamPreview ? raw.slice(-1200) : ''
+              const cleaned = stripAuthoringMetaCommentary(raw)
+              const chars = countChapterChars(cleaned)
+              const preview = prefs.showStreamPreview ? cleaned.slice(-3200) : ''
               options.onStream?.(chars, preview)
             },
           }
@@ -1669,9 +1904,9 @@ async function generatePolishedChapterVersion(input: {
   outline: ReturnType<typeof chapterOutlineEntry>
   wordCountHint: string
   recentStats: string
-  priorSummary: string
-  priorEnding: string
-  priorContent: string | null
+  prior: PriorChapterContext
+  mission: ChapterMission
+  rollingRecap: ReturnType<typeof buildRollingRecapSummaries>
   styleHint?: string
   targetWordCount: number
   maxOutputChars: number
@@ -1680,6 +1915,8 @@ async function generatePolishedChapterVersion(input: {
   versionIndex: number
   onStream?: (chars: number, preview: string) => void
 }): Promise<string> {
+  const priorContent = input.prior.priorContent
+
   const buildMessage = (rewriteHint?: string) =>
     buildChapterGenerationUserMessage({
       project: input.project,
@@ -1687,9 +1924,9 @@ async function generatePolishedChapterVersion(input: {
       outline: input.outline,
       wordCountHint: input.wordCountHint,
       recentStats: input.recentStats,
-      priorSummary: input.priorSummary,
-      priorEnding: input.priorEnding,
-      priorContent: input.priorContent,
+      prior: input.prior,
+      mission: input.mission,
+      rollingRecap: input.rollingRecap,
       styleHint: input.versionCount > 1 ? input.styleHint : undefined,
       rewriteHint,
     })
@@ -1706,7 +1943,7 @@ async function generatePolishedChapterVersion(input: {
     onStream: input.onStream,
   })
 
-  let normalized = normalizeGeneratedChapterContent(content, input.chapterNumber, input.priorContent)
+  let normalized = normalizeGeneratedChapterContent(content, input.chapterNumber, priorContent)
   if (normalized.multiChapterTruncated) {
     patchChapterGenProgress({
       phase: 'processing',
@@ -1716,34 +1953,68 @@ async function generatePolishedChapterVersion(input: {
 
   let sanitized = normalized.content
 
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const charCount = countChapterChars(sanitized)
-    const needsFix =
-      hasSevereRepetition(sanitized, input.priorContent) ||
-      Boolean(formatWordCountFeedback(charCount, input.targetWordCount))
+  if (hasInternalRepetitionNeedingRewrite(sanitized)) {
+    const rewriteHint = formatInternalRepetitionRewriteHint(sanitized)
+    if (rewriteHint) {
+      patchChapterGenProgress({
+        phase: 'writing',
+        chars: 0,
+        streamPreview: undefined,
+        message: `检测到章节内重复段落，正在重写第 ${input.chapterNumber} 章…`,
+      })
+      content = await generateChapterDraft(input.project, buildMessage(rewriteHint), {
+        signal: input.signal,
+        pipelineLabel: `重写第 ${input.chapterNumber} 章（反重复）`,
+        targetWordCount: input.targetWordCount,
+        temperature: 0.65,
+        onStream: input.onStream,
+      })
+      normalized = normalizeGeneratedChapterContent(content, input.chapterNumber, priorContent)
+      sanitized = normalized.content
+    }
+  }
 
-    if (!needsFix) break
-
-    const rewriteHint = buildChapterRewriteHint(sanitized, input.targetWordCount, input.priorContent)
-    if (!rewriteHint) break
-
+  const qualityRewriteHint = buildChapterRewriteHint(
+    sanitized,
+    input.targetWordCount,
+    priorContent,
+    {
+      priorEnding: input.prior.priorEnding,
+      characterNames: (input.project.blueprint?.characters || [])
+        .map((c) => c.name?.trim())
+        .filter((name): name is string => Boolean(name)),
+    }
+  )
+  if (qualityRewriteHint) {
     patchChapterGenProgress({
       phase: 'writing',
-      message:
-        charCount > input.maxOutputChars
-          ? `输出 ${charCount} 字超限，正在重写第 ${input.chapterNumber} 章…`
-          : `检测到重复或字数偏离，正在重写第 ${input.chapterNumber} 章…`,
+      chars: 0,
+      streamPreview: undefined,
+      message: `字数或衔接质量未达标，正在优化第 ${input.chapterNumber} 章…`,
     })
-
-    content = await generateChapterDraft(input.project, buildMessage(rewriteHint), {
+    content = await generateChapterDraft(input.project, buildMessage(qualityRewriteHint), {
       signal: input.signal,
-      pipelineLabel: `重写第 ${input.chapterNumber} 章`,
+      pipelineLabel: `重写第 ${input.chapterNumber} 章（质量优化）`,
       targetWordCount: input.targetWordCount,
-      temperature: 0.65,
+      temperature: 0.68,
+      onStream: input.onStream,
     })
-    normalized = normalizeGeneratedChapterContent(content, input.chapterNumber, input.priorContent)
+    normalized = normalizeGeneratedChapterContent(content, input.chapterNumber, priorContent)
     sanitized = normalized.content
   }
+
+  sanitized = await runConstitutionGateAndRewrite({
+    project: input.project,
+    chapterNumber: input.chapterNumber,
+    chapterTitle: input.outline?.title || `第${input.chapterNumber}章`,
+    mission: input.mission,
+    content: sanitized,
+    priorContent,
+    targetWordCount: input.targetWordCount,
+    buildMessage,
+    signal: input.signal,
+    onStream: input.onStream,
+  })
 
   sanitized = truncateChapterToMaxChars(sanitized, input.maxOutputChars)
   return sanitized
@@ -1811,7 +2082,17 @@ export async function generateChapterContent(
   const versionCount = options?.fastMode
     ? 1
     : resolveChapterVersionCount(outline, totalChapters)
-  const { priorEnding, priorSummary, priorContent } = buildPriorChapterContext(project, chapterNumber)
+
+  const prefs = getCreationWorkflowPrefs()
+  const gate = assertChapterGenerationAllowed(project, chapterNumber, {
+    strictOrder: prefs.strictChapterOrder,
+  })
+  if (!gate.allowed) {
+    throw new Error(gate.reason || '当前不允许生成该章节')
+  }
+
+  const prior = resolvePriorChapterContext(project, chapterNumber)
+  const rollingRecap = buildRollingRecapSummaries(project, chapterNumber, 3)
   const wordCountHint = formatWordCountPlanHint(outline, totalChapters, writingMode)
   const recentStats = formatRecentWordCountStats(
     buildRecentWordCountEntries(project, chapterNumber, writingMode)
@@ -1828,6 +2109,18 @@ export async function generateChapterContent(
     updatedAt: Date.now(),
   })
 
+  patchChapterGenProgress({
+    phase: 'planning',
+    message: `规划第 ${chapterNumber} 章导演脚本…`,
+  })
+  const mission = await generateChapterMission(
+    project,
+    chapterNumber,
+    outline,
+    prior,
+    options
+  )
+
   const versions: string[] = []
   try {
     for (let i = 0; i < versionCount; i += 1) {
@@ -1835,11 +2128,14 @@ export async function generateChapterContent(
         throw new DOMException('The operation was aborted.', 'AbortError')
       }
       const styleHint = CHAPTER_VERSION_STYLE_HINTS[i % CHAPTER_VERSION_STYLE_HINTS.length]
+      const targetWordCount = resolveChapterTargetWordCount(outline, totalChapters, writingMode)
       patchChapterGenProgress({
         phase: 'writing',
         versionIndex: i + 1,
         versionTotal: versionCount,
         chars: 0,
+        targetChars: targetWordCount,
+        streamPreview: undefined,
         message:
           versionCount > 1
             ? `正在撰写第 ${chapterNumber} 章（版本 ${i + 1}/${versionCount}）…`
@@ -1847,7 +2143,6 @@ export async function generateChapterContent(
       })
 
       let streamedChars = 0
-      const targetWordCount = resolveChapterTargetWordCount(outline, totalChapters, writingMode)
       const maxOutputChars = resolveChapterMaxOutputChars(targetWordCount)
 
       const sanitized = await generatePolishedChapterVersion({
@@ -1856,9 +2151,9 @@ export async function generateChapterContent(
         outline,
         wordCountHint,
         recentStats,
-        priorSummary,
-        priorEnding,
-        priorContent,
+        prior,
+        mission,
+        rollingRecap,
         styleHint: versionCount > 1 ? styleHint : undefined,
         targetWordCount,
         maxOutputChars,
@@ -1886,28 +2181,33 @@ export async function generateChapterContent(
       })
       versions.push(sanitized)
     }
+
+    patchChapterGenProgress({
+      phase: 'confirming',
+      message: `第 ${chapterNumber} 章已生成，正在保存…`,
+    })
+
+    const chapter: Chapter = {
+      chapter_number: chapterNumber,
+      title: outline?.title || `第${chapterNumber}章`,
+      summary: outline?.summary || '',
+      content: versions[0] || null,
+      versions,
+      evaluation: null,
+      generation_status: 'waiting_for_confirm',
+      word_count: countChapterChars(versions[0]),
+    }
+
+    if (!Array.isArray(project.chapters)) project.chapters = []
+    const idx = project.chapters.findIndex((c) => c.chapter_number === chapterNumber)
+    if (idx >= 0) project.chapters.splice(idx, 1, chapter)
+    else project.chapters.push(chapter)
+    project.chapters.sort((a, b) => a.chapter_number - b.chapter_number)
+    projectStatsService.recordChapterComplete(project.id)
+    return chapter
   } finally {
     setChapterGenProgress(null)
   }
-
-  const chapter: Chapter = {
-    chapter_number: chapterNumber,
-    title: outline?.title || `第${chapterNumber}章`,
-    summary: outline?.summary || '',
-    content: versions[0] || null,
-    versions,
-    evaluation: null,
-    generation_status: 'waiting_for_confirm',
-    word_count: countChapterChars(versions[0]),
-  }
-
-  if (!Array.isArray(project.chapters)) project.chapters = []
-  const idx = project.chapters.findIndex((c) => c.chapter_number === chapterNumber)
-  if (idx >= 0) project.chapters.splice(idx, 1, chapter)
-  else project.chapters.push(chapter)
-  project.chapters.sort((a, b) => a.chapter_number - b.chapter_number)
-  projectStatsService.recordChapterComplete(project.id)
-  return chapter
 }
 
 export async function evaluateChapter(
@@ -1925,7 +2225,7 @@ export async function evaluateChapter(
   const outline = chapterOutlineEntry(project, chapterNumber)
   const writingMode = resolveWritingMode(project)
   const totalChapters = project.blueprint?.chapter_outline?.length || project.chapters?.length || 1
-  const { priorContent } = buildPriorChapterContext(project, chapterNumber)
+  const { priorContent } = resolvePriorChapterContext(project, chapterNumber)
   const completedChapters = (project.chapters || [])
     .filter((item) => item.chapter_number < chapterNumber && item.content?.trim())
     .map((item) => ({

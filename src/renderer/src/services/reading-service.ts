@@ -51,15 +51,37 @@ export async function closeReadingWindow(): Promise<void> {
   navigate('/home')
 }
 
-export async function bossHideReadingWindow(): Promise<void> {
+export async function returnToMainFromReading(): Promise<void> {
   if (isDesktopRuntime()) {
+    if (typeof window.api?.returnToMainFromReading === 'function') {
+      await window.api.returnToMainFromReading()
+      return
+    }
+    const ipc = window.electron?.ipcRenderer
+    if (ipc) {
+      await ipc.invoke('reading:return-main')
+      return
+    }
+    await closeReadingWindow()
+    return
+  }
+
+  navigate('/home')
+}
+
+export async function toggleBossHide(): Promise<void> {
+  if (isDesktopRuntime()) {
+    if (typeof window.api?.toggleBossHide === 'function') {
+      await window.api.toggleBossHide()
+      return
+    }
     if (typeof window.api?.bossHideReadingWindow === 'function') {
       await window.api.bossHideReadingWindow()
       return
     }
     const ipc = window.electron?.ipcRenderer
     if (ipc) {
-      await ipc.invoke('reading:boss-hide')
+      await ipc.invoke('reading:boss-toggle')
       return
     }
     await window.windowControls.hide()
@@ -67,4 +89,21 @@ export async function bossHideReadingWindow(): Promise<void> {
   }
 
   navigate('/home')
+}
+
+/** @deprecated 使用 toggleBossHide */
+export async function bossHideReadingWindow(): Promise<void> {
+  await toggleBossHide()
+}
+
+export async function syncReadingBossKey(enabled: boolean, accelerator: string): Promise<void> {
+  if (!isDesktopRuntime()) return
+  if (typeof window.api?.syncReadingBossKey === 'function') {
+    await window.api.syncReadingBossKey({ enabled, accelerator })
+    return
+  }
+  const ipc = window.electron?.ipcRenderer
+  if (ipc) {
+    await ipc.invoke('reading:sync-boss-key', { enabled, accelerator })
+  }
 }

@@ -68,7 +68,7 @@ function save() {
     foot-class="novel-modal__foot--form"
     @close="emit('close')"
   >
-    <div class="relationship-form">
+    <div class="relationship-form novel-modal__compact-form">
       <div class="relationship-form__row">
         <div class="md-text-field md-text-field-filled">
           <label class="md-text-field-label" for="rel-from">从</label>

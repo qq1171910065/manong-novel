@@ -10,46 +10,12 @@
             class="detail-sidebar-create"
             :class="{ 'is-auto-writing': isCurrentProjectAutoWriteRunning }"
             :disabled="isPrimaryActionBusy"
+            :title="primaryActionHint"
             @click="goToWritingDesk"
           >
-            <Pause v-if="isCurrentProjectAutoWriteRunning" :size="18" aria-hidden="true" />
-            <PenLine v-else :size="18" aria-hidden="true" />
+            <PenLine :size="18" aria-hidden="true" />
             <span>{{ primaryActionLabel }}</span>
           </button>
-
-          <div v-if="canOpenAiAssistant || canOpenInspirationChat" class="detail-sidebar-actions">
-            <button
-              v-if="canOpenInspirationChat"
-              type="button"
-              class="detail-sidebar-action detail-sidebar-action--inspiration"
-              :disabled="isPrimaryActionBusy || aiAssistantBusy || isWritingDeskLocked"
-              @click="openInspirationChat"
-            >
-              <MessageCircle :size="15" aria-hidden="true" />
-              <span>灵感对话</span>
-            </button>
-            <button
-              v-if="canOpenAiAssistant"
-              type="button"
-              class="detail-sidebar-action detail-sidebar-action--ai"
-              :class="{ 'is-busy': aiAssistantBusy }"
-              :disabled="isPrimaryActionBusy || isWritingDeskLocked"
-              @click="openAiAssistant()"
-            >
-              <Sparkles :size="15" aria-hidden="true" />
-              <span>{{ aiAssistantBusy ? 'AI 处理中' : 'AI 助手' }}</span>
-            </button>
-            <button
-              v-if="canOpenAiAssistant"
-              type="button"
-              class="detail-sidebar-action detail-sidebar-action--reinspire"
-              :disabled="isPrimaryActionBusy || aiAssistantBusy || isWritingDeskLocked"
-              @click="openReinspiration"
-            >
-              <RefreshCw :size="15" aria-hidden="true" />
-              <span>重新过灵感</span>
-            </button>
-          </div>
 
           <div v-for="group in navGroups" :key="group.label" class="profile-tab-group">
             <p>{{ group.label }}</p>
@@ -75,11 +41,11 @@
               <div class="profile-section__intro">
                 <h2 class="profile-section__title">{{ activeSectionMeta.label }}</h2>
                 <p class="profile-section__desc">{{ activeSectionMeta.description }}</p>
-                <p v-if="canOpenAiAssistant" class="detail-polish-hint">
-                  「开始创作」按章节顺序自动生成；可在「创作流水线」调整暂停确认、多版本评审等选项。进行中可暂停，并在写作台预览单章。
+                <p v-if="primaryActionHint" class="detail-polish-hint">
+                  {{ primaryActionHint }}
                 </p>
                 <p v-if="isImportPending" class="detail-import-hint">
-                  已导入 {{ importedChapterCount }} 章。智能解析会逐批阅读全书并填充各 Tab，请耐心等待；解析完成前不可编辑。
+                  智能解析会逐批阅读全书并填充各 Tab，请耐心等待；解析完成前不可编辑。
                 </p>
               </div>
               <div v-if="showSectionHeaderActions" class="profile-section__actions">
@@ -97,7 +63,7 @@
 
             <div
               class="profile-section__body"
-              :class="{ 'profile-section__body--fill': isFillSection }"
+              :class="{ 'profile-section__body--fill': isFillSection || showBlueprintSetupEmpty }"
             >
               <div v-if="isSectionLoading" class="novel-detail-state">
                 <div class="md-spinner"></div>
@@ -110,6 +76,8 @@
                   重试
                 </button>
               </div>
+
+              <BlueprintSetupEmpty v-else-if="showBlueprintSetupEmpty" />
 
               <component
                 v-else
@@ -136,7 +104,19 @@
       :show="showWritingDeskModal"
       :project-id="projectId"
       :auto-write-locked="isWritingDeskLocked"
+      :auto-write-running="isCurrentProjectAutoWriteRunning"
+      :auto-write-paused="isCurrentProjectAutoWritePaused"
+      :auto-write-pause-reason="autoWrite.pauseReason.value"
+      :can-open-inspiration-chat="canOpenInspirationChat"
+      :can-open-ai-assistant="canOpenAiAssistant"
+      :ai-assistant-busy="aiAssistantBusy"
       @close="closeWritingDesk"
+      @start-auto-write="runAutoWritePipeline"
+      @resume-auto-write="resumeAutoWritePipeline"
+      @pause-auto-write="pauseAutoWritePipeline"
+      @open-inspiration-chat="openInspirationChat"
+      @open-ai-assistant="() => openAiAssistant()"
+      @open-reinspiration="openReinspiration"
     />
 
     <InspirationModal
@@ -182,7 +162,7 @@
       foot-class="novel-modal__foot--form"
       @close="cancelNewChapter"
     >
-      <div class="space-y-6">
+      <div class="novel-modal__compact-form">
         <div class="md-text-field md-text-field-filled">
           <label for="new-chapter-title" class="md-text-field-label">章节标题</label>
           <input
@@ -233,11 +213,10 @@ import {
   History,
   BarChart3,
   Workflow,
+  Terminal,
+  FileText,
+  Database,
   PenLine,
-  Pause,
-  Sparkles,
-  RefreshCw,
-  MessageCircle,
   Plus,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
@@ -274,7 +253,11 @@ import EmotionCurveSection from '@renderer/novel/components/novel-detail/Emotion
 import ForeshadowingSection from '@renderer/novel/components/novel-detail/ForeshadowingSection.vue'
 import ActivityLogSection from '@renderer/novel/components/novel-detail/ActivityLogSection.vue'
 import PipelineInspectorSection from '@renderer/novel/components/novel-detail/PipelineInspectorSection.vue'
+import PipelineLogsSection from '@renderer/novel/components/novel-detail/PipelineLogsSection.vue'
+import PromptRegistrySection from '@renderer/novel/components/novel-detail/PromptRegistrySection.vue'
+import BlueprintSetupEmpty from '@renderer/novel/components/novel-detail/BlueprintSetupEmpty.vue'
 import StatsSection from '@renderer/novel/components/novel-detail/StatsSection.vue'
+import ProjectDataSection from '@renderer/novel/components/novel-detail/ProjectDataSection.vue'
 import {
   activityLogService,
 } from '@renderer/services/activity-log-service'
@@ -297,13 +280,9 @@ import {
 import { isAiAssistantBusy } from '@renderer/novel/composables/useAiAssistantRuntime'
 import { useAutoChapterPipeline } from '@renderer/novel/composables/useAutoChapterPipeline'
 import {
-  countSuccessfulChapters,
-  getNextAutoWriteChapter,
-  listChapterOutlines,
-} from '@renderer/novel/utils/auto-chapter-pipeline'
-import {
   filterSectionsForMode,
   resolveWritingMode,
+  SIMPLE_MODE_MAX_CHAPTERS,
   WRITING_MODE_LABELS,
   type WritingModeSectionKey,
 } from '@shared/novel/writing-mode'
@@ -351,6 +330,17 @@ interface NavGroup {
   items: NavSection[]
 }
 
+const BLUEPRINT_SECTION_KEYS = new Set<SectionKey>([
+  'overview',
+  'world_rules',
+  'world_locations',
+  'world_factions',
+  'characters',
+  'relationships',
+  'chapter_outline',
+  'chapters',
+])
+
 const blueprintSections: NavSection[] = [
   { key: 'overview', label: '项目概览', description: '定位与整体梗概', icon: LayoutGrid },
   { key: 'world_rules', label: '世界规则', description: '世界观的基本法则与限制', icon: ScrollText },
@@ -369,8 +359,14 @@ const analysisSections: NavSection[] = [
 
 const insightSections: NavSection[] = [
   { key: 'stats', label: '统计信息', description: '字数、阅读与 Token 消耗', icon: BarChart3 },
-  { key: 'pipeline', label: '创作流水线', description: 'AI 调用记录与流程设置', icon: Workflow },
+  { key: 'pipeline', label: '创作流水线', description: '写作模型与生成选项', icon: Workflow },
+  { key: 'pipeline_log', label: 'AI 调用流水', description: '灵感、蓝图与章节写作的调用记录', icon: Terminal },
+  { key: 'prompt_templates', label: 'Prompt 模板', description: '系统提示词一览', icon: FileText },
   { key: 'activity_log', label: '操作记录', description: '修改、生成与阅读历史', icon: History },
+]
+
+const dataSections: NavSection[] = [
+  { key: 'data', label: '数据管理', description: '占用、导出与删除', icon: Database },
 ]
 
 const navGroups = computed<NavGroup[]>(() => {
@@ -389,6 +385,10 @@ const navGroups = computed<NavGroup[]>(() => {
     const insightItems = filterSectionsForMode(insightSections, mode)
     if (insightItems.length) {
       groups.push({ label: '项目记录', items: insightItems })
+    }
+    const dataItems = filterSectionsForMode(dataSections, mode)
+    if (dataItems.length) {
+      groups.push({ label: '数据管理', items: dataItems })
     }
   }
   return groups.filter((group) => group.items.length > 0)
@@ -410,7 +410,10 @@ const sectionComponents: Record<SectionKey, any> = {
   foreshadowing: ForeshadowingSection,
   activity_log: ActivityLogSection,
   pipeline: PipelineInspectorSection,
+  pipeline_log: PipelineLogsSection,
+  prompt_templates: PromptRegistrySection,
   stats: StatsSection,
+  data: ProjectDataSection,
 }
 
 const sectionData = reactive<Partial<Record<SectionKey, any>>>({})
@@ -428,7 +431,10 @@ const sectionLoading = reactive<Record<SectionKey, boolean>>({
   foreshadowing: false,
   activity_log: false,
   pipeline: false,
+  pipeline_log: false,
+  prompt_templates: false,
   stats: false,
+  data: false,
 })
 const sectionError = reactive<Record<SectionKey, string | null>>({
   overview: null,
@@ -444,7 +450,10 @@ const sectionError = reactive<Record<SectionKey, string | null>>({
   foreshadowing: null,
   activity_log: null,
   pipeline: null,
+  pipeline_log: null,
+  prompt_templates: null,
   stats: null,
+  data: null,
 })
 
 const projectStats = ref<ProjectStats | null>(null)
@@ -539,20 +548,29 @@ const isImportPending = computed(() => isTxtImportPending(novel.value))
 const isContentLocked = computed(() => isTxtImportLocked(novel.value))
 const importedChapterCount = computed(() => novel.value?.chapters?.length ?? 0)
 const primaryActionLabel = computed(() => {
-  if (isCurrentProjectAutoWriteRunning.value) return '暂停创作'
-  if (isCurrentProjectAutoWritePaused.value) {
-    if (autoWrite.pauseReason.value === 'chapter_confirm') return '确认并继续'
-    return '继续创作'
-  }
   if (showImportParsing.value) return '解析中...'
   if (isImportPending.value) return '智能解析'
   const project = novel.value
-  if (project && !needsInspirationConversation(project)) {
-    const next = getNextAutoWriteChapter(project)
-    if (next !== null && countSuccessfulChapters(project) > 0) return '继续创作'
-  }
-  return '开始创作'
+  if (!project || needsInspirationConversation(project)) return '完善设定'
+  return '打开写作台'
 })
+
+const primaryActionHint = computed(() => {
+  if (isImportPending.value) {
+    return `已导入 ${importedChapterCount.value} 章。点「智能解析」填充蓝图与各板块。`
+  }
+  return ''
+})
+
+const isBlueprintSetupPending = computed(() => {
+  const project = novel.value
+  if (!project || props.isAdmin) return false
+  return needsInspirationConversation(project)
+})
+
+const showBlueprintSetupEmpty = computed(
+  () => isBlueprintSetupPending.value && BLUEPRINT_SECTION_KEYS.has(activeSection.value)
+)
 const isPrimaryActionBusy = computed(
   () => showImportParsing.value || showBlueprintGenerating.value
 )
@@ -587,13 +605,14 @@ const canOpenInspirationChat = computed(() => {
   if (props.isAdmin || isContentLocked.value) return false
   const project = novel.value
   if (!project || isTxtImportPending(project)) return false
+  if (needsInspirationConversation(project)) return false
   return (project.conversation_history?.length ?? 0) > 0
 })
 
 const aiAssistantBusy = computed(() => isAiAssistantBusy(projectId))
 
 const showAddButton = computed(() => {
-  if (props.isAdmin || isContentLocked.value) return false
+  if (props.isAdmin || isContentLocked.value || showBlueprintSetupEmpty.value) return false
   const ws = sectionData.world_setting?.world_setting as { core_rules?: string; key_locations?: unknown[]; factions?: unknown[] } | undefined
   switch (activeSection.value) {
     case 'chapter_outline':
@@ -692,8 +711,11 @@ const isFillSection = computed(() =>
     'stats',
     'activity_log',
     'pipeline',
+    'pipeline_log',
+    'prompt_templates',
     'emotion_curve',
     'foreshadowing',
+    'data',
   ].includes(activeSection.value)
 )
 
@@ -721,7 +743,7 @@ const switchSection = (section: SectionKey) => {
   }
 }
 
-const loadInsightSection = (section: 'activity_log' | 'stats' | 'pipeline') => {
+const loadInsightSection = (section: 'activity_log' | 'stats' | 'pipeline' | 'pipeline_log' | 'prompt_templates') => {
   sectionLoading[section] = true
   sectionError[section] = null
   try {
@@ -743,10 +765,10 @@ const loadInsightSection = (section: 'activity_log' | 'stats' | 'pipeline') => {
 const loadSection = async (section: SectionKey, force = false) => {
   if (!projectId) return
 
-  const insightSections: SectionKey[] = ['activity_log', 'stats', 'pipeline']
+  const insightSections: SectionKey[] = ['activity_log', 'stats', 'pipeline', 'pipeline_log', 'prompt_templates']
   if (insightSections.includes(section)) {
     if (section === 'activity_log' && !force && activityEntries.value.length) return
-    loadInsightSection(section as 'activity_log' | 'stats' | 'pipeline')
+    loadInsightSection(section as 'activity_log' | 'stats' | 'pipeline' | 'pipeline_log' | 'prompt_templates')
     return
   }
 
@@ -806,20 +828,6 @@ const goToWritingDesk = async () => {
   const project = novel.value
   if (!project) return
 
-  if (isCurrentProjectAutoWriteRunning.value) {
-    autoWrite.pause()
-    globalAlert.showSuccess('AI 创作已转入后台暂停，可在状态栏任务列表继续或取消', '已暂停')
-    return
-  }
-
-  if (isCurrentProjectAutoWritePaused.value) {
-    if (autoWrite.pauseReason.value === 'chapter_confirm') {
-      showWritingDeskModal.value = true
-    }
-    void resumeAutoWritePipeline()
-    return
-  }
-
   if (isTxtImportPending(project)) {
     importParseMessage.value = '正在准备智能解析…'
     try {
@@ -863,36 +871,23 @@ const goToWritingDesk = async () => {
   }
 
   if (needsInspirationConversation(project)) {
-    inspirationModalMode.value = 'inspiration'
-    polishContext.value = null
-    showInspirationModal.value = true
+    openBlueprintSetup()
     return
   }
-
-  const outlines = listChapterOutlines(project)
-  if (!outlines.length) {
-    globalAlert.showError('请先完善章节大纲后再开始创作', '无法开始')
-    return
-  }
-
-  const nextChapter = getNextAutoWriteChapter(project)
-  if (nextChapter === null) {
-    showWritingDeskModal.value = true
-    return
-  }
-
-  const completed = countSuccessfulChapters(project)
-  const remaining = outlines.length - completed
-  const confirmed = await globalAlert.showConfirm(
-    completed > 0
-      ? `将从第 ${nextChapter} 章继续：AI 将在后台自动生成并确认剩余 ${remaining} 章。您可关闭弹窗继续浏览，进度见状态栏任务列表。`
-      : `AI 将在后台按章节顺序自动生成并确认全部 ${outlines.length} 章。您可关闭弹窗继续浏览，进度见状态栏任务列表。`,
-    '开始创作'
-  )
-  if (!confirmed) return
 
   showWritingDeskModal.value = true
-  void runAutoWritePipeline()
+}
+
+const openBlueprintSetup = () => {
+  if (props.isAdmin || isPrimaryActionBusy.value) return
+  inspirationModalMode.value = 'inspiration'
+  polishContext.value = null
+  showInspirationModal.value = true
+}
+
+const pauseAutoWritePipeline = () => {
+  autoWrite.pause()
+  globalAlert.showSuccess('AI 创作已转入后台暂停，可在写作台或状态栏任务列表继续', '已暂停')
 }
 
 const runAutoWritePipeline = async () => {
@@ -1219,12 +1214,25 @@ const componentProps = computed(() => {
     case 'activity_log':
       return { entries: activityEntries.value }
     case 'pipeline':
+      return {
+        projectId,
+        chatModelId: projectModelPrefs.value.chat_model_id,
+        writingMode: projectWritingMode.value,
+      }
+    case 'pipeline_log':
       return { projectId }
+    case 'prompt_templates':
+      return {}
     case 'stats':
       return {
         stats: projectStats.value,
         chapters: sectionData.chapters?.chapters || [],
         updatedAt: overviewMeta.updated_at,
+      }
+    case 'data':
+      return {
+        projectId,
+        project: novel.value?.id === projectId ? novel.value : null,
       }
     default:
       return {}
@@ -1458,6 +1466,10 @@ const startAddChapter = async () => {
   await ensureProjectLoaded()
   const outline = sectionData.chapter_outline?.chapter_outline || novel.value?.blueprint?.chapter_outline || []
   const nextNumber = outline.length > 0 ? Math.max(...outline.map((item: any) => item.chapter_number)) + 1 : 1
+  if (projectWritingMode.value === 'simple' && nextNumber > SIMPLE_MODE_MAX_CHAPTERS) {
+    alert(`简易版适用于短篇故事，章节大纲最多 ${SIMPLE_MODE_MAX_CHAPTERS} 章。如需更长篇幅请使用工程版。`)
+    return
+  }
   newChapterTitle.value = `新章节 ${nextNumber}`
   newChapterSummary.value = ''
   isAddChapterModalOpen.value = true

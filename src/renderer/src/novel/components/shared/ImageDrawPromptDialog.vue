@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
-import ArenaDialogShell from '@renderer/components/common/ArenaDialogShell.vue'
+import { computed, ref, watch } from 'vue'
+import NovelModalShell from '@renderer/novel/components/shared/NovelModalShell.vue'
 import type { ImagePromptKind } from '@renderer/services/image-service'
 import { analyzeImagePrompt } from '@renderer/services/image-service'
 
@@ -31,6 +31,10 @@ const promptDraft = ref('')
 const analyzing = ref(false)
 const analyzeError = ref('')
 
+const canSubmit = computed(
+  () => !analyzing.value && !props.submitting && Boolean(promptDraft.value.trim())
+)
+
 watch(show, (visible) => {
   if (visible) void preparePrompt()
 })
@@ -38,7 +42,7 @@ watch(show, (visible) => {
 async function preparePrompt() {
   analyzing.value = true
   analyzeError.value = ''
-  promptDraft.value = props.draftPrompt || ''
+  promptDraft.value = ''
   try {
     if (props.draftPrompt?.trim()) {
       promptDraft.value = await analyzeImagePrompt(props.kind, props.draftPrompt, props.projectModel)
@@ -64,61 +68,57 @@ function handleClose() {
 </script>
 
 <template>
-  <ArenaDialogShell
-    v-model="show"
-    :title="title"
+  <NovelModalShell
+    :show="show"
     variant="form"
     size="md"
-    :mask-closable="!submitting"
-    :show-header-close="!submitting"
-    show-footer
+    auto-min-width="sm"
+    panel-class="image-draw-dialog__panel"
+    :title="title"
+    subtitle="AI 已根据作品信息生成提示词草稿，你可以修改后再提交。"
+    :show-close="!submitting"
+    aria-label="AI 绘制"
+    foot-class="novel-modal__foot--form"
     @close="handleClose"
   >
     <div class="image-draw-dialog">
-      <p class="image-draw-dialog__hint">AI 已根据作品信息生成提示词草稿，你可以修改后再提交。</p>
       <div v-if="analyzing" class="image-draw-dialog__loading">
         <div class="md-spinner"></div>
         <span>正在分析提示词…</span>
       </div>
       <template v-else>
-        <label class="image-draw-dialog__label" for="image-draw-prompt">绘图提示词</label>
-        <textarea
-          id="image-draw-prompt"
-          v-model="promptDraft"
-          rows="7"
-          class="image-draw-dialog__textarea"
-          :disabled="submitting"
-          placeholder="描述画面主体、风格、构图与氛围…"
-        />
+        <div class="md-text-field md-text-field-filled image-draw-dialog__field">
+          <label class="md-text-field-label" for="image-draw-prompt">绘图提示词</label>
+          <textarea
+            id="image-draw-prompt"
+            v-model="promptDraft"
+            rows="7"
+            class="md-textarea w-full"
+            :disabled="submitting"
+            placeholder="描述画面主体、风格、构图与氛围…"
+          />
+        </div>
         <p v-if="analyzeError" class="image-draw-dialog__note">{{ analyzeError }}</p>
       </template>
     </div>
 
     <template #footer>
-      <button type="button" class="nd-btn nd-btn--ghost" :disabled="submitting" @click="handleClose">取消</button>
       <button
         type="button"
-        class="nd-btn nd-btn--primary"
-        :disabled="analyzing || submitting || !promptDraft.trim()"
+        class="md-btn md-btn-filled md-ripple"
+        :disabled="!canSubmit"
         @click="handleSubmit"
       >
         {{ submitting ? '绘制中…' : '开始绘制' }}
       </button>
     </template>
-  </ArenaDialogShell>
+  </NovelModalShell>
 </template>
 
 <style scoped>
 .image-draw-dialog {
   display: grid;
   gap: 10px;
-}
-
-.image-draw-dialog__hint {
-  margin: 0;
-  font-size: var(--text-xs);
-  line-height: 1.55;
-  color: var(--muted);
 }
 
 .image-draw-dialog__loading {
@@ -130,27 +130,19 @@ function handleClose() {
   font-size: var(--text-sm);
 }
 
-.image-draw-dialog__label {
-  font-size: var(--text-xs);
-  font-weight: 600;
-  color: var(--text);
-}
-
-.image-draw-dialog__textarea {
-  width: 100%;
-  min-height: 160px;
-  padding: 12px;
-  border: 0;
-  border-radius: 12px;
-  background: var(--surface-soft);
-  font-size: var(--text-sm);
-  line-height: 1.6;
-  resize: vertical;
+.image-draw-dialog__field {
+  margin: 0;
 }
 
 .image-draw-dialog__note {
   margin: 0;
   font-size: var(--text-xs);
   color: #b45309;
+}
+</style>
+
+<style>
+.novel-modal__panel.image-draw-dialog__panel {
+  width: min(460px, 92vw);
 }
 </style>

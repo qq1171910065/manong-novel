@@ -191,9 +191,13 @@ export function registerTrayHandlers(getMainWindow: () => BrowserWindow | null):
   }))
 }
 
-export function destroyTray(): void {
+export function hideTray(): void {
   if (tray && !tray.isDestroyed()) {
     tray.destroy()
   }
   tray = null
+}
+
+export function destroyTray(): void {
+  hideTray()
 }

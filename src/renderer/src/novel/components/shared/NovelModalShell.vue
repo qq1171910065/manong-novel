@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, watch } from 'vue'
+import { computed, onMounted, onUnmounted, watch, useSlots } from 'vue'
 import { X } from 'lucide-vue-next'
 
 const props = withDefaults(
@@ -16,6 +16,8 @@ const props = withDefaults(
     maskClosable?: boolean
     showClose?: boolean
     autoMinWidth?: 'sm' | 'md' | 'lg'
+    /** 关闭时保留内容 DOM，避免子组件状态丢失 */
+    keepContent?: boolean
   }>(),
   {
     size: 'lg',
@@ -24,10 +26,12 @@ const props = withDefaults(
     maskClosable: true,
     showClose: true,
     autoMinWidth: 'md',
+    keepContent: false,
   }
 )
 
 const emit = defineEmits<{ close: [] }>()
+const slots = useSlots()
 
 const isFormVariant = computed(() => props.variant === 'form')
 
@@ -35,9 +39,7 @@ const effectiveMaskClosable = computed(() =>
   isFormVariant.value ? false : props.maskClosable
 )
 
-const effectiveShowClose = computed(() =>
-  isFormVariant.value ? false : props.showClose
-)
+const effectiveShowClose = computed(() => props.showClose)
 
 const effectiveSize = computed(() => {
   if (props.size === 'fullscreen') return 'fullscreen'
@@ -66,12 +68,24 @@ const mergedBodyClass = computed(() => [
   isFormVariant.value ? 'novel-form-surface' : '',
 ])
 
+const showHeader = computed(
+  () =>
+    Boolean(
+      effectiveShowClose.value ||
+        slots.header ||
+        slots.toolbar ||
+        slots['head-actions'] ||
+        props.title ||
+        props.subtitle
+    )
+)
+
 function onBackdropClick() {
   if (effectiveMaskClosable.value) emit('close')
 }
 
 function onKeydown(event: KeyboardEvent) {
-  if (event.key === 'Escape' && props.show && !isFormVariant.value) emit('close')
+  if (event.key === 'Escape' && props.show) emit('close')
 }
 
 watch(
@@ -94,36 +108,47 @@ onUnmounted(() => {
   <Teleport to="body">
     <Transition name="novel-modal">
       <div
-        v-if="show"
+        v-if="show || keepContent"
+        v-show="show"
         :class="rootClass"
         role="dialog"
         aria-modal="true"
         :aria-label="ariaLabel"
+        :aria-hidden="!show"
       >
         <div class="novel-modal__backdrop" @click="onBackdropClick" />
 
         <div :class="panelClassList" @click.stop>
-          <button
-            v-if="effectiveShowClose"
-            type="button"
-            class="novel-modal__close"
-            aria-label="关闭"
-            @click="emit('close')"
-          >
-            <X :size="18" />
-          </button>
-
           <header
-            v-if="$slots.header || title"
+            v-if="showHeader"
             class="novel-modal__head"
             :class="{ 'novel-modal__head--form': isFormVariant }"
           >
-            <slot name="header">
-              <div class="novel-modal__head-text">
+            <div v-if="$slots.header || title || subtitle" class="novel-modal__head-text">
+              <slot name="header">
                 <h2 v-if="title" class="novel-modal__head-title">{{ title }}</h2>
                 <p v-if="subtitle" class="novel-modal__head-subtitle">{{ subtitle }}</p>
+              </slot>
+            </div>
+
+            <div
+              v-if="effectiveShowClose || $slots.toolbar || $slots['head-actions']"
+              class="novel-modal__head-trailing"
+            >
+              <div v-if="$slots.toolbar" class="novel-modal__toolbar">
+                <slot name="toolbar" />
               </div>
-            </slot>
+              <slot name="head-actions" />
+              <button
+                v-if="effectiveShowClose"
+                type="button"
+                class="novel-modal__close"
+                aria-label="关闭"
+                @click="emit('close')"
+              >
+                <X :size="18" />
+              </button>
+            </div>
           </header>
 
           <div

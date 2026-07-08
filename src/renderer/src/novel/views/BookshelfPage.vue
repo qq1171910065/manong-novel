@@ -31,7 +31,7 @@
             <ArenaSelect v-model="sortBy" :options="sortOptions" aria-label="排序方式" />
           </div>
           <div class="toolbar-actions">
-            <button type="button" class="novel-btn novel-btn--ghost" :disabled="isImporting" @click="triggerImport">
+            <button type="button" class="novel-btn novel-btn--ghost" :disabled="isImporting" @click="showImportModal = true">
               <Upload :size="16" />
               {{ isImporting ? '导入中...' : '导入' }}
             </button>
@@ -56,16 +56,15 @@
 
           <div v-else-if="filteredProjects.length === 0" class="material-library-empty">
             <h3>{{ query.trim() ? '没有匹配的作品' : '书架还是空的' }}</h3>
-            <p>开笔写第一部小说，或从 .txt 文件导入已有草稿。</p>
+            <p>开笔写第一部小说，或从 TXT / 项目文件导入已有草稿。</p>
           </div>
 
           <div v-else class="material-library-grid">
             <article
               v-for="project in filteredProjects"
               :key="project.id"
-              class="material-library-card material-library-card--interactive material-library-card--portrait bookshelf-card"
+              class="material-library-card material-library-card--portrait bookshelf-card"
               :style="{ '--accent': resolveAccent(project.genre || '') }"
-              @click="enterProject(project)"
             >
               <div class="material-library-card__media">
                 <img
@@ -83,7 +82,12 @@
                   <div class="material-library-card__actions">
                     <MaterialLibraryCardMenu
                       :show-favorite="false"
-                      @preview="enterProject(project)"
+                      :show-edit="false"
+                      :show-preview="false"
+                      show-create
+                      show-read
+                      @create="enterProject(project)"
+                      @read="openProjectReading(project)"
                       @delete="handleDeleteProject(project.id)"
                     />
                   </div>
@@ -96,7 +100,12 @@
       </section>
     </div>
 
-    <input ref="fileInput" type="file" accept=".txt" class="hidden" @change="handleFileImport" />
+    <BookshelfImportModal
+      :show="showImportModal"
+      :importing="isImporting"
+      @close="showImportModal = false"
+      @import="handleImport"
+    />
 
     <div v-if="showDeleteDialog" class="novel-dialog-overlay" @click.self="cancelDelete">
       <div class="novel-dialog" role="dialog">
@@ -149,6 +158,8 @@ import NovelPageShell from '@renderer/components/novel/NovelPageShell.vue'
 import ArenaSelect from '@renderer/components/common/ArenaSelect.vue'
 import MaterialLibraryCardMenu from '@renderer/novel/components/shared/MaterialLibraryCardMenu.vue'
 import WritingModeSelectModal from '@renderer/novel/components/shared/WritingModeSelectModal.vue'
+import BookshelfImportModal from '@renderer/novel/components/shared/BookshelfImportModal.vue'
+import { openReadingWindow } from '@renderer/services/reading-service'
 import { useCreateNovelProject } from '@renderer/novel/composables/useCreateNovelProject'
 import { useRouter } from '@renderer/novel/composables/useNovelRouter'
 import { useNovelStore } from '@renderer/stores/novel'
@@ -167,7 +178,7 @@ const query = ref('')
 const sortBy = ref<'updated' | 'name' | 'progress'>('updated')
 const activeFilter = ref('all')
 const isImporting = ref(false)
-const fileInput = ref<HTMLInputElement | null>(null)
+const showImportModal = ref(false)
 const showDeleteDialog = ref(false)
 const projectToDelete = ref<NovelProjectSummary | null>(null)
 const isDeleting = ref(false)
@@ -270,31 +281,21 @@ function enterProject(project: NovelProjectSummary) {
   router.push(`/detail/${project.id}`)
 }
 
-function triggerImport() {
-  if (isImporting.value) return
-  fileInput.value?.click()
+function openProjectReading(project: NovelProjectSummary) {
+  void openReadingWindow(project.id, project.title)
 }
 
-async function handleFileImport(event: Event) {
-  const target = event.target as HTMLInputElement
-  if (!target.files?.length) return
-
-  const file = target.files[0]
-  if (!file.name.endsWith('.txt')) {
-    alert('请上传 .txt 格式的文件')
-    return
-  }
-
+async function handleImport(kind: 'txt' | 'project', file: File) {
   isImporting.value = true
   try {
-    const response = await NovelAPI.importNovel(file)
+    const response = await NovelAPI.importNovel(file, kind)
+    showImportModal.value = false
     await loadProjects()
     router.push(`/detail/${response.id}`)
   } catch (error) {
     alert(error instanceof Error ? error.message : '导入失败，请重试')
   } finally {
     isImporting.value = false
-    target.value = ''
   }
 }
 
@@ -348,9 +349,5 @@ onMounted(() => {
 
 .bookshelf-state p {
   margin: 0;
-}
-
-.hidden {
-  display: none;
 }
 </style>

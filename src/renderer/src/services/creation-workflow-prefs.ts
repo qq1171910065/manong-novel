@@ -3,6 +3,10 @@ export interface CreationWorkflowPrefs {
   autoWritePauseBeforeConfirm: boolean
   /** AI 接管：启用多版本生成与 AI 评审（更慢但更稳） */
   autoWriteMultiVersion: boolean
+  /** 严格顺序：上一章须确认后才能生成下一章 */
+  strictChapterOrder: boolean
+  /** 规则宪法检查未通过时，追加 LLM 深度合规分析 */
+  enableConstitutionLlmCheck: boolean
   /** 章节生成时显示流式正文预览 */
   showStreamPreview: boolean
   /** 记录 AI 调用详情到创作流水线 */
@@ -14,6 +18,8 @@ const STORAGE_KEY = 'novel_creation_workflow_prefs_v1'
 const DEFAULT_PREFS: CreationWorkflowPrefs = {
   autoWritePauseBeforeConfirm: false,
   autoWriteMultiVersion: false,
+  strictChapterOrder: true,
+  enableConstitutionLlmCheck: true,
   showStreamPreview: true,
   enablePipelineLog: true,
 }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Loader2, Sparkles, X } from 'lucide-vue-next'
+import { Loader2, MessageCircle, Sparkles, X } from 'lucide-vue-next'
 import ChatBubble from '@renderer/novel/components/ChatBubble.vue'
 import ConversationInput from '@renderer/novel/components/ConversationInput.vue'
 import {
@@ -28,18 +28,23 @@ const props = withDefaults(
     embedded?: boolean
     stacked?: boolean
     column?: boolean
+    variant?: 'panel' | 'chat'
+    embeddedModal?: boolean
   }>(),
   {
     readonly: false,
     embedded: false,
     stacked: false,
     column: false,
+    variant: 'panel',
+    embeddedModal: false,
   }
 )
 
 const emit = defineEmits<{
   close: []
   apply: [draft: MaterialDraft]
+  busy: [loading: boolean]
 }>()
 
 interface ChatEntry {
@@ -52,9 +57,20 @@ const chatHistory = ref<ChatEntry[]>([])
 const llmHistory = ref<Array<{ role: string; content: string }>>([])
 const pendingResult = ref<MaterialAiEditResult | null>(null)
 
+const isChatVariant = computed(() => props.variant === 'chat')
+
 const focusHint = computed(() =>
   props.focusedField ? `当前聚焦：${getMaterialFieldLabel(props.focusedField)}` : '整项编辑'
 )
+
+const chatSubtitle = computed(() =>
+  props.type === 'styles' ? '与文思一起打磨文风预设' : '与文思一起完善物料设定'
+)
+
+const bubbleVariant = computed(() => (isChatVariant.value ? 'chat' : 'polish'))
+
+const STYLE_WELCOME =
+  '你好！告诉我你想要的文风、题材或叙述口吻，我会帮你整理到左侧设定面板。'
 
 watch(
   () => props.show,
@@ -63,13 +79,26 @@ watch(
       pendingResult.value = null
       chatHistory.value = []
       llmHistory.value = []
+      return
     }
-  }
+    if (
+      isChatVariant.value &&
+      props.embeddedModal &&
+      !props.readonly &&
+      chatHistory.value.length === 0
+    ) {
+      chatHistory.value.push({ role: 'ai', content: STYLE_WELCOME })
+    }
+  },
+  { immediate: true }
 )
+
+watch(loading, (value) => emit('busy', value))
 
 watch(
   () => props.focusedField,
   (field, prev) => {
+    if (isChatVariant.value) return
     if ((!props.show && !props.column) || !field || field === prev) return
     chatHistory.value.push({
       role: 'ai',
@@ -97,6 +126,41 @@ async function runAiEdit(instruction: string, fieldOverride?: MaterialFocusField
   })
 }
 
+function buildAiMessage(result: MaterialAiEditResult): string {
+  const changeText =
+    result.changedFields.length > 0
+      ? `已更新：${result.changedFields.join('、')}`
+      : '本次未产生字段变更'
+  return `${result.explanation}\n\n${changeText}`
+}
+
+function handleAiResult(result: MaterialAiEditResult) {
+  if (isChatVariant.value) {
+    if (result.changedFields.length > 0) {
+      emit('apply', result.nextDraft)
+    }
+    chatHistory.value.push({ role: 'ai', content: buildAiMessage(result) })
+    llmHistory.value.push({
+      role: 'assistant',
+      content: JSON.stringify({
+        explanation: result.explanation,
+        changedFields: result.changedFields,
+      }),
+    })
+    return
+  }
+
+  pendingResult.value = result
+  chatHistory.value.push({ role: 'ai', content: buildAiMessage(result) })
+  llmHistory.value.push({
+    role: 'assistant',
+    content: JSON.stringify({
+      explanation: result.explanation,
+      changedFields: result.changedFields,
+    }),
+  })
+}
+
 async function onSubmit(userInput: { id: string; value: string } | null) {
   const instruction = userInput?.value?.trim()
   if (!instruction || loading.value || props.readonly) return
@@ -108,21 +172,7 @@ async function onSubmit(userInput: { id: string; value: string } | null) {
 
   try {
     const result = await runAiEdit(instruction)
-
-    pendingResult.value = result
-    const changeText =
-      result.changedFields.length > 0
-        ? `建议修改：${result.changedFields.join('、')}`
-        : '本次未产生字段变更'
-    const aiMessage = `${result.explanation}\n\n${changeText}`
-    chatHistory.value.push({ role: 'ai', content: aiMessage })
-    llmHistory.value.push({
-      role: 'assistant',
-      content: JSON.stringify({
-        explanation: result.explanation,
-        changedFields: result.changedFields,
-      }),
-    })
+    handleAiResult(result)
   } catch (error) {
     const message = error instanceof Error ? error.message : 'AI 编辑失败'
     chatHistory.value.push({ role: 'ai', content: message })
@@ -152,15 +202,7 @@ async function askFieldSuggestion() {
 
   try {
     const result = await runAiEdit(instruction, props.focusedField)
-    pendingResult.value = result
-    const changeText =
-      result.changedFields.length > 0
-        ? `建议修改：${result.changedFields.join('、')}`
-        : '本次未产生字段变更'
-    chatHistory.value.push({
-      role: 'ai',
-      content: `${result.explanation}\n\n${changeText}`,
-    })
+    handleAiResult(result)
   } catch (error) {
     const message = error instanceof Error ? error.message : 'AI 优化失败'
     chatHistory.value.push({ role: 'ai', content: message })
@@ -172,8 +214,63 @@ async function askFieldSuggestion() {
 </script>
 
 <template>
+  <div
+    v-if="(show || column) && isChatVariant"
+    class="novel-chat-panel material-ai-chat-panel"
+    :class="{ 'novel-chat-panel--embedded': embeddedModal }"
+    :style="{ '--accent': accent }"
+    aria-label="文风对话"
+  >
+    <div
+      v-if="!embeddedModal"
+      class="novel-chat-panel__head novel-chat-panel__head--embedded"
+    >
+      <div class="novel-chat-panel__title-block">
+        <div class="novel-chat-panel__title-icon">
+          <MessageCircle :size="16" />
+        </div>
+        <div class="novel-chat-panel__title-text">
+          <h2 class="novel-chat-panel__title">文风对话</h2>
+          <p class="novel-chat-panel__subtitle">{{ chatSubtitle }}</p>
+        </div>
+      </div>
+      <div class="novel-chat-panel__meta">
+        <span v-if="loading" class="novel-chat-panel__status-badge">
+          <span class="novel-chat-panel__status-dot is-pulse" />
+          回复中
+        </span>
+      </div>
+    </div>
+
+    <div class="novel-chat-log relative">
+      <ChatBubble
+        v-for="(entry, index) in chatHistory"
+        :key="index"
+        :message="entry.content"
+        :type="entry.role"
+        :variant="bubbleVariant"
+      />
+      <div v-if="loading" class="material-ai-chat-panel__loading">
+        <Loader2 :size="16" class="spin" />
+        文思正在回复…
+      </div>
+    </div>
+
+    <div class="novel-chat-input-area">
+      <slot name="pre-input" />
+      <ConversationInput
+        v-if="!readonly"
+        :ui-control="{ type: 'text_input', placeholder: '说说你的文风灵感…' }"
+        :loading="loading"
+        variant="chat"
+        @submit="onSubmit"
+      />
+      <p v-else class="material-ai-chat-panel__readonly">内置预设为只读，请复制后再使用 AI 编辑。</p>
+    </div>
+  </div>
+
   <aside
-    v-if="show || column"
+    v-else-if="show || column"
     class="material-ai-panel"
     :class="{
       'material-ai-panel--embedded': embedded && !stacked && !column,
@@ -211,7 +308,7 @@ async function askFieldSuggestion() {
         :key="index"
         :message="entry.content"
         :type="entry.role"
-        variant="polish"
+        :variant="bubbleVariant"
       />
       <div v-if="loading" class="material-ai-panel__loading">
         <Loader2 :size="16" class="spin" />
@@ -408,6 +505,32 @@ async function askFieldSuggestion() {
 }
 
 .material-ai-panel__readonly {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  text-align: center;
+}
+
+.material-ai-chat-panel {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+}
+
+.material-ai-chat-panel__loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 2px 0;
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.material-ai-chat-panel__readonly {
   margin: 0;
   color: var(--muted);
   font-size: var(--text-xs);

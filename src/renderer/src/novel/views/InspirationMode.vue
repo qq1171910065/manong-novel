@@ -40,21 +40,26 @@
         <ConceptChecklistPanel
           v-if="!isPolishMode"
           :mode="projectWritingMode"
-          :conversation-state="novelStore.currentConversationState"
+          :conversation-state="displayConversationState"
           :is-refining="isChatRequestInFlight"
         />
         <div
           class="novel-chat-panel"
-          :class="{ 'novel-chat-panel--polish': isPolishMode }"
+          :class="{
+            'novel-chat-panel--polish': isPolishMode,
+            'novel-chat-panel--embedded': embedded,
+          }"
         >
         <div
+          v-if="!embedded || isPolishMode"
           class="novel-chat-panel__head"
           :class="{
             'novel-chat-panel__head--embedded': embedded,
             'novel-chat-panel__head--polish': isPolishMode,
+            'novel-chat-panel__head--polish-tools': embedded && isPolishMode,
           }"
         >
-          <div class="novel-chat-panel__title-block">
+          <div v-if="!embedded" class="novel-chat-panel__title-block">
             <div
               class="novel-chat-panel__title-icon"
               :class="{ 'novel-chat-panel__title-icon--polish': isPolishMode }"
@@ -106,16 +111,7 @@
             </span>
             <span v-if="currentTurn > 0" class="novel-chat-panel__turn">第 {{ currentTurn }} 轮</span>
             <button
-              v-if="!isPolishMode"
-              type="button"
-              class="novel-chat-panel__model-btn"
-              :title="`当前写作模型：${chatModelDisplay}`"
-              :disabled="isInitialLoading"
-              @click="openChatModelDialog"
-            >
-              {{ chatModelDisplay }}
-            </button>
-            <button
+              v-if="!embedded"
               type="button"
               class="novel-chat-panel__icon-btn"
               :title="isPolishMode ? '新会话' : '重新开始'"
@@ -163,10 +159,30 @@
             'novel-chat-input-area--preparing': isInitialLoading,
           }"
         >
+          <div v-if="!embedded && !isPolishMode" class="inspiration-confirm-gate">
+            <div class="inspiration-confirm-gate__info">
+              <span
+                v-if="checklistProgress.total > 0"
+                class="inspiration-confirm-gate__progress"
+              >
+                设定 {{ checklistProgress.completed }}/{{ checklistProgress.total }}
+              </span>
+              <span class="inspiration-confirm-gate__hint">{{ confirmGateHint }}</span>
+            </div>
+            <button
+              type="button"
+              class="novel-btn novel-btn--primary inspiration-confirm-gate__btn"
+              :disabled="!canEnterBlueprintConfirmation"
+              @click="enterBlueprintConfirmation"
+            >
+              确认蓝图设定
+            </button>
+          </div>
           <ConversationInput
             :ui-control="currentUIControl"
             :loading="inputDisabled"
             :variant="isPolishMode ? 'polish' : 'chat'"
+            :draft-storage-key="composerDraftKey"
             @submit="handleUserInput"
             @choices-height="choicesOffset = $event"
           />
@@ -175,9 +191,15 @@
       </div>
 
       <!-- 蓝图确认界面 -->
-      <div v-if="showBlueprintConfirmation" class="h-full min-h-0 overflow-y-auto">
+      <div
+        v-if="showBlueprintConfirmation"
+        :class="embedded ? '' : 'h-full min-h-0 overflow-y-auto'"
+      >
         <BlueprintConfirmation
           :ai-message="confirmationMessage"
+          :conversation-state="displayConversationState"
+          :writing-mode="projectWritingMode"
+          :hide-chrome="embedded"
           @generate="handleStartBlueprintGeneration"
           @back="backToConversation"
         />
@@ -191,6 +213,7 @@
           :replace-entire-blueprint="polishWorkflowMode === 'reinspiration'"
           :before-blueprint="novelStore.currentProject?.blueprint ?? null"
           :blueprint-updates="pendingBlueprintUpdates"
+          :hide-chrome="embedded"
           @apply="handleApplySectionPolish"
           @back="backFromSectionPolishConfirmation"
         />
@@ -200,7 +223,8 @@
       <div v-if="showBlueprint" class="h-full min-h-0 overflow-y-auto">
         <BlueprintDisplay
           :blueprint="completedBlueprint"
-          :ai-message="blueprintMessage"
+          :hide-chrome="embedded"
+          :saving="isBlueprintSaving"
           @confirm="handleConfirmBlueprint"
           @regenerate="handleRegenerateBlueprint"
           @back-to-chat="resumeConceptRevision"
@@ -212,32 +236,8 @@
       :show="showGeneratingOverlay"
       :progress="blueprintGen.progress.value"
       :loading-text="blueprintProgressMessage || blueprintGen.loadingText.value"
-      description="按步骤生成：整理设定清单 → 生成蓝图 JSON → 补全章节大纲"
       @cancel="cancelBlueprintGeneration"
     />
-
-    <NModal
-      v-if="!isPolishMode"
-      v-model:show="chatModelDialogOpen"
-      preset="dialog"
-      title="选择写作模型"
-      style="width: min(560px, 92vw)"
-    >
-      <p class="novel-chat-panel__model-note">
-        灵感对话、蓝图生成均使用此模型；未单独设置时使用全局默认模型。
-      </p>
-      <GatewayModelPicker
-        v-model="draftChatModelId"
-        :models="chatModels.filter(isLikelyChatModel)"
-        :recommended-ids="chatRecommendedIds"
-        :loading="chatModelsLoading"
-        empty-hint="暂无可用对话模型，请先在设置中确认网关连接。"
-      />
-      <template #action>
-        <NButton @click="chatModelDialogOpen = false">取消</NButton>
-        <NButton type="primary" @click="saveChatModel">确定</NButton>
-      </template>
-    </NModal>
   </div>
 </template>
 
@@ -270,7 +270,6 @@ import BlueprintDisplay from '@renderer/novel/components/BlueprintDisplay.vue'
 import BlueprintGeneratingOverlay from '@renderer/novel/components/BlueprintGeneratingOverlay.vue'
 import ConceptChecklistPanel from '@renderer/novel/components/ConceptChecklistPanel.vue'
 import InspirationLoading from '@renderer/novel/components/InspirationLoading.vue'
-import GatewayModelPicker from '@renderer/components/settings/GatewayModelPicker.vue'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
 import {
   formatBlueprintGenerationError,
@@ -279,19 +278,19 @@ import {
 } from '@renderer/novel/composables/useBlueprintGeneration'
 import { resolveDisplayAiMessage } from '@renderer/services/novel/json-utils'
 import { randomUUID } from '@renderer/utils/id'
-import { useGatewayModelLabel } from '@renderer/composables/useGatewayModelLabel'
-import { CHARACTER_MODEL_RECOMMENDED } from '@renderer/data/model-catalog'
-import { settingsService } from '@renderer/services/app-settings'
-import {
-  formatGatewayContentFilterError,
-  isLikelyChatModel,
-  listChatGatewayModels,
-  type GatewayModelInfo,
-} from '@renderer/services/gateway-api'
-import { DEFAULT_SYSTEM_ROLE_MODEL_ID } from '@shared/gateway/constants'
+import { formatGatewayContentFilterError } from '@renderer/services/gateway-api'
 import { resolveWritingMode } from '@shared/novel/writing-mode'
-import { rebuildFullConceptStateFromHistory } from '@shared/novel/concept-checklist'
-import { NButton, NModal } from '@renderer/ui'
+import {
+  buildConceptBlueprintPreview,
+  reconcileConceptConversationState,
+  rebuildFullConceptStateFromHistory,
+  resolveConceptBriefForDisplay,
+  type ConceptConversationState,
+} from '@shared/novel/concept-checklist'
+import {
+  DEFAULT_INSPIRATION_MODAL_CHROME,
+  type InspirationModalChrome,
+} from '@renderer/novel/composables/inspiration-modal-chrome'
 
 interface ChatMessage {
   id: string
@@ -316,9 +315,23 @@ const emit = defineEmits<{
   close: []
   'blueprint-saved': []
   'section-polish-applied': [payload: SectionPolishApplyPayload]
+  'modal-chrome': [chrome: InspirationModalChrome]
 }>()
 
 const isPolishMode = computed(() => props.mode === 'section-polish')
+
+const composerDraftKey = computed(() =>
+  props.projectId ? `novel-inspiration-draft:${props.projectId}:${props.mode}` : undefined
+)
+
+function clearComposerDraft() {
+  if (!composerDraftKey.value || typeof sessionStorage === 'undefined') return
+  try {
+    sessionStorage.removeItem(composerDraftKey.value)
+  } catch {
+    /* ignore */
+  }
+}
 
 const isChoiceMode = computed(() => {
   const type = currentUIControl.value?.type
@@ -347,57 +360,6 @@ const DEFAULT_UI_CONTROL: UIControl = {
 const router = useRouter()
 const route = useRoute()
 const novelStore = useNovelStore()
-const { modelLabel } = useGatewayModelLabel()
-
-const globalChatModelId = ref(DEFAULT_SYSTEM_ROLE_MODEL_ID)
-const chatModels = ref<GatewayModelInfo[]>([])
-const chatModelsLoading = ref(false)
-const chatModelDialogOpen = ref(false)
-const draftChatModelId = ref('')
-const chatRecommendedIds = computed(() => CHARACTER_MODEL_RECOMMENDED)
-
-const chatModelDisplay = computed(() => {
-  const projectModel = novelStore.currentProject?.chat_model_id?.trim()
-  if (projectModel) return modelLabel(projectModel)
-  return `默认 · ${modelLabel(globalChatModelId.value)}`
-})
-
-async function loadChatModels() {
-  chatModelsLoading.value = true
-  try {
-    const settings = await settingsService.get()
-    globalChatModelId.value = settings.defaultChatModelId || DEFAULT_SYSTEM_ROLE_MODEL_ID
-    chatModels.value = await listChatGatewayModels().catch(() => [])
-  } finally {
-    chatModelsLoading.value = false
-  }
-}
-
-function openChatModelDialog() {
-  draftChatModelId.value =
-    novelStore.currentProject?.chat_model_id?.trim() || globalChatModelId.value
-  chatModelDialogOpen.value = true
-}
-
-async function saveChatModel() {
-  const project = novelStore.currentProject
-  if (!project) {
-    chatModelDialogOpen.value = false
-    return
-  }
-  const picked = draftChatModelId.value.trim()
-  const useGlobal = !picked || picked === globalChatModelId.value
-  const chatModelId = useGlobal ? null : picked
-  try {
-    const updated = await NovelAPI.updateProjectModels(project.id, { chat_model_id: chatModelId })
-    novelStore.setCurrentProject(updated)
-    chatModelDialogOpen.value = false
-    globalAlert.showSuccess('写作模型已更新，下一条消息起生效', '已保存')
-  } catch (error) {
-    console.error('保存写作模型失败:', error)
-    globalAlert.showError(error instanceof Error ? error.message : '保存失败', '保存失败')
-  }
-}
 
 function formatChatError(error: unknown): string {
   const raw = error instanceof Error ? error.message : '未知错误'
@@ -413,6 +375,7 @@ const chatMessages = ref<ChatMessage[]>([])
 const currentUIControl = ref<UIControl | null>(null)
 const currentTurn = ref(0)
 const completedBlueprint = ref<Blueprint | null>(null)
+const isBlueprintSaving = ref(false)
 const confirmationMessage = ref('')
 const blueprintMessage = ref('')
 const chatArea = ref<HTMLElement>()
@@ -421,6 +384,38 @@ const blueprintProgressMessage = ref('')
 const projectWritingMode = computed(() =>
   resolveWritingMode(novelStore.currentProject ?? undefined)
 )
+
+const displayConversationState = computed((): ConceptConversationState | null | undefined => {
+  const state = novelStore.currentConversationState as ConceptConversationState | null | undefined
+  const history = novelStore.currentProject?.conversation_history
+  if (!state || !history?.length) return state
+  return reconcileConceptConversationState(state, projectWritingMode.value, { history })
+})
+
+const checklistProgress = computed(() => {
+  const display = resolveConceptBriefForDisplay(displayConversationState.value, projectWritingMode.value)
+  return {
+    completed: display.completeness.completed,
+    total: display.completeness.total,
+    pending: Math.max(0, display.completeness.total - display.completeness.completed),
+  }
+})
+
+const canEnterBlueprintConfirmation = computed(
+  () =>
+    !isPolishMode.value &&
+    currentTurn.value >= 1 &&
+    !isInitialLoading.value &&
+    !isChatRequestInFlight.value
+)
+
+const confirmGateHint = computed(() => {
+  if (currentTurn.value < 1) return '先和文思聊一轮，再确认设定'
+  if (checklistProgress.value.pending > 0) {
+    return `还有 ${checklistProgress.value.pending} 项待完善，也可直接预览`
+  }
+  return '满意后进入蓝图确认'
+})
 const showGeneratingOverlay = computed(() => {
   const projectId = novelStore.currentProject?.id
   return (
@@ -628,6 +623,7 @@ const handleRestart = async () => {
     isPolishMode.value ? '新会话' : '重新开始确认'
   )
   if (confirmed) {
+    clearComposerDraft()
     if (isPolishMode.value && props.projectId) {
       await NovelAPI.clearSectionPolishSession(props.projectId)
       await novelStore.loadProject(props.projectId, true)
@@ -648,6 +644,32 @@ const backFromSectionPolishConfirmation = () => {
 
 const backToConversation = () => {
   resumeConceptRevision()
+}
+
+const enterBlueprintConfirmation = async () => {
+  if (!canEnterBlueprintConfirmation.value) return
+
+  if (checklistProgress.value.pending > 0) {
+    const confirmed = await globalAlert.showConfirm(
+      `还有 ${checklistProgress.value.pending} 项设定未标记完成，仍要进入蓝图确认吗？`,
+      '确认蓝图设定'
+    )
+    if (!confirmed) return
+  }
+
+  const lastAi = [...chatMessages.value].reverse().find((m) => m.type === 'ai')
+  confirmationMessage.value = lastAi?.content ? resolveDisplayAiMessage(lastAi.content) : ''
+
+  if (novelStore.currentConversationState) {
+    novelStore.currentConversationState = {
+      ...novelStore.currentConversationState,
+      revision_mode: false,
+      ready_for_blueprint: false,
+    }
+  }
+
+  currentUIControl.value = { ...DEFAULT_UI_CONTROL }
+  showBlueprintConfirmation.value = true
 }
 
 const resumeConceptRevision = () => {
@@ -724,6 +746,7 @@ const restoreConversation = async (projectId: string) => {
     const project = novelStore.currentProject
     if (project && project.conversation_history) {
       conversationStarted.value = true
+      isInitialLoading.value = false
       chatMessages.value = project.conversation_history.map((item): ChatMessage | null => {
         if (item.role === 'user') {
           try {
@@ -755,12 +778,7 @@ const restoreConversation = async (projectId: string) => {
       if (lastAssistantMsgStr) {
         const lastAssistantMsg = JSON.parse(lastAssistantMsgStr)
 
-        if (lastAssistantMsg.is_complete) {
-          confirmationMessage.value = resolveDisplayAiMessage(String(lastAssistantMsg.ai_message || ''))
-          showBlueprintConfirmation.value = true
-        } else {
-          currentUIControl.value = lastAssistantMsg.ui_control || { ...DEFAULT_UI_CONTROL }
-        }
+        currentUIControl.value = lastAssistantMsg.ui_control || { ...DEFAULT_UI_CONTROL }
         novelStore.currentConversationState = rebuildFullConceptStateFromHistory(
           project.conversation_history,
           projectWritingMode.value,
@@ -1220,19 +1238,7 @@ const handleUserInput = async (userInput: any) => {
 
     await scrollToBottom()
 
-    if (response.is_complete && response.ready_for_blueprint) {
-      confirmationMessage.value = resolveDisplayAiMessage(response.ai_message)
-      currentUIControl.value = { ...DEFAULT_UI_CONTROL }
-      if (novelStore.currentConversationState?.revision_mode) {
-        novelStore.currentConversationState = {
-          ...novelStore.currentConversationState,
-          revision_mode: false,
-        }
-      }
-      showBlueprintConfirmation.value = true
-    } else if (response.is_complete) {
-      await handleGenerateBlueprint()
-    } else if (response.ui_control) {
+    if (response.ui_control) {
       currentUIControl.value = response.ui_control
     } else {
       currentUIControl.value = { ...DEFAULT_UI_CONTROL }
@@ -1252,10 +1258,6 @@ const handleUserInput = async (userInput: any) => {
   } finally {
     isChatRequestInFlight.value = false
   }
-}
-
-const handleGenerateBlueprint = async () => {
-  await handleStartBlueprintGeneration()
 }
 
 const handleStartBlueprintGeneration = async () => {
@@ -1300,11 +1302,20 @@ const handleRegenerateBlueprint = () => {
   showBlueprintConfirmation.value = true
 }
 
+const handleRegenerateBlueprintWithConfirm = async () => {
+  const confirmed = await globalAlert.showConfirm(
+    '重新生成会覆盖当前蓝图，确定继续吗？',
+    '重新生成'
+  )
+  if (confirmed) handleRegenerateBlueprint()
+}
+
 const handleConfirmBlueprint = async () => {
   if (!completedBlueprint.value) {
     globalAlert.showError('蓝图数据缺失，请重新生成或稍后重试。', '保存失败')
     return
   }
+  isBlueprintSaving.value = true
   try {
     await novelStore.saveBlueprint(completedBlueprint.value)
     if (props.embedded) {
@@ -1321,8 +1332,91 @@ const handleConfirmBlueprint = async () => {
   } catch (error) {
     console.error('保存蓝图失败:', error)
     globalAlert.showError(`保存蓝图失败: ${error instanceof Error ? error.message : '未知错误'}`, '保存失败')
+  } finally {
+    isBlueprintSaving.value = false
   }
 }
+
+const modalChrome = computed((): InspirationModalChrome => {
+  if (!props.embedded) return DEFAULT_INSPIRATION_MODAL_CHROME
+
+  if (showBlueprint.value) {
+    const title = completedBlueprint.value?.title?.trim() || '蓝图预览'
+    return {
+      ariaLabel: '蓝图确认',
+      title,
+      panelClass: 'novel-modal__panel--lg',
+      footerKind: 'blueprint_review',
+      showShellHeader: true,
+      footerBusy: isBlueprintSaving.value,
+      footerPrimaryLabel: isBlueprintSaving.value ? '正在保存…' : '确认写入项目',
+    }
+  }
+
+  if (showBlueprintConfirmation.value) {
+    const preview = buildConceptBlueprintPreview(
+      displayConversationState.value,
+      projectWritingMode.value
+    )
+    return {
+      ariaLabel: '确认蓝图设定',
+      title: '确认蓝图设定',
+      subtitle: preview.expectedChaptersLabel,
+      modalSize: 'auto',
+      panelClass: 'inspiration-modal__panel--confirm',
+      bodyClass: 'inspiration-modal__body--confirm',
+      footerKind: 'blueprint_confirm',
+      showShellHeader: true,
+    }
+  }
+
+  if (showSectionPolishConfirmation.value) {
+    const reinspiration = polishWorkflowMode.value === 'reinspiration'
+    return {
+      ariaLabel: '应用设定修改',
+      title: reinspiration ? '应用全书框架重构？' : '应用设定修改？',
+      panelClass: isPolishMode.value ? 'novel-modal__panel--polish' : 'novel-modal__panel--lg',
+      footerKind: 'section_polish_confirm',
+      showShellHeader: true,
+      footerPrimaryLabel: reinspiration ? '确认重构' : '应用修改',
+    }
+  }
+
+  return {
+    ariaLabel: isPolishMode.value ? 'AI 助手 · 设定修改' : '灵感对话',
+    title: isPolishMode.value ? 'AI 助手' : '灵感对话',
+    subtitle: isPolishMode.value
+      ? `全书共用同一会话 · 当前浏览「${props.polishContext?.sectionLabel ?? ''}」`
+      : '与文思一起构思你的故事',
+    showShellHeader: true,
+    panelClass: isPolishMode.value ? 'novel-modal__panel--polish' : 'novel-modal__panel--chat',
+    bodyClass: 'inspiration-modal__body--chat',
+    footerKind: null,
+    toolbarKind: isPolishMode.value ? 'polish_chat' : 'inspiration_chat',
+    confirmBlueprintDisabled: !canEnterBlueprintConfirmation.value,
+    restartDisabled: isInitialLoading.value || isChatRequestInFlight.value,
+  }
+})
+
+watch(
+  modalChrome,
+  (chrome) => {
+    if (props.embedded) emit('modal-chrome', chrome)
+  },
+  { immediate: true, deep: true }
+)
+
+defineExpose({
+  backToConversation,
+  backFromSectionPolishConfirmation,
+  enterBlueprintConfirmation,
+  handleRestart,
+  handleStartBlueprintGeneration,
+  handleConfirmBlueprint,
+  handleRegenerateBlueprintWithConfirm,
+  handleApplySectionPolish,
+  resumeConceptRevision,
+})
 
 const scrollToBottom = async () => {
   await nextTick()
@@ -1351,7 +1445,13 @@ const refreshEmbeddedSession = async (projectId: string) => {
   await novelStore.loadProject(projectId, true)
   const hasHistory = (novelStore.currentProject?.conversation_history?.length ?? 0) > 0
   if (hasHistory) {
-    await restoreConversation(projectId)
+    if (chatMessages.value.length === 0 || !conversationStarted.value) {
+      await restoreConversation(projectId)
+    }
+    return
+  }
+  if (!conversationStarted.value) {
+    prepareConversationForProject()
   }
 }
 
@@ -1366,8 +1466,6 @@ watch(
 )
 
 onMounted(async () => {
-  void loadChatModels()
-
   if (isPolishMode.value) {
     if (props.projectId && props.polishContext) {
       await initSectionPolishSession(props.projectId, props.polishContext)
@@ -1393,10 +1491,11 @@ onUnmounted(() => {
 <style scoped>
 .inspiration-chat-layout {
   display: flex;
-  gap: 0.75rem;
-  min-height: 0;
   flex: 1;
+  gap: 0;
+  min-height: 0;
   height: 100%;
+  padding: 0;
 }
 
 .inspiration-chat-layout--polish {
@@ -1407,43 +1506,11 @@ onUnmounted(() => {
   flex: 1;
   min-width: 0;
   min-height: 0;
+  background: transparent;
 }
 
 .mt-3 {
   margin-top: 12px;
-}
-
-.novel-chat-panel__model-btn {
-  max-width: 140px;
-  padding: 4px 10px;
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
-  border-radius: 999px;
-  background: var(--surface-soft, rgba(255, 255, 255, 0.04));
-  color: var(--muted, rgba(255, 255, 255, 0.65));
-  font-size: 11px;
-  line-height: 1.3;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: pointer;
-  transition: border-color 0.15s ease, color 0.15s ease;
-}
-
-.novel-chat-panel__model-btn:hover:not(:disabled) {
-  border-color: rgba(108, 99, 255, 0.45);
-  color: var(--text, inherit);
-}
-
-.novel-chat-panel__model-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.novel-chat-panel__model-note {
-  margin: 0 0 12px;
-  font-size: 12px;
-  line-height: 1.55;
-  color: var(--muted, rgba(255, 255, 255, 0.65));
 }
 
 .novel-chat-panel__scope-bar {
@@ -1489,5 +1556,39 @@ onUnmounted(() => {
 .novel-chat-panel__scope-tag.is-warn {
   background: color-mix(in srgb, #6366f1 12%, transparent);
   color: #4f46e5;
+}
+
+.inspiration-confirm-gate {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  padding: 0 0 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line, rgba(0, 0, 0, 0.08)) 55%, transparent);
+}
+
+.inspiration-confirm-gate__info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.inspiration-confirm-gate__progress {
+  font-size: 0.6875rem;
+  font-weight: 650;
+  color: var(--brand, #6c63ff);
+}
+
+.inspiration-confirm-gate__hint {
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--muted, #6b7280);
+}
+
+.inspiration-confirm-gate__btn {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 </style>

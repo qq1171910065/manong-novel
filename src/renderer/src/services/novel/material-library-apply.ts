@@ -6,11 +6,17 @@ import type { MaterialItem } from './material-library-service'
 import { materialLibraryService } from './material-library-service'
 import { touchRecentMaterial } from './material-library-prefs'
 import { ensureCharacter } from './blueprint-asset'
-import type { ConceptChecklist, ConceptChecklistAnswers } from '@shared/novel/concept-checklist'
+import type {
+  ConceptChecklist,
+  ConceptChecklistAnswers,
+  ConceptChecklistKey,
+} from '@shared/novel/concept-checklist'
 
 export interface CreateProjectMaterialSelection {
   styleMaterialId: string | null
   characterMaterialIds: string[]
+  /** 本书写作模型；未设置时使用全局默认 */
+  chatModelId?: string | null
 }
 
 export function hasMaterialSelection(selection?: CreateProjectMaterialSelection | null): boolean {
@@ -74,22 +80,29 @@ export function seedConceptChecklistFromMaterials(
   checklist: ConceptChecklist,
   answers: ConceptChecklistAnswers,
   project: NovelProject
-): { checklist: ConceptChecklist; answers: ConceptChecklistAnswers } {
+): {
+  checklist: ConceptChecklist
+  answers: ConceptChecklistAnswers
+  lockedFields: ConceptChecklistKey[]
+} {
   const blueprint = project.blueprint
   const nextChecklist = { ...checklist }
   const nextAnswers = { ...answers }
+  const lockedFields: ConceptChecklistKey[] = []
 
   const genre = blueprint?.genre?.trim()
   const tone = blueprint?.tone?.trim()
   if ((genre || tone) && !nextChecklist.genre_tone) {
     nextChecklist.genre_tone = true
     nextAnswers.genre_tone = [genre, tone].filter(Boolean).join(' · ')
+    lockedFields.push('genre_tone')
   }
 
   const style = blueprint?.style?.trim()
   if (style && !nextChecklist.prose_style) {
     nextChecklist.prose_style = true
     nextAnswers.prose_style = style
+    lockedFields.push('prose_style')
   }
 
   const characters = blueprint?.characters ?? []
@@ -100,7 +113,7 @@ export function seedConceptChecklistFromMaterials(
       .join('\n')
   }
 
-  return { checklist: nextChecklist, answers: nextAnswers }
+  return { checklist: nextChecklist, answers: nextAnswers, lockedFields }
 }
 
 export function buildConceptMaterialPromptSupplement(project: NovelProject): string {
@@ -112,7 +125,8 @@ export function buildConceptMaterialPromptSupplement(project: NovelProject): str
     '## 作者已选定的物料库预设（须作为灵感对话起点，延展而非推翻）',
     materialContext,
     '',
-    '对话中若涉及文风、主角等，应优先在上述预设基础上追问细化，不要另起炉灶或与之冲突。',
+    '对话中若涉及文风、类型基调，应优先在上述预设基础上追问细化，不要另起炉灶或与之冲突。',
+    '来自物料库的文风与类型基调视为**已锁定**：未经用户明确要求，不得改写 prose_style / genre_tone。',
   ].join('\n')
 }
 

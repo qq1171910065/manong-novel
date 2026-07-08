@@ -81,14 +81,6 @@
       </div>
     </section>
 
-    <ProjectModelSettings
-      v-if="projectId"
-      :chat-model-id="data?.chat_model_id || null"
-      :writing-mode="writingMode"
-      :editable="editable"
-      @update:chat-model-id="emitChatModelUpdate"
-    />
-
     <section class="nd-block">
       <div class="nd-block__head">
         <div>
@@ -124,7 +116,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import ImageAssetField from '@renderer/novel/components/shared/ImageAssetField.vue'
-import ProjectModelSettings from '@renderer/novel/components/shared/ProjectModelSettings.vue'
 import SubmitToLibraryButton from '@renderer/novel/components/shared/SubmitToLibraryButton.vue'
 import DetailEditableZone from './DetailEditableZone.vue'
 import DetailEmptyState from './DetailEmptyState.vue'
@@ -164,7 +155,6 @@ const emit = defineEmits<{
   (e: 'edit', payload: { field: string; title: string; value: any }): void
   (e: 'cover-update', value: string | null): void
   (e: 'cover-generate', prompt: string): void
-  (e: 'models-update', payload: { chat_model_id?: string | null }): void
 }>()
 
 const displayTitle = computed(
@@ -233,11 +223,6 @@ function emitCoverUpdate(value: string | null) {
 function emitCoverGenerate(prompt: string) {
   if (!props.editable) return
   emit('cover-generate', prompt)
-}
-
-function emitChatModelUpdate(value: string | null) {
-  if (!props.editable) return
-  emit('models-update', { chat_model_id: value })
 }
 </script>
 

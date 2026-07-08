@@ -1,4 +1,9 @@
 import type { WritingMode } from './types'
+import {
+  clampChapterCountForMode,
+  FULL_MODE_DEFAULT_CHAPTERS,
+  SIMPLE_MODE_DEFAULT_CHAPTERS,
+} from './writing-mode'
 
 export type ConceptChecklistKey =
   | 'spark'
@@ -41,6 +46,7 @@ export const CONCEPT_CHECKLIST_LABELS: Record<ConceptChecklistKey, string> = {
 const SIMPLE_REQUIRED: ConceptChecklistKey[] = [
   'spark',
   'genre_tone',
+  'prose_style',
   'protagonist',
   'central_conflict',
   'inciting_incident',
@@ -66,6 +72,8 @@ export interface ConceptConversationState {
   /** 仅本轮 prompt 用的线索，不持久化、不展示 */
   checklist_drafts?: ConceptChecklistDrafts
   pending_topic?: ConceptChecklistKey | null
+  /** 已确定、未经用户明确要求不得改写的设定项（如文风、类型基调） */
+  locked_fields?: ConceptChecklistKey[]
   ready_for_blueprint?: boolean
   revision_mode?: boolean
 }
@@ -225,6 +233,7 @@ function splitMessageSegments(text: string): string[] {
 export function inferTopicFromUserAnswer(value: string): ConceptChecklistKey | null {
   const text = value.trim()
   if (!text) return null
+  if (parseExpectedChapterCount(text) !== null) return 'chapter_count'
   if (CHAPTER_ANSWER_RE.test(text)) return 'chapter_count'
   return detectTopicFromMessage(text)
 }
@@ -274,26 +283,276 @@ export function applyUserAnswerToChecklist(
   }
 
   // 仅篇幅类可本地确定性勾选；其余勾选权交给 AI 回传的 checklist
-  if (parseExpectedChapterCount(value)) {
+  const chapterCount = parseExpectedChapterCount(value)
+  if (chapterCount !== null) {
     checklist.chapter_count = true
+    const chapterLabel = `${chapterCount} 章左右`
+    answers.chapter_count = chapterLabel
+    drafts.chapter_count = mergeDraftText(drafts.chapter_count, chapterLabel)
   }
 
   return { checklist, answers, drafts, pendingTopic }
+}
+
+const UNLOCK_REQUEST_PATTERNS: Partial<Record<ConceptChecklistKey, RegExp[]>> = {
+  prose_style: [/改.*文风/, /换.*风格/, /调整.*笔触/, /重写.*文风/, /不要.*文风/],
+  genre_tone: [/改.*类型/, /换.*基调/, /调整.*题材/, /不要.*基调/],
+  spark: [/改.*灵感/, /换.*核心/, /重写.*火花/],
+  protagonist: [/改.*主角/, /换.*主角/, /调整.*主人公/],
+  central_conflict: [/改.*冲突/, /换.*冲突/],
+  chapter_count: [/改.*篇幅/, /换.*章数/, /调整.*章节/],
+}
+
+const BRIEF_SECTION_MARKERS: Partial<Record<ConceptChecklistKey, RegExp[]>> = {
+  genre_tone: [/类型/, /基调/, /氛围/, /题材/, /世界质感/],
+  prose_style: [/文风/, /笔触/, /叙事/, /写作风格/, /文字质感/],
+  protagonist: [/^主角/, /主人公/, /驱动力/],
+  central_conflict: [/核心冲突/, /主线障碍/],
+  antagonist: [/对立面/, /反派/, /对手/],
+  inciting_incident: [/催化/, /导火索/, /打破.*平衡/],
+  core_theme: [/核心主题/, /探讨/, /想表达/],
+  working_title: [/暂定书名/, /书名/, /标题/],
+  chapter_count: [/预期篇幅/, /篇幅/, /章左右/],
+}
+
+export function detectUserEditTopics(
+  message: string | null | undefined,
+  pendingTopic?: ConceptChecklistKey | null
+): ConceptChecklistKey[] {
+  const text = String(message ?? '').trim()
+  if (!text) return pendingTopic ? [pendingTopic] : []
+
+  const topics = new Set<ConceptChecklistKey>()
+  const hints = extractMultiTopicHintsFromMessage(text, pendingTopic)
+  for (const key of Object.keys(hints) as ConceptChecklistKey[]) {
+    topics.add(key)
+  }
+
+  const detected = detectTopicFromMessage(text) ?? inferTopicFromUserAnswer(text)
+  if (detected) topics.add(detected)
+  if (pendingTopic) topics.add(pendingTopic)
+
+  return [...topics]
+}
+
+export function isExplicitUnlockRequest(
+  message: string,
+  key: ConceptChecklistKey
+): boolean {
+  const patterns = UNLOCK_REQUEST_PATTERNS[key]
+  if (!patterns?.length) return false
+  const text = String(message ?? '').trim()
+  return patterns.some((pattern) => pattern.test(text))
+}
+
+export function deriveLockedFields(
+  checklist: ConceptChecklist,
+  answers: ConceptChecklistAnswers,
+  existing?: ConceptChecklistKey[] | null,
+  mode: WritingMode = 'full'
+): ConceptChecklistKey[] {
+  const locked = new Set<ConceptChecklistKey>(existing ?? [])
+  const required = requiredChecklistKeys(mode)
+
+  for (const key of required) {
+    if (!checklist[key]) continue
+    const answer = answers[key]?.trim()
+    if (!answer || PLACEHOLDER_ANSWER_RE.test(answer)) continue
+
+    if (key === 'prose_style' || key === 'genre_tone') {
+      if (answer.length >= 6) locked.add(key)
+      continue
+    }
+    if (key === 'chapter_count') {
+      if (parseExpectedChapterCount(answer) !== null) locked.add(key)
+      continue
+    }
+    if (isRefinedConceptAnswer(answer)) locked.add(key)
+  }
+
+  return CONCEPT_CHECKLIST_ORDER.filter((key) => locked.has(key))
+}
+
+export function shouldUsePartialConceptUpdate(options: {
+  inRevision?: boolean
+  lockedFields: ConceptChecklistKey[]
+  changedFields: ConceptChecklistKey[]
+  completedCount: number
+  hasBaseBrief: boolean
+}): boolean {
+  if (options.inRevision && options.hasBaseBrief) return true
+  if (!options.hasBaseBrief) return false
+  if (options.changedFields.length > 0 && options.lockedFields.length > 0) return true
+  if (options.completedCount >= 3 && options.changedFields.length > 0) return true
+  return false
+}
+
+export function buildLockedFieldsSupplement(
+  lockedFields: ConceptChecklistKey[],
+  answers: ConceptChecklistAnswers
+): string {
+  if (!lockedFields.length) return ''
+
+  const lines = lockedFields.map((key) => {
+    const answer = answers[key]?.trim()
+    return `- ${CONCEPT_CHECKLIST_LABELS[key]}：${answer || '（已确定）'}`
+  })
+
+  return `
+## 已锁定设定（禁止擅自修改）
+以下项已由用户/物料库确定。除非用户**本轮明确**要求修改该项，否则 checklist_answers 与 concept_brief 中相关表述必须保持不变：
+${lines.join('\n')}
+`
+}
+
+function formatBriefParagraphForKey(
+  key: ConceptChecklistKey,
+  answer: string | undefined
+): string | null {
+  const text = answer?.trim()
+  if (!text) return null
+
+  switch (key) {
+    case 'spark':
+      return text
+    case 'genre_tone':
+      return text
+    case 'prose_style':
+      return text.startsWith('写作风格') ? text : `写作风格上，${text}`
+    case 'protagonist':
+      return text.startsWith('主角') ? text : `主角：${text}`
+    case 'central_conflict':
+      return text
+    case 'antagonist':
+      return text.startsWith('对立面') ? text : `对立面：${text}`
+    case 'inciting_incident':
+      return text.startsWith('催化') ? text : `催化事件：${text}`
+    case 'core_theme':
+      return text.startsWith('核心主题') ? text : `核心主题：${text}`
+    case 'working_title':
+      return text.startsWith('暂定书名') ? text : `暂定书名：${text}`
+    case 'chapter_count':
+      return text.startsWith('预期篇幅') ? text : `预期篇幅：${text}`
+    default:
+      return text
+  }
+}
+
+function paragraphMatchesKey(paragraph: string, key: ConceptChecklistKey): boolean {
+  const markers = BRIEF_SECTION_MARKERS[key]
+  if (!markers?.length) return false
+  return markers.some((pattern) => pattern.test(paragraph))
+}
+
+/** 局部更新综述：仅替换本轮变更项对应段落，其余段落原样保留 */
+export function patchConceptBriefSections(
+  baseBrief: string,
+  answers: ConceptChecklistAnswers,
+  changedKeys: ConceptChecklistKey[]
+): string {
+  const base = baseBrief.trim()
+  if (!base || !changedKeys.length) return base
+
+  const paragraphs = base.split(/\n\s*\n/).filter((part) => part.trim())
+  const changed = new Set(changedKeys)
+  const next = [...paragraphs]
+  const replaced = new Set<number>()
+
+  for (const key of changedKeys) {
+    const paragraph = formatBriefParagraphForKey(key, answers[key])
+    if (!paragraph) continue
+
+    let hit = false
+    for (let index = 0; index < next.length; index += 1) {
+      if (replaced.has(index)) continue
+      if (!paragraphMatchesKey(next[index], key)) continue
+      next[index] = paragraph
+      replaced.add(index)
+      hit = true
+      break
+    }
+
+    if (!hit) {
+      if (key === 'spark') next.unshift(paragraph)
+      else if (key === 'genre_tone' || key === 'prose_style') {
+        const insertAt = next.findIndex((part) => changed.has('spark') ? false : paragraphMatchesKey(part, 'spark'))
+        next.splice(insertAt >= 0 ? insertAt + 1 : 0, 0, paragraph)
+      } else {
+        next.push(paragraph)
+      }
+    }
+  }
+
+  return next.join('\n\n')
+}
+
+export function mergeChecklistAnswersWithLocks(
+  base: ConceptChecklistAnswers,
+  modelRaw: unknown,
+  lockedFields: ConceptChecklistKey[],
+  userChangedKeys: ConceptChecklistKey[]
+): ConceptChecklistAnswers {
+  const merged = mergeChecklistAnswersFromModel(base, modelRaw)
+  const locked = new Set(lockedFields)
+  const changed = new Set(userChangedKeys)
+
+  for (const key of locked) {
+    if (changed.has(key)) continue
+    if (base[key]?.trim()) merged[key] = base[key]
+  }
+
+  return merged
+}
+
+export function mergeConceptBriefForTurn(
+  base: string | undefined,
+  modelRaw: unknown,
+  options: {
+    partialUpdate: boolean
+    changedKeys: ConceptChecklistKey[]
+    answers: ConceptChecklistAnswers
+    mode: WritingMode
+  }
+): string {
+  const baseBrief = base?.trim() || ''
+  const modelBrief = typeof modelRaw === 'string' ? modelRaw.trim() : ''
+
+  if (!options.partialUpdate) {
+    return modelBrief || baseBrief || composeConceptBriefFromAnswers(options.answers, options.mode)
+  }
+
+  if (baseBrief && options.changedKeys.length > 0) {
+    const patched = patchConceptBriefSections(baseBrief, options.answers, options.changedKeys)
+    if (patched) return patched
+  }
+
+  return modelBrief || baseBrief || composeConceptBriefFromAnswers(options.answers, options.mode)
 }
 
 export function buildChecklistPromptSupplement(
   checklist: ConceptChecklist,
   answers: ConceptChecklistAnswers,
   mode: WritingMode,
-  options?: { forcedNextTopic?: ConceptChecklistKey | null; drafts?: ConceptChecklistDrafts }
+  options?: {
+    forcedNextTopic?: ConceptChecklistKey | null
+    drafts?: ConceptChecklistDrafts
+    lockedFields?: ConceptChecklistKey[]
+    changedFields?: ConceptChecklistKey[]
+    partialUpdate?: boolean
+    baseBrief?: string
+  }
 ): string {
   const required = requiredChecklistKeys(mode)
   const nextTopic = options?.forcedNextTopic ?? firstIncompleteTopic(checklist, mode)
   const allDone = nextTopic === null
   const drafts = options?.drafts
+  const lockedFields = options?.lockedFields ?? []
+  const changedFields = options?.changedFields ?? []
+  const partialUpdate = Boolean(options?.partialUpdate)
 
   const lines = required.map((key) => {
     const status = checklist[key] ? '✓' : '○'
+    const lockMark = lockedFields.includes(key) ? ' 🔒' : ''
     const answer = answers[key]?.trim()
     const draft = drafts?.[key]?.trim()
     const note = answer
@@ -301,18 +560,33 @@ export function buildChecklistPromptSupplement(
       : draft
         ? `（对话线索：${draft}）`
         : ''
-    return `- [${status}] ${CONCEPT_CHECKLIST_LABELS[key]}${note}`
+    return `- [${status}] ${CONCEPT_CHECKLIST_LABELS[key]}${lockMark}${note}`
   })
+
+  const lockedSupplement = buildLockedFieldsSupplement(lockedFields, answers)
+  const changedLabels = changedFields.map((key) => CONCEPT_CHECKLIST_LABELS[key])
+  const briefInstruction = partialUpdate
+    ? `
+**局部更新模式（优先速度与稳定）**
+- 用户本轮仅调整：${changedLabels.join('、') || '见对话'}
+- concept_brief **禁止通篇重写**；只改写与上述项相关的句子/段落，其余内容必须与上一版一致
+- 若变更较小，可原样返回上一版 concept_brief，把精力放在更新 checklist_answers 对应字段
+- 上一版 concept_brief 摘要（须保留未涉及部分）：
+${(options?.baseBrief || '（尚无综述）').slice(0, 1200)}`
+    : `
+- 每轮用 conversation_state.concept_brief 整合全部已知信息（2-5 段连贯 prose）
+- concept_brief 是用户左侧唯一可见的设定板：**禁止粘贴用户原话、禁止问答式罗列**`
 
   if (allDone) {
     return `
 ## 系统清单进度（必须遵守，不可违背）
 ${lines.join('\n')}
-
-所有必填项已完成。请：
-1. 在 conversation_state.concept_brief 输出**完整故事概念综述**（2-5 段，整合全部已知设定，像策划案梗概；禁止问答式罗列或粘贴用户原话）
+${lockedSupplement}
+所有必填项已在系统侧标记完成。请：
+1. ${partialUpdate ? '仅按用户本轮诉求**局部更新** concept_brief（未涉及段落原样保留）' : '在 conversation_state.concept_brief 输出**完整故事概念综述**（2-5 段，整合全部已知设定，像策划案梗概；禁止问答式罗列或粘贴用户原话）'}
 2. 同步输出完整的 checklist 与 checklist_answers（内部用，勿在 concept_brief 中重复分条抄录）
-3. 输出简短总结性收尾，设置 is_complete: true
+3. 输出简短总结性收尾；**不要**设置 is_complete 或 ready_for_blueprint（何时进入蓝图确认由用户自行点击按钮决定）
+${briefInstruction}
 `
   }
 
@@ -322,11 +596,11 @@ ${lines.join('\n')}
   return `
 ## 系统清单进度（必须遵守，不可违背）
 ${lines.join('\n')}
-
+${lockedSupplement}
 **本轮必须收集：${nextLabel}**
 - 禁止重复询问已标记 ✓ 的项（${completedLabels.join('、') || '无'}）
-- 对话是整体构思，不是分步填表：每轮必须用 conversation_state.concept_brief **整体改写**故事概念综述（整合全部已知信息，2-5 段连贯 prose）
-- concept_brief 是用户左侧唯一可见的设定板：**禁止粘贴用户原话、禁止问答式罗列**
+- 已锁定 🔒 项不得擅自修改，除非用户明确要求
+${briefInstruction}
 - 同步更新 checklist / checklist_answers（内部进度与结构化备份，勿在 concept_brief 里逐条复读）
 - 若用户一句透露多项设定，须同时更新 concept_brief 与 checklist
 `
@@ -351,11 +625,29 @@ export function mergeChecklistAnswersFromModel(
     if (typeof raw !== 'string' || !raw.trim()) continue
     const next = raw.trim()
     const prev = merged[key]?.trim()
+    if (key === 'chapter_count') {
+      const nextCount = parseExpectedChapterCount(next)
+      const prevCount = prev ? parseExpectedChapterCount(prev) : null
+      if (nextCount !== null && prevCount !== null && nextCount !== prevCount) {
+        // 模型有时用长段描述覆盖用户刚改过的章数，保留已有明确值
+        continue
+      }
+    }
     if (!prev || answerQuality(next) >= answerQuality(prev)) {
       merged[key] = next
     }
   }
   return merged
+}
+
+/** 用户本轮明确章数时，强制写入 answers（覆盖模型回传的长段描述） */
+export function applyChapterCountFromUserText(
+  answers: ConceptChecklistAnswers,
+  userValue: string | null | undefined
+): ConceptChecklistAnswers {
+  const count = parseExpectedChapterCount(String(userValue ?? '').trim())
+  if (count === null) return answers
+  return { ...answers, chapter_count: `${count} 章左右` }
 }
 
 function mergeDraftText(existing: string | undefined, incoming: string): string {
@@ -434,11 +726,76 @@ export function pruneDraftsForConfirmed(
 ): ConceptChecklistDrafts {
   const next = { ...drafts }
   for (const key of CONCEPT_CHECKLIST_ORDER) {
-    if (checklist[key] && answers[key]?.trim()) {
-      delete next[key]
+    if (!checklist[key] || !answers[key]?.trim()) continue
+    if (key === 'chapter_count') {
+      const draftCount = parseExpectedChapterCount(next[key])
+      const answerCount = parseExpectedChapterCount(answers[key])
+      if (draftCount !== null && answerCount !== null && draftCount !== answerCount) {
+        continue
+      }
     }
+    delete next[key]
   }
   return next
+}
+
+function buildUserConversationTextFromHistory(
+  history: Array<{ role: string; content: string }>
+): string {
+  const lines: string[] = []
+  for (const msg of history) {
+    if (msg.role !== 'user') continue
+    try {
+      const input = JSON.parse(msg.content) as { value?: string | null }
+      const value = String(input.value ?? '').trim()
+      if (value) lines.push(`用户：${value}`)
+    } catch {
+      // ignore malformed user payloads
+    }
+  }
+  return lines.join('\n')
+}
+
+/** 对齐 checklist_answers 与用户发言、概念综述，避免左侧清单与对话脱节 */
+export function reconcileConceptConversationState(
+  state: ConceptConversationState,
+  _mode: WritingMode,
+  options?: {
+    history?: Array<{ role: string; content: string }>
+    latestUserValue?: string | null
+  }
+): ConceptConversationState {
+  const answers: ConceptChecklistAnswers = { ...(state.checklist_answers ?? {}) }
+  const drafts: ConceptChecklistDrafts = { ...(state.checklist_drafts ?? {}) }
+  const brief = state.concept_brief?.trim() || ''
+
+  const fromLatestUser = parseExpectedChapterCount(String(options?.latestUserValue ?? '').trim())
+  const userText = options?.history ? buildUserConversationTextFromHistory(options.history) : ''
+  const fromUserHistory = parseLatestChapterCountFromText(userText)
+  const fromDraft = parseExpectedChapterCount(drafts.chapter_count)
+  const fromBrief = parseLatestChapterCountFromText(brief)
+  const fromAnswer = parseExpectedChapterCount(answers.chapter_count)
+
+  const resolvedCount =
+    fromLatestUser ??
+    fromUserHistory ??
+    fromDraft ??
+    fromBrief ??
+    fromAnswer
+
+  if (resolvedCount !== null) {
+    const draftLabel = drafts.chapter_count?.trim()
+    if (draftLabel && parseExpectedChapterCount(draftLabel) === resolvedCount) {
+      answers.chapter_count = draftLabel
+    } else {
+      answers.chapter_count = `${resolvedCount} 章左右`
+    }
+  }
+
+  return {
+    ...state,
+    checklist_answers: answers,
+  }
 }
 
 /** 当 AI 未返回摘要时，用对话线索兜底（仍做截断，非原样粘贴长段） */
@@ -472,7 +829,25 @@ export function countConceptCompleteness(
   }
 }
 
-export function mergeConceptBriefFromModel(base: string | undefined, modelRaw?: unknown): string {
+export function mergeConceptBriefFromModel(
+  base: string | undefined,
+  modelRaw?: unknown,
+  options?: {
+    partialUpdate?: boolean
+    changedKeys?: ConceptChecklistKey[]
+    answers?: ConceptChecklistAnswers
+    mode?: WritingMode
+  }
+): string {
+  if (options?.partialUpdate && options.answers && options.mode) {
+    return mergeConceptBriefForTurn(base, modelRaw, {
+      partialUpdate: true,
+      changedKeys: options.changedKeys ?? [],
+      answers: options.answers,
+      mode: options.mode,
+    })
+  }
+
   const next = typeof modelRaw === 'string' ? modelRaw.trim() : ''
   if (next) return next
   return base?.trim() || ''
@@ -545,6 +920,86 @@ export function resolveConceptBriefForDisplay(
   return { brief: '', status: 'empty', completeness }
 }
 
+export interface ConceptBlueprintPreviewItem {
+  key: ConceptChecklistKey
+  label: string
+  value: string
+  done: boolean
+}
+
+export interface ConceptBlueprintPreview {
+  workingTitle: string
+  expectedChaptersLabel: string
+  brief: string
+  items: ConceptBlueprintPreviewItem[]
+  blueprintSections: string[]
+}
+
+/** 蓝图生成前：结构化预览，供确认页展示 */
+export function buildConceptBlueprintPreview(
+  state: ConceptConversationState | null | undefined,
+  mode: WritingMode
+): ConceptBlueprintPreview {
+  const checklist = normalizeChecklist(state?.checklist)
+  const answers = state?.checklist_answers ?? {}
+  const drafts = state?.checklist_drafts ?? {}
+  const required = requiredChecklistKeys(mode)
+
+  const expectedCount = resolveBlueprintExpectedChapterCount({
+    answers,
+    drafts,
+    conceptBrief: state?.concept_brief,
+    mode,
+  })
+  const chaptersLabel =
+    expectedCount > 0
+      ? `约 ${expectedCount} 章`
+      : answers.chapter_count?.trim() || drafts.chapter_count?.trim() || '篇幅待定'
+
+  const items: ConceptBlueprintPreviewItem[] = required.map((key) => {
+    const answer = answers[key]?.trim()
+    const draft = drafts[key]?.trim()
+    let value = answer || draft || '待补充'
+    if (key === 'chapter_count' && expectedCount > 0) {
+      value =
+        (draft && parseExpectedChapterCount(draft) === expectedCount ? draft : null) ||
+        (answer && parseExpectedChapterCount(answer) === expectedCount ? answer : null) ||
+        chaptersLabel
+    }
+    return {
+      key,
+      label: CONCEPT_CHECKLIST_LABELS[key],
+      value,
+      done: Boolean(checklist[key] && (answer || draft || key === 'chapter_count')),
+    }
+  })
+
+  const countToken = expectedCount > 0 ? String(expectedCount) : '若干'
+  const blueprintSections =
+    mode === 'simple'
+      ? ['书名与类型标签', '故事梗概', '主要角色档案', '人物关系', `章节大纲（${countToken} 章）`]
+      : [
+          '书名与类型标签',
+          '故事梗概',
+          '世界规则与地点/势力',
+          '主要角色档案',
+          '人物关系网',
+          `章节大纲（${countToken} 章，含伏笔规划）`,
+        ]
+
+  return {
+    workingTitle:
+      answers.working_title?.trim() ||
+      drafts.working_title?.trim() ||
+      inferCharacterDisplayName(answers.protagonist, '') ||
+      '待定书名',
+    expectedChaptersLabel: chaptersLabel,
+    brief: state?.concept_brief?.trim() || '',
+    items,
+    blueprintSections,
+  }
+}
+
 export function resolveFinalConceptBrief(
   state: ConceptConversationState,
   answers: ConceptChecklistAnswers,
@@ -566,6 +1021,19 @@ export function resolveFinalConceptAnswers(
   for (const key of requiredChecklistKeys(mode)) {
     if (!checklist[key]) continue
     const current = result[key]?.trim()
+    if (key === 'chapter_count') {
+      const draft = _drafts[key]?.trim()
+      const draftCount = draft ? parseExpectedChapterCount(draft) : null
+      const currentCount = current ? parseExpectedChapterCount(current) : null
+      if (draftCount !== null && draftCount !== currentCount) {
+        result[key] = draft
+        continue
+      }
+      if (draftCount !== null && !current) {
+        result[key] = draft
+        continue
+      }
+    }
     if (current && isRefinedConceptAnswer(current)) continue
     if (!current) {
       result[key] = `（${CONCEPT_CHECKLIST_LABELS[key]}已在对话中确认）`
@@ -647,6 +1115,12 @@ export function parseExpectedChapterCount(raw: string | null | undefined): numbe
   if (!text) return null
   if (/已在对话中确认/.test(text)) return null
 
+  const writeMatch = text.match(/(?:写|共|大概|约|总共|只做|就)\s*(\d+)\s*章/)
+  if (writeMatch) {
+    const count = parseInt(writeMatch[1], 10)
+    if (Number.isFinite(count)) return Math.min(800, Math.max(1, count))
+  }
+
   const rangeMatch = text.match(/(\d+)\s*[-~～至到]\s*(\d+)\s*章/)
   if (rangeMatch) {
     const low = parseInt(rangeMatch[1], 10)
@@ -664,6 +1138,7 @@ export function parseExpectedChapterCount(raw: string | null | undefined): numbe
 
   const wanMatch = text.match(/(\d+(?:\.\d+)?)\s*万\s*字/)
   if (wanMatch) {
+    if (isExplicitSingleChapter(text)) return 1
     const chars = parseFloat(wanMatch[1]) * 10000
     if (chars <= 50000) return 12
     if (chars <= 200000) return 40
@@ -691,6 +1166,8 @@ export function parseExpectedChapterCount(raw: string | null | undefined): numbe
   if (/中篇/.test(text)) return 40
   if (/长篇/.test(text)) return 120
 
+  if (isExplicitSingleChapter(text)) return 1
+
   return null
 }
 
@@ -703,32 +1180,63 @@ function isExplicitSingleChapter(raw: string | null | undefined): boolean {
   )
 }
 
+function isChapterCountPlaceholder(raw: string | null | undefined): boolean {
+  const text = String(raw ?? '').trim()
+  return !text || /已在对话中确认/.test(text)
+}
+
+function extractUserLinesFromConversation(conversationText?: string): string {
+  if (!conversationText?.trim()) return ''
+  return conversationText
+    .split('\n\n')
+    .filter((line) => line.startsWith('用户：'))
+    .map((line) => line.replace(/^用户：/, '').trim())
+    .filter(Boolean)
+    .join('\n')
+}
+
+/** 从多行用户输入中取最后一次明确章数（以最新意图为准） */
+export function parseLatestChapterCountFromText(text: string | null | undefined): number | null {
+  if (!text?.trim()) return null
+  let latest: number | null = null
+  for (const line of text.split(/\n+/)) {
+    const parsed = parseExpectedChapterCount(line.trim())
+    if (parsed !== null) latest = parsed
+  }
+  const whole = parseExpectedChapterCount(text)
+  if (whole !== null) latest = whole
+  return latest
+}
+
 /** 综合概念/对话推断蓝图应有章数（避免把「1万字」误判为 1 章） */
 export function resolveBlueprintExpectedChapterCount(options: {
   answers: ConceptChecklistAnswers
+  drafts?: ConceptChecklistDrafts
   conceptBrief?: string
   conversationText?: string
   mode?: WritingMode
 }): number {
-  const defaultCount = 12
-  const sources = [
-    options.answers.chapter_count,
-    options.conceptBrief,
-    options.conversationText,
-  ]
+  const mode = options.mode ?? 'full'
+  const defaultCount = mode === 'simple' ? SIMPLE_MODE_DEFAULT_CHAPTERS : FULL_MODE_DEFAULT_CHAPTERS
+  const finalize = (count: number) => clampChapterCountForMode(count, mode)
 
-  let best: number | null = null
-  for (const raw of sources) {
-    const parsed = parseExpectedChapterCount(raw)
-    if (parsed === null) continue
-    if (parsed === 1 && !isExplicitSingleChapter(raw)) continue
-    if (best === null || parsed > best) best = parsed
+  const fromUserConversation = parseLatestChapterCountFromText(
+    extractUserLinesFromConversation(options.conversationText)
+  )
+  if (fromUserConversation !== null) return finalize(fromUserConversation)
+
+  const fromDraft = parseExpectedChapterCount(options.drafts?.chapter_count)
+  if (fromDraft !== null) return finalize(fromDraft)
+
+  if (!isChapterCountPlaceholder(options.answers.chapter_count)) {
+    const fromAnswer = parseExpectedChapterCount(options.answers.chapter_count)
+    if (fromAnswer !== null) return finalize(fromAnswer)
   }
 
-  if (best !== null && best > 1) return best
-  if (best === 1 && isExplicitSingleChapter(options.answers.chapter_count)) return 1
+  const fromBrief = parseExpectedChapterCount(options.conceptBrief)
+  if (fromBrief !== null) return finalize(fromBrief)
 
-  return defaultCount
+  return finalize(defaultCount)
 }
 
 /** 用灵感对话概念补全蓝图缺失字段（解析失败或模型漏填时的兜底） */
@@ -980,8 +1488,11 @@ export function rebuildChecklistFromHistory(
       if (pendingTopic) {
         drafts[pendingTopic] = mergeDraftText(drafts[pendingTopic], value)
       }
-      if (parseExpectedChapterCount(value)) {
+      const chapterCount = parseExpectedChapterCount(value)
+      if (chapterCount !== null) {
         checklist.chapter_count = true
+        answers.chapter_count = `${chapterCount} 章左右`
+        drafts.chapter_count = mergeDraftText(drafts.chapter_count, answers.chapter_count)
       }
     } catch {
       // ignore malformed user payloads
@@ -1021,14 +1532,19 @@ export function rebuildFullConceptStateFromHistory(
     }
   }
 
-  return {
-    checklist: rebuilt.checklist,
-    checklist_answers: rebuilt.answers,
-    concept_brief: resolveConceptBriefFromHistory(history, rebuilt.answers, mode),
-    pending_topic: rebuilt.pendingTopic,
-    revision_mode: revisionMode,
-    ready_for_blueprint: readyForBlueprint,
-  }
+  return reconcileConceptConversationState(
+    {
+      checklist: rebuilt.checklist,
+      checklist_answers: rebuilt.answers,
+      checklist_drafts: rebuilt.drafts,
+      concept_brief: resolveConceptBriefFromHistory(history, rebuilt.answers, mode),
+      pending_topic: rebuilt.pendingTopic,
+      revision_mode: revisionMode,
+      ready_for_blueprint: readyForBlueprint,
+    },
+    mode,
+    { history }
+  )
 }
 
 function resolveConceptBriefFromHistory(

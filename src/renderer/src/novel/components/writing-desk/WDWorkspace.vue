@@ -1,6 +1,6 @@
 <!-- AIMETA P=写作台工作区_主编辑区域|R=章节编辑_生成|NR=不含侧边栏|E=component:WDWorkspace|X=ui|A=工作区|D=vue|S=dom,net|RD=./README.ai -->
 <template>
-  <div class="flex-1 min-w-0 h-full">
+  <div class="flex-1 min-w-0 min-h-0 h-full">
     <div
       class="h-full flex flex-col min-h-0"
       :class="embedded ? 'wd-workspace--embedded' : 'md-card md-card-elevated'"
@@ -12,40 +12,58 @@
         class="flex-shrink-0"
         :class="embedded ? 'wd-workspace__head' : 'md-card-header'"
       >
-        <div class="flex items-center justify-between">
-          <div>
-            <div class="flex items-center gap-3 mb-2">
-              <h2 class="md-title-large font-semibold">第{{ selectedChapterNumber }}章</h2>
-              <span
-                :class="[
-                  'md-chip',
-                  isChapterCompleted(selectedChapterNumber)
-                    ? 'm3-chip-success'
-                    : 'm3-chip-neutral'
-                ]"
-              >
-                {{ isChapterCompleted(selectedChapterNumber) ? '已完成' : '未完成' }}
-              </span>
-            </div>
-            <h3 class="md-title-medium md-on-surface mb-1">{{ selectedChapterOutline?.title || '未知标题' }}</h3>
-            <p class="md-body-small md-on-surface-variant">{{ selectedChapterOutline?.summary || '暂无章节描述' }}</p>
-          </div>
+        <h2 class="wd-workspace__head-title">
+          <span class="wd-workspace__chapter-no">第{{ selectedChapterNumber }}章</span>
+          <span class="wd-workspace__chapter-sep">·</span>
+          <span class="wd-workspace__chapter-title">{{ selectedChapterOutline?.title || '未知标题' }}</span>
+        </h2>
 
-          <div class="flex items-center gap-2">
-            <button
-              @click="confirmRegenerateChapter"
-              :disabled="autoWriteLocked || generatingChapter === selectedChapterNumber"
-              class="md-btn md-btn-filled md-ripple flex items-center gap-2 whitespace-nowrap disabled:opacity-50"
-            >
-              <svg v-if="generatingChapter === selectedChapterNumber" class="w-4 h-4 animate-spin" fill="currentColor" viewBox="0 0 20 20">
-                <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"></path>
-              </svg>
-              <svg v-else class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"></path>
-              </svg>
-              {{ generatingChapter === selectedChapterNumber ? '生成中...' : '重新生成' }}
-            </button>
-          </div>
+        <div class="wd-workspace__meta-row">
+          <button
+            type="button"
+            class="wd-workspace__outline-toggle"
+            :class="{ 'is-open': showChapterOutline }"
+            :aria-expanded="showChapterOutline"
+            @click="showChapterOutline = !showChapterOutline"
+          >
+            <span>章节概述</span>
+            <ChevronDown :size="14" aria-hidden="true" class="wd-workspace__outline-chevron" />
+          </button>
+          <span
+            :class="[
+              'wd-workspace__status-chip',
+              chapterHeaderStatus.tone === 'done'
+                ? 'm3-chip-success'
+                : chapterHeaderStatus.tone === 'active'
+                  ? 'm3-chip-active'
+                  : 'm3-chip-neutral'
+            ]"
+          >
+            {{ chapterHeaderStatus.label }}
+          </span>
+        </div>
+
+        <div v-if="showChapterOutline" class="wd-workspace__outline-panel">
+          <p v-if="selectedChapterOutline?.summary" class="wd-workspace__outline-text">
+            {{ selectedChapterOutline.summary }}
+          </p>
+          <p v-else class="wd-workspace__outline-empty">暂无章节概述</p>
+        </div>
+
+        <div v-if="!embedded" class="wd-workspace__head-actions">
+          <button
+            @click="confirmRegenerateChapter"
+            :disabled="autoWriteLocked || generatingChapter === selectedChapterNumber"
+            class="md-btn md-btn-filled md-ripple flex items-center gap-2 whitespace-nowrap disabled:opacity-50"
+          >
+            <svg v-if="generatingChapter === selectedChapterNumber" class="w-4 h-4 animate-spin" fill="currentColor" viewBox="0 0 20 20">
+              <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"></path>
+            </svg>
+            <svg v-else class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+              <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"></path>
+            </svg>
+            {{ generatingChapter === selectedChapterNumber ? '生成中...' : '重新生成' }}
+          </button>
         </div>
       </div>
 
@@ -56,6 +74,7 @@
       >
         <component
           :is="currentComponent"
+          ref="contentPaneRef"
           v-bind="currentComponentProps"
           @hideVersionSelector="$emit('hideVersionSelector')"
           @update:selectedVersionIndex="$emit('update:selectedVersionIndex', $event)"
@@ -74,22 +93,25 @@
 
     <NovelModalShell
       :show="showEditModal"
-      size="xl"
-      :title="`编辑第${selectedChapterNumber}章内容`"
+      variant="form"
+      auto-min-width="md"
+      :title="`编辑第 ${selectedChapterNumber} 章内容`"
       aria-label="编辑章节内容"
+      foot-class="novel-modal__foot--form"
       @close="closeEditModal"
     >
-      <div class="flex min-h-[min(60vh,520px)] flex-col">
-        <label class="md-text-field-label mb-2">章节内容</label>
-        <textarea
-          v-model="editingContent"
-          class="md-textarea min-h-0 flex-1 w-full resize-none"
-          placeholder="请输入章节内容..."
-          :disabled="isSaving"
-        />
-        <div class="md-body-small md-on-surface-variant mt-2">
-          字数统计: {{ editingContent.length }}
+      <div class="novel-modal__compact-form">
+        <div class="md-text-field md-text-field-filled">
+          <label class="md-text-field-label">章节内容</label>
+          <textarea
+            v-model="editingContent"
+            class="md-textarea w-full"
+            rows="14"
+            placeholder="请输入章节内容..."
+            :disabled="isSaving"
+          />
         </div>
+        <p class="wd-edit-content-meta">字数统计：{{ editingContent.length }}</p>
       </div>
 
       <template #footer>
@@ -123,6 +145,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, onUnmounted } from 'vue'
+import { ChevronDown } from 'lucide-vue-next'
 import NovelModalShell from '@renderer/novel/components/shared/NovelModalShell.vue'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
 import { formatChapterList, getLaterStartedChapterNumbers } from '@renderer/novel/utils/chapter-progress'
@@ -208,6 +231,15 @@ const requestEditChapter = async () => {
 const showEditModal = ref(false)
 const editingContent = ref('')
 const isSaving = ref(false)
+const showChapterOutline = ref(false)
+const contentPaneRef = ref<{ openOptimizer?: () => void } | null>(null)
+
+watch(
+  () => props.selectedChapterNumber,
+  () => {
+    showChapterOutline.value = false
+  }
+)
 
 // 清理版本内容的辅助函数
 const cleanVersionContent = (content: string): string => {
@@ -294,6 +326,45 @@ const isChapterCompleted = (chapterNumber: number) => {
   const chapter = props.project.chapters.find(ch => ch.chapter_number === chapterNumber)
   return chapter && chapter.generation_status === 'successful'
 }
+
+const chapterHeaderStatus = computed(() => {
+  if (props.selectedChapterNumber === null) {
+    return { label: '未完成', tone: 'neutral' as const }
+  }
+
+  const chapterNumber = props.selectedChapterNumber
+  const status = selectedChapter.value?.generation_status
+
+  if (
+    status === 'generating' ||
+    status === 'evaluating' ||
+    status === 'selecting' ||
+    props.generatingChapter === chapterNumber ||
+    props.evaluatingChapter === chapterNumber
+  ) {
+    if (status === 'evaluating' || props.evaluatingChapter === chapterNumber) {
+      return { label: '评审中', tone: 'active' as const }
+    }
+    if (status === 'selecting') {
+      return { label: '确认中', tone: 'active' as const }
+    }
+    return { label: '生成中', tone: 'active' as const }
+  }
+
+  if (status === 'waiting_for_confirm' || status === 'evaluation_failed') {
+    return { label: '待确认', tone: 'active' as const }
+  }
+
+  if (status === 'failed') {
+    return { label: '生成失败', tone: 'neutral' as const }
+  }
+
+  if (isChapterCompleted(chapterNumber)) {
+    return { label: '已完成', tone: 'done' as const }
+  }
+
+  return { label: '未完成', tone: 'neutral' as const }
+})
 
 const isChapterFailed = (chapterNumber: number) => {
   if (!props.project?.chapters) return false
@@ -414,6 +485,7 @@ const currentComponentProps = computed(() => {
     return {
       chapterNumber: props.selectedChapterNumber,
       projectId: props.project?.id,
+      embedded: props.embedded,
       status:
         props.evaluatingChapter === props.selectedChapterNumber
           ? 'evaluating'
@@ -447,26 +519,43 @@ const currentComponentProps = computed(() => {
       chapterNumber: props.selectedChapterNumber,
       generatingChapter: props.generatingChapter,
       autoWriteLocked: props.autoWriteLocked,
+      embedded: props.embedded,
     }
   }
   return {
     chapterNumber: props.selectedChapterNumber,
     generatingChapter: props.generatingChapter,
     autoWriteLocked: props.autoWriteLocked,
-    canGenerate: canGenerateChapter(props.selectedChapterNumber)
+    canGenerate: canGenerateChapter(props.selectedChapterNumber),
+    embedded: props.embedded,
   }
 })
+
+function openChapterOptimizer() {
+  contentPaneRef.value?.openOptimizer?.()
+}
+
+function openChapterEditor() {
+  void requestEditChapter()
+}
+
+defineExpose({ openChapterOptimizer, openChapterEditor })
 </script>
 
 <style scoped>
 .m3-chip-success {
-  background-color: var(--md-success-container);
+  background-color: color-mix(in srgb, var(--md-success, #2e7d32) 8%, transparent);
   color: var(--md-on-success-container);
 }
 
 .m3-chip-neutral {
-  background-color: var(--md-surface-container);
+  background-color: color-mix(in srgb, var(--text) 4%, transparent);
   color: var(--md-on-surface-variant);
+}
+
+.m3-chip-active {
+  background-color: color-mix(in srgb, var(--brand, var(--md-primary)) 8%, transparent);
+  color: var(--brand, var(--md-primary));
 }
 
 .wd-workspace--embedded {
@@ -474,12 +563,141 @@ const currentComponentProps = computed(() => {
 }
 
 .wd-workspace__head {
-  padding: 16px 20px;
+  padding: 14px 18px 12px;
   border-bottom: 1px solid color-mix(in srgb, var(--line, var(--md-outline-variant)) 55%, transparent);
 }
 
+.wd-workspace__head-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  margin: 0 0 8px;
+  font: inherit;
+}
+
+.wd-workspace__meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 24px;
+}
+
+.wd-workspace__outline-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.wd-workspace__outline-toggle:hover {
+  color: var(--text);
+}
+
+.wd-workspace__outline-chevron {
+  transition: transform 0.18s ease;
+}
+
+.wd-workspace__outline-toggle.is-open .wd-workspace__outline-chevron {
+  transform: rotate(180deg);
+}
+
+.wd-workspace__status-chip {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  line-height: 1;
+}
+
+.wd-workspace__outline-panel {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--line, var(--md-outline-variant)) 38%, transparent);
+}
+
+.wd-workspace__head-actions {
+  margin-top: 10px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.wd-workspace__head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.wd-workspace__head-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.wd-workspace__chapter-no {
+  flex-shrink: 0;
+  font-size: var(--text-base);
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.wd-workspace__chapter-sep {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.wd-workspace__chapter-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-base);
+  font-weight: 650;
+  line-height: 1.3;
+  color: var(--text);
+}
+
+.wd-edit-content-meta {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.wd-workspace__outline-text {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.7;
+  color: var(--muted);
+  white-space: pre-line;
+}
+
+.wd-workspace__outline-empty {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--soft);
+  font-style: italic;
+}
+
 .wd-workspace__body {
-  padding: 16px 20px;
+  padding: 14px 18px;
 }
 
 .wd-no-scrollbar {

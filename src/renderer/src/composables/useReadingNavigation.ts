@@ -17,6 +17,7 @@ export interface ReadableChapter {
 }
 
 export type ScrollBlock =
+  | { type: 'chapter-spacer-top'; chapterIndex: number; key: string }
   | { type: 'chapter-start'; chapterIndex: number; title: string; key: string }
   | {
       type: 'paragraph'
@@ -25,13 +26,13 @@ export type ScrollBlock =
       text: string
       key: string
     }
+  | { type: 'chapter-spacer-bottom'; chapterIndex: number; key: string }
 
 export interface UseReadingNavigationOptions {
   projectId: ComputedRef<string>
   settings: Ref<ReadingSettings>
   pageViewportRef: Ref<HTMLElement | null>
   novelStore: ReturnType<typeof useNovelStore>
-  onReadingTurn: () => void
   ttsActive: Ref<boolean>
   stopTts: () => void
   isTtsAdvancingChapter: () => boolean
@@ -49,9 +50,13 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
   let autoScrollRaf: number | undefined
   let autoScrollLastTime = 0
   let autoScrollPausedUntil = 0
-  let autoScrollDriving = false
+  let autoScrollActive = false
+  let autoScrollTarget = 0
+  let autoScrollLastSync = 0
   let chapterChangeFromPageNav = false
   let chapterChangeFromScroll = false
+  let chapterChangeFromNav = false
+  let chapterChangeFromRestore = false
 
   const project = computed(() => options.novelStore.currentProject)
 
@@ -146,6 +151,12 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
       if (!chapter) continue
 
       blocks.push({
+        type: 'chapter-spacer-top',
+        chapterIndex: ci,
+        key: `chapter-${ci}-spacer-top`,
+      })
+
+      blocks.push({
         type: 'chapter-start',
         chapterIndex: ci,
         title: chapter.title,
@@ -164,6 +175,12 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
           text,
           key: `chapter-${ci}-p-${paragraphIndex}`,
         })
+      })
+
+      blocks.push({
+        type: 'chapter-spacer-bottom',
+        chapterIndex: ci,
+        key: `chapter-${ci}-spacer-bottom`,
       })
     }
 
@@ -197,6 +214,45 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
     el.scrollTop = value
   }
 
+  function getMarkerScrollTop(container: HTMLElement, marker: Element): number {
+    const containerRect = container.getBoundingClientRect()
+    const markerRect = marker.getBoundingClientRect()
+    return markerRect.top - containerRect.top + container.scrollTop
+  }
+
+  function shouldSkipScrollReset(): boolean {
+    return (
+      chapterChangeFromPageNav ||
+      chapterChangeFromScroll ||
+      chapterChangeFromNav ||
+      chapterChangeFromRestore
+    )
+  }
+
+  function beginChapterNav() {
+    chapterChangeFromNav = true
+  }
+
+  function endChapterNav() {
+    void nextTick(() => {
+      chapterChangeFromNav = false
+    })
+  }
+
+  function markChapterChangeFromScroll() {
+    chapterChangeFromScroll = true
+    void nextTick(() => {
+      chapterChangeFromScroll = false
+    })
+  }
+
+  function markChapterChangeFromRestore() {
+    chapterChangeFromRestore = true
+    void nextTick(() => {
+      chapterChangeFromRestore = false
+    })
+  }
+
   function applyGlobalPageIndex(nextGlobalIndex: number) {
     const next = fromGlobalPageIndex(bookPages.value, nextGlobalIndex)
     if (
@@ -208,9 +264,10 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
     chapterChangeFromPageNav = true
     chapterIndex.value = next.chapterIndex
     pageIndex.value = next.pageIndex
-    chapterChangeFromPageNav = false
+    void nextTick(() => {
+      chapterChangeFromPageNav = false
+    })
     persistProgress()
-    options.onReadingTurn()
   }
 
   async function ensureChapterLoaded(chapter: ReadableChapter) {
@@ -252,29 +309,45 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
       cancelAnimationFrame(autoScrollRaf)
       autoScrollRaf = undefined
     }
+    autoScrollActive = false
     autoScrollLastTime = 0
+    autoScrollLastSync = 0
+    autoScrollTarget = 0
+    options.pageViewportRef.value?.classList.remove('is-auto-scrolling')
   }
 
-  function pauseAutoScroll(durationMs = 4000) {
+  function pauseAutoScroll(durationMs = 2500) {
+    if (!autoScrollActive) return
     autoScrollPausedUntil = performance.now() + durationMs
+    autoScrollLastTime = 0
+    const el = options.pageViewportRef.value
+    if (el) autoScrollTarget = el.scrollTop
   }
 
   function isAutoScrollDriving() {
-    return autoScrollDriving
+    return autoScrollActive
   }
 
   function resetAutoScroll() {
     stopAutoScroll()
     if (!options.settings.value.autoScroll || isPageMode.value || options.ttsActive.value) return
 
+    const el = options.pageViewportRef.value
+    if (!el) return
+
+    autoScrollActive = true
+    autoScrollTarget = el.scrollTop
+    autoScrollPausedUntil = 0
+    el.classList.add('is-auto-scrolling')
+
     const tick = (now: number) => {
-      if (!options.settings.value.autoScroll || isPageMode.value || options.ttsActive.value) {
+      if (!autoScrollActive || !options.settings.value.autoScroll || isPageMode.value || options.ttsActive.value) {
         stopAutoScroll()
         return
       }
 
-      const el = options.pageViewportRef.value
-      if (!el) {
+      const viewport = options.pageViewportRef.value
+      if (!viewport) {
         autoScrollRaf = requestAnimationFrame(tick)
         return
       }
@@ -284,28 +357,30 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
         return
       }
 
-      if (!autoScrollLastTime) autoScrollLastTime = now
+      if (!autoScrollLastTime) {
+        autoScrollLastTime = now
+        autoScrollTarget = viewport.scrollTop
+        autoScrollRaf = requestAnimationFrame(tick)
+        return
+      }
+
       const deltaMs = Math.min(now - autoScrollLastTime, 48)
       autoScrollLastTime = now
 
-      const step = (options.settings.value.autoScrollSpeed * deltaMs) / 1000
-      const maxScrollTop = el.scrollHeight - el.clientHeight
-      const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - SCROLL_EDGE_THRESHOLD
-
-      if (atBottom) {
-        if (maxScrollTop <= 0) {
-          stopAutoScroll()
-          return
-        }
+      const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+      if (autoScrollTarget >= maxScrollTop - SCROLL_EDGE_THRESHOLD) {
         stopAutoScroll()
         return
       }
 
-      autoScrollDriving = true
-      el.scrollTop = Math.min(el.scrollTop + step, maxScrollTop)
-      queueMicrotask(() => {
-        autoScrollDriving = false
-      })
+      autoScrollTarget += (options.settings.value.autoScrollSpeed * deltaMs) / 1000
+      if (autoScrollTarget > maxScrollTop) autoScrollTarget = maxScrollTop
+      viewport.scrollTop = autoScrollTarget
+
+      if (now - autoScrollLastSync > 800) {
+        autoScrollLastSync = now
+        syncChapterFromScroll()
+      }
 
       autoScrollRaf = requestAnimationFrame(tick)
     }
@@ -325,7 +400,7 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
     applyGlobalPageIndex(globalPageIndex.value + 1)
   }
 
-  function scrollToChapter(targetIndex: number, behavior: ScrollBehavior = 'smooth') {
+  async function scrollToChapter(targetIndex: number, behavior: ScrollBehavior = 'auto') {
     if (targetIndex < 0 || targetIndex >= readableChapters.value.length) return
 
     if (isPageMode.value) {
@@ -336,38 +411,46 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
       return
     }
 
-    const el = options.pageViewportRef.value
-    const marker = el?.querySelector(`[data-chapter-marker="${targetIndex}"]`)
-    if (el && marker) {
-      const viewportRect = el.getBoundingClientRect()
-      const markerRect = marker.getBoundingClientRect()
-      const top = markerRect.top - viewportRect.top + el.scrollTop
-      el.scrollTo({ top: Math.max(0, top), behavior })
-    }
+    beginChapterNav()
 
-    if (targetIndex !== chapterIndex.value) {
-      chapterChangeFromScroll = true
-      chapterIndex.value = targetIndex
-      pageIndex.value = 0
-      persistProgress(el?.scrollTop ?? 0)
-      chapterChangeFromScroll = false
+    try {
+      const chapter = readableChapters.value[targetIndex]
+      if (chapter) await ensureChapterLoaded(chapter)
+      await nextTick()
+
+      const el = options.pageViewportRef.value
+      const marker = el?.querySelector(`[data-chapter-marker="${targetIndex}"]`)
+      if (!el || !marker) return
+
+      const top = Math.max(0, getMarkerScrollTop(el, marker))
+      el.scrollTo({ top, behavior })
+
+      if (targetIndex !== chapterIndex.value) {
+        chapterIndex.value = targetIndex
+        pageIndex.value = 0
+      }
+
+      persistProgress(top)
+      await nextTick()
+    } finally {
+      endChapterNav()
     }
   }
 
-  function prevChapter(behavior: ScrollBehavior = 'smooth') {
+  function prevChapter(behavior: ScrollBehavior = 'auto') {
     if (!canPrevChapter.value) return
-    scrollToChapter(chapterIndex.value - 1, behavior)
-    options.onReadingTurn()
+    const target = chapterIndex.value - 1
+    void scrollToChapter(target, behavior)
   }
 
-  function nextChapter(behavior: ScrollBehavior = 'smooth') {
+  function nextChapter(behavior: ScrollBehavior = 'auto') {
     if (!canNextChapter.value) return
-    scrollToChapter(chapterIndex.value + 1, behavior)
-    options.onReadingTurn()
+    const target = chapterIndex.value + 1
+    void scrollToChapter(target, behavior)
   }
 
   function syncChapterFromScroll() {
-    if (isPageMode.value) return
+    if (isPageMode.value || chapterChangeFromNav) return
 
     const el = options.pageViewportRef.value
     if (!el) return
@@ -375,25 +458,28 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
     const markers = el.querySelectorAll<HTMLElement>('[data-chapter-marker]')
     if (!markers.length) return
 
-    const anchorTop = el.getBoundingClientRect().top + el.clientHeight * 0.22
-    let active = chapterIndex.value
+    const anchor = el.scrollTop + Math.min(el.clientHeight * 0.15, 96)
+    let active = 0
 
     markers.forEach((marker) => {
-      if (marker.getBoundingClientRect().top <= anchorTop) {
-        active = Number(marker.dataset.chapterMarker)
+      const top = getMarkerScrollTop(el, marker)
+      if (top <= anchor + 2) {
+        const idx = Number(marker.dataset.chapterMarker)
+        if (!Number.isNaN(idx)) active = idx
       }
     })
 
     if (active === chapterIndex.value) return
 
-    chapterChangeFromScroll = true
+    markChapterChangeFromScroll()
     chapterIndex.value = active
     pageIndex.value = 0
     persistProgress(el.scrollTop)
-    chapterChangeFromScroll = false
   }
 
   async function restoreProgress() {
+    markChapterChangeFromRestore()
+
     const saved = readingProgressService.get(options.projectId.value)
     if (saved) {
       chapterIndex.value = saved.chapterIndex
@@ -423,11 +509,13 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
   }
 
   watch(chapterIndex, async () => {
+    const skipScrollReset = shouldSkipScrollReset()
+
     const chapter = readableChapters.value[chapterIndex.value]
     if (chapter) await ensureChapterLoaded(chapter)
     await prefetchAdjacentChapters()
 
-    if (chapterChangeFromPageNav || chapterChangeFromScroll) {
+    if (skipScrollReset) {
       if (options.ttsActive.value && !options.isTtsAdvancingChapter()) {
         options.stopTts()
       }
@@ -458,7 +546,9 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
       chapterChangeFromPageNav = true
       chapterIndex.value = restored.chapterIndex
       pageIndex.value = restored.pageIndex
-      chapterChangeFromPageNav = false
+      void nextTick(() => {
+        chapterChangeFromPageNav = false
+      })
     }
   )
 

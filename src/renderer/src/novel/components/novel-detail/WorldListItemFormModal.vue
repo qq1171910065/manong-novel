@@ -69,7 +69,7 @@ function save() {
     foot-class="novel-modal__foot--form"
     @close="emit('close')"
   >
-    <div class="world-item-form">
+    <div class="world-item-form novel-modal__compact-form">
       <div class="md-text-field md-text-field-filled">
         <label class="md-text-field-label" for="world-item-name">{{ kindLabel }}名称</label>
         <input

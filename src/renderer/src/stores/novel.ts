@@ -34,6 +34,14 @@ export const useNovelStore = defineStore('novel', () => {
   const projectsCount = computed(() => projects.value.length)
   const hasCurrentProject = computed(() => currentProject.value !== null)
 
+  function assignStoreError(err: unknown, fallback: string): void {
+    if (isAbortError(err)) {
+      error.value = null
+      return
+    }
+    error.value = err instanceof Error ? err.message : fallback
+  }
+
   // Actions
   async function loadProjects() {
     isLoading.value = true
@@ -299,7 +307,7 @@ export const useNovelStore = defineStore('novel', () => {
         unregisterAsyncTask(taskRef)
       }
     } catch (err) {
-      error.value = err instanceof Error ? err.message : '????????????'
+      assignStoreError(err, '生成章节失败')
       throw err
     }
   }
@@ -309,6 +317,7 @@ export const useNovelStore = defineStore('novel', () => {
     const project = currentProject.value
     const projectId = project.id
     cancelAsyncTask({ kind: 'chapter_generate', projectId, chapterNumber })
+    error.value = null
     const chapter = project.chapters?.find((item) => item.chapter_number === chapterNumber)
     if (!chapter || chapter.generation_status !== 'generating') return
     writing.upsertChapterStatus(project, chapterNumber, 'not_generated')
@@ -366,7 +375,7 @@ export const useNovelStore = defineStore('novel', () => {
         unregisterAsyncTask(taskRef)
       }
     } catch (err) {
-      error.value = err instanceof Error ? err.message : '?????????'
+      assignStoreError(err, '评审章节失败')
       throw err
     }
   }
@@ -376,6 +385,7 @@ export const useNovelStore = defineStore('novel', () => {
     const project = currentProject.value
     const projectId = project.id
     cancelAsyncTask({ kind: 'chapter_evaluate', projectId, chapterNumber })
+    error.value = null
     const chapter = project.chapters?.find((item) => item.chapter_number === chapterNumber)
     if (!chapter || chapter.generation_status !== 'evaluating') return
     writing.upsertChapterStatus(project, chapterNumber, 'waiting_for_confirm')
@@ -467,6 +477,24 @@ export const useNovelStore = defineStore('novel', () => {
     }
   }
 
+  async function clearChapterContent(chapterNumbers: number | number[]) {
+    error.value = null
+    try {
+      if (!currentProject.value) {
+        throw new Error('?????????????')
+      }
+      const numbersToClear = Array.isArray(chapterNumbers) ? chapterNumbers : [chapterNumbers]
+      const updatedProject = await NovelAPI.clearChapterContent(
+        currentProject.value.id,
+        numbersToClear
+      )
+      currentProject.value = updatedProject
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : '????????????'
+      throw err
+    }
+  }
+
   async function generateChapterOutline(startChapter: number, numChapters: number) {
     error.value = null
     try {
@@ -492,7 +520,7 @@ export const useNovelStore = defineStore('novel', () => {
         unregisterAsyncTask(taskRef)
       }
     } catch (err) {
-      error.value = err instanceof Error ? err.message : '??????????'
+      assignStoreError(err, '生成章节大纲失败')
       throw err
     }
   }
@@ -500,6 +528,7 @@ export const useNovelStore = defineStore('novel', () => {
   function cancelChapterOutlineGeneration(): void {
     if (!currentProject.value) return
     cancelAsyncTask({ kind: 'chapter_outline', projectId: currentProject.value.id })
+    error.value = null
   }
 
   async function reconcileStaleChapterTasks(projectId: string) {
@@ -648,6 +677,7 @@ export const useNovelStore = defineStore('novel', () => {
     deleteProjects,
     updateChapterOutline,
     deleteChapter,
+    clearChapterContent,
     generateChapterOutline,
     cancelChapterOutlineGeneration,
     reconcileStaleChapterTasks,

@@ -48,11 +48,11 @@ export const READING_DEFAULTS: ReadingSettings = {
   autoTurn: false,
   autoTurnSeconds: 12,
   autoScroll: false,
-  autoScrollSpeed: 45,
+  autoScrollSpeed: 320,
   showChapterDividers: false,
   pageTurnAnimation: true,
   bossKeyEnabled: true,
-  bossKeyAccelerator: 'Control+Shift+H',
+  bossKeyAccelerator: 'Control+Alt+Q',
   ttsVoice: READING_TTS_DEFAULT_VOICE,
   ttsStyle: READING_TTS_DEFAULT_STYLE,
 }
@@ -72,8 +72,8 @@ function normalizeSettings(parsed: Partial<ReadingSettings>): ReadingSettings {
     autoScroll: parsed.autoScroll ?? READING_DEFAULTS.autoScroll,
     autoScrollSpeed: clamp(
       Number(parsed.autoScrollSpeed) || READING_DEFAULTS.autoScrollSpeed,
-      15,
-      120
+      120,
+      600
     ),
     showChapterDividers: parsed.showChapterDividers ?? READING_DEFAULTS.showChapterDividers,
     pageTurnAnimation: parsed.pageTurnAnimation ?? READING_DEFAULTS.pageTurnAnimation,

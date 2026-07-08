@@ -2,7 +2,9 @@ export type PipelineStep =
   | 'concept_converse'
   | 'blueprint_generate'
   | 'blueprint_outline'
+  | 'chapter_plan'
   | 'chapter_write'
+  | 'chapter_constitution'
   | 'chapter_evaluate'
   | 'chapter_rewrite'
   | 'section_polish'
@@ -40,7 +42,9 @@ export const PIPELINE_STEP_LABELS: Record<PipelineStep, string> = {
   concept_converse: '灵感对话',
   blueprint_generate: '蓝图生成',
   blueprint_outline: '大纲补全',
+  chapter_plan: '章节导演脚本',
   chapter_write: '章节写作',
+  chapter_constitution: '宪法合规',
   chapter_evaluate: '章节评审',
   chapter_rewrite: '重复重写',
   section_polish: '设定修改',

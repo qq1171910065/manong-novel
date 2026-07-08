@@ -58,7 +58,7 @@ function save() {
     foot-class="novel-modal__foot--form"
     @close="emit('close')"
   >
-    <div class="chapter-outline-form">
+    <div class="chapter-outline-form novel-modal__compact-form">
       <div class="md-text-field md-text-field-filled">
         <label class="md-text-field-label" for="chapter-title">章节标题</label>
         <input

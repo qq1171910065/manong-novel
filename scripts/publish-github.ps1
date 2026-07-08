@@ -16,7 +16,7 @@ $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $root
 
 $GithubOwner = 'qq1171910065'
-$GithubRepo = 'manong-arena'
+$GithubRepo = 'manong-novel'
 $GithubUrl = "https://github.com/$GithubOwner/$GithubRepo.git"
 
 $token = [string]$env:GITHUB_TOKEN
@@ -70,7 +70,7 @@ $repoExists = $LASTEXITCODE -eq 0
 if (-not $repoExists -and -not $SkipCreate) {
   Write-Host "Creating public repository $GithubOwner/$GithubRepo ..."
   & $gh repo create $GithubRepo --public `
-    --description 'Manong Arena — AI character social deduction desktop client (Electron)' `
+    --description 'Manong Novel — AI 小说写作桌面客户端 (Electron)' `
     --homepage "https://github.com/$GithubOwner/$GithubRepo"
   if ($LASTEXITCODE -ne 0) {
     throw @"

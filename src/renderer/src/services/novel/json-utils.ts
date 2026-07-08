@@ -302,7 +302,10 @@ export function resolveDisplayAiMessage(rawText: string): string {
 }
 
 export function pickBestLlmPayload(content: string, reasoning: string): string {
-  const candidates = [content.trim(), reasoning.trim()].filter(Boolean)
+  const body = content.trim()
+  const think = reasoning.trim()
+  const candidates = [body, think].filter(Boolean)
+
   for (const candidate of candidates) {
     if (extractAllLlmJsonObjects(candidate).length) return candidate
     if (parseLlmJsonObject(candidate)) return candidate
@@ -310,5 +313,10 @@ export function pickBestLlmPayload(content: string, reasoning: string): string {
   for (const candidate of candidates) {
     if (candidate.includes('ai_message') || candidate.includes('"value"')) return candidate
   }
-  return candidates.join('\n\n') || ''
+  if (body) return body
+  return think
+}
+
+export function pickContentOnlyPayload(content: string): string {
+  return content.trim()
 }

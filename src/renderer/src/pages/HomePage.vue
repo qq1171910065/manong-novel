@@ -190,11 +190,11 @@ function openNovel(novel: HomeNovelCard) {
     openCreateNovel()
     return
   }
-  navigate(`/detail/${novel.id}`)
+  void openReadingWindow(novel.id, novel.title)
 }
 
-function openBookshelfNovel(id: string, title: string) {
-  void openReadingWindow(id, title)
+function openBookshelfNovel(id: string) {
+  navigate(`/detail/${id}`)
 }
 
 function tickTyping() {
@@ -401,7 +401,7 @@ onUnmounted(() => {
 
           <div v-if="!bookshelfNovels.length" class="panel-slot-empty">
             <strong>书架还是空的</strong>
-            <span>开笔写第一部小说，完成后可在这里直接进入阅读模式。</span>
+            <span>开笔写第一部小说，完成后可在这里继续编辑与创作。</span>
           </div>
           <div v-else class="home-bookshelf">
             <button
@@ -410,7 +410,7 @@ onUnmounted(() => {
               type="button"
               class="home-book"
               :style="{ '--book-accent': novel.accent }"
-              @click="openBookshelfNovel(novel.id, novel.title)"
+              @click="openBookshelfNovel(novel.id)"
             >
               <span class="home-book__cover" aria-hidden="true">
                 <img v-if="novel.coverUrl" :src="novel.coverUrl" :alt="novel.title" />

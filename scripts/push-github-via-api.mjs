@@ -12,7 +12,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = join(__dirname, '..')
 
 const owner = 'qq1171910065'
-const repo = 'manong-arena'
+const repo = 'manong-novel'
 const branch = 'master'
 const token = String(process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '').trim()
 const tag = process.argv[2] || ''

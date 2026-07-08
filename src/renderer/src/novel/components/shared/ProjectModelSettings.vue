@@ -17,11 +17,17 @@ import {
 import { DEFAULT_SYSTEM_ROLE_MODEL_ID } from '@shared/gateway/constants'
 import { NButton, NModal } from '@renderer/ui'
 
-const props = defineProps<{
-  chatModelId?: string | null
-  editable?: boolean
-  writingMode?: WritingMode | null
-}>()
+const props = withDefaults(
+  defineProps<{
+    chatModelId?: string | null
+    editable?: boolean
+    writingMode?: WritingMode | null
+    flat?: boolean
+  }>(),
+  {
+    flat: false,
+  }
+)
 
 const emit = defineEmits<{
   'update:chatModelId': [value: string | null]
@@ -48,9 +54,9 @@ const chatDisplay = computed(() => {
 
 const subtitle = computed(() => {
   if (isSimpleMode.value) {
-    return '简易模式建议使用轻量写作模型；封面与立绘使用设置中的默认绘图模型'
+    return '未单独设置时使用全局默认模型'
   }
-  return '本书专用写作模型；封面与立绘固定使用设置中的默认绘图模型'
+  return '用于灵感、蓝图与章节写作'
 })
 
 async function loadModels() {
@@ -86,7 +92,30 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="nd-block project-model-settings">
+  <div
+    v-if="flat"
+    class="settings-row settings-row--inline-hint pipeline-settings-page__model"
+  >
+    <div class="settings-row__label">
+      <span class="settings-row__title">写作模型</span>
+      <span class="settings-row__hint" :title="chatDisplay">{{ chatDisplay }}</span>
+    </div>
+    <div class="settings-row__control pipeline-flat-settings__model-actions">
+      <button type="button" class="detail-action-btn detail-action-btn--primary" @click.stop="openChatDialog">
+        更换
+      </button>
+      <button
+        v-if="chatModelId"
+        type="button"
+        class="detail-action-btn"
+        @click.stop="clearChatModel"
+      >
+        恢复默认
+      </button>
+    </div>
+  </div>
+
+  <section v-else class="nd-block project-model-settings">
     <div class="nd-block__head">
       <div>
         <h3 class="nd-block__title">写作模型</h3>
@@ -99,45 +128,47 @@ onMounted(() => {
         <span class="project-model-settings__label">当前模型</span>
         <span class="project-model-settings__value">{{ chatDisplay }}</span>
       </div>
-      <div v-if="editable" class="project-model-settings__actions">
-        <button type="button" class="nd-btn nd-btn--ghost" @click.stop="openChatDialog">选择</button>
+      <div class="project-model-settings__actions">
+        <button type="button" class="detail-action-btn detail-action-btn--primary" @click.stop="openChatDialog">
+          选择模型
+        </button>
         <button
           v-if="chatModelId"
           type="button"
-          class="nd-btn nd-btn--ghost"
+          class="detail-action-btn"
           @click.stop="clearChatModel"
         >
           恢复默认
         </button>
       </div>
     </div>
-
-    <NModal
-      v-model:show="chatDialogOpen"
-      preset="dialog"
-      title="选择写作模型"
-      style="width: min(560px, 92vw)"
-    >
-      <p class="project-model-settings__note">
-        {{
-          isSimpleMode
-            ? '简易模式建议使用轻量模型，可更快完成灵感对话与章节生成。'
-            : '用于灵感对话、蓝图生成、章节写作等；未单独设置时使用全局默认模型。'
-        }}
-      </p>
-      <GatewayModelPicker
-        v-model="draftChatModelId"
-        :models="chatModels.filter(isLikelyChatModel)"
-        :recommended-ids="chatRecommendedIds"
-        :loading="modelsLoading"
-        empty-hint="暂无可用对话模型，请先在设置中确认网关连接。"
-      />
-      <template #action>
-        <NButton @click="chatDialogOpen = false">取消</NButton>
-        <NButton type="primary" @click="saveChatModel">确定</NButton>
-      </template>
-    </NModal>
   </section>
+
+  <NModal
+    v-model:show="chatDialogOpen"
+    preset="dialog"
+    title="选择写作模型"
+    style="width: min(560px, 92vw)"
+  >
+    <p class="project-model-settings__note">
+      {{
+        isSimpleMode
+          ? '简易模式建议使用轻量模型，可更快完成灵感对话与章节生成。'
+          : '用于灵感对话、蓝图生成、章节写作等；未单独设置时使用全局默认模型。'
+      }}
+    </p>
+    <GatewayModelPicker
+      v-model="draftChatModelId"
+      :models="chatModels.filter(isLikelyChatModel)"
+      :recommended-ids="chatRecommendedIds"
+      :loading="modelsLoading"
+      empty-hint="暂无可用对话模型，请先在设置中确认网关连接。"
+    />
+    <template #action>
+      <NButton @click="chatDialogOpen = false">取消</NButton>
+      <NButton type="primary" @click="saveChatModel">确定</NButton>
+    </template>
+  </NModal>
 </template>
 
 <style scoped>
@@ -171,11 +202,14 @@ onMounted(() => {
   white-space: nowrap;
 }
 
-.project-model-settings__actions {
+.project-model-settings__actions,
+.pipeline-settings-page__model-actions {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .project-model-settings__note {

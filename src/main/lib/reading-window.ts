@@ -2,6 +2,7 @@ import { BrowserWindow, ipcMain, app, screen } from 'electron'
 import { join } from 'node:path'
 import { appIconOptions } from './app-icon'
 import { getMainWindow } from './window-manager'
+import { syncReadingBossKey, toggleBossHide } from './boss-key'
 
 /** 竖屏阅读窗口：宽约 9:19.5 */
 const READING_WIDTH = 400
@@ -78,6 +79,14 @@ function destroyReadingWindow(): void {
   readingWindow = null
 }
 
+function showMainWindow(): void {
+  const main = getMainWindow()
+  if (!main || main.isDestroyed()) return
+  if (main.isMinimized()) main.restore()
+  if (!main.isVisible()) main.show()
+  main.focus()
+}
+
 function createReadingWindow(projectId: string): BrowserWindow {
   destroyReadingWindow()
 
@@ -114,11 +123,6 @@ function createReadingWindow(projectId: string): BrowserWindow {
 
   readingWindow.on('closed', () => {
     readingWindow = null
-    const main = getMainWindow()
-    if (main && !main.isDestroyed()) {
-      if (!main.isVisible()) main.show()
-      main.focus()
-    }
   })
 
   loadRenderer(readingWindow, `/reading/${projectId}`)
@@ -135,26 +139,15 @@ export function openReadingWindow(projectId: string): void {
   win.focus()
 }
 
+/** 关闭阅读窗口，不回到主窗口 */
 export function closeReadingWindow(): void {
   destroyReadingWindow()
-
-  const main = getMainWindow()
-  if (main && !main.isDestroyed()) {
-    if (!main.isVisible()) main.show()
-    main.focus()
-  }
 }
 
-export function bossHideReadingWindow(): void {
-  const win = getReadingWindow()
-  if (win && !win.isDestroyed()) {
-    win.hide()
-  }
-  const main = getMainWindow()
-  if (main && !main.isDestroyed()) {
-    if (!main.isVisible()) main.show()
-    main.focus()
-  }
+/** 关闭阅读窗口并回到主窗口 */
+export function returnToMainFromReading(): void {
+  destroyReadingWindow()
+  showMainWindow()
 }
 
 export function registerReadingWindowHandlers(): void {
@@ -173,9 +166,30 @@ export function registerReadingWindowHandlers(): void {
     return { ok: true }
   })
 
-  ipcMain.removeHandler('reading:boss-hide')
-  ipcMain.handle('reading:boss-hide', () => {
-    bossHideReadingWindow()
+  ipcMain.removeHandler('reading:return-main')
+  ipcMain.handle('reading:return-main', () => {
+    returnToMainFromReading()
     return { ok: true }
   })
+
+  ipcMain.removeHandler('reading:boss-hide')
+  ipcMain.handle('reading:boss-hide', () => {
+    toggleBossHide()
+    return { ok: true }
+  })
+
+  ipcMain.removeHandler('reading:boss-toggle')
+  ipcMain.handle('reading:boss-toggle', () => {
+    toggleBossHide()
+    return { ok: true }
+  })
+
+  ipcMain.removeHandler('reading:sync-boss-key')
+  ipcMain.handle(
+    'reading:sync-boss-key',
+    (_event, payload: { enabled?: boolean; accelerator?: string }) => {
+      syncReadingBossKey(Boolean(payload?.enabled), payload?.accelerator || '')
+      return { ok: true }
+    }
+  )
 }

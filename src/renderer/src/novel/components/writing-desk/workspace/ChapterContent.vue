@@ -1,50 +1,25 @@
 <!-- AIMETA P=章节内容_章节文本展示编辑|R=内容展示_编辑|NR=不含版本管理|E=component:ChapterContent|X=internal|A=内容组件|D=vue|S=dom|RD=./README.ai -->
 <template>
-  <div class="space-y-6">
-    <div>
-      <div class="flex items-center justify-between mb-4 gap-3">
-        <h4 class="md-title-medium font-semibold">章节内容</h4>
-        <div class="flex items-center gap-3">
-          <div class="md-body-small md-on-surface-variant">
-            约 {{ Math.round(cleanVersionContent(selectedChapter.content || '').length / 100) * 100 }} 字
-          </div>
-          <button
-            class="md-btn md-btn-tonal md-ripple flex items-center gap-1"
-            @click="showOptimizer = true"
-          >
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
-            </svg>
-            分层优化
-          </button>
-          <button
-            v-if="selectedChapter.generation_status === 'successful'"
-            type="button"
-            class="md-btn md-btn-outlined md-ripple flex items-center gap-1"
-            @click="$emit('editChapter')"
-          >
-            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-              <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
-            </svg>
-            手动编辑
-          </button>
-        </div>
-      </div>
-      <div class="prose max-w-none">
-        <div class="whitespace-pre-wrap leading-relaxed" style="color: var(--md-on-surface);">{{ cleanVersionContent(selectedChapter.content || '') }}</div>
+  <div>
+    <div class="prose max-w-none">
+      <div class="whitespace-pre-wrap leading-relaxed wd-chapter-content__body">
+        {{ cleanVersionContent(selectedChapter.content || '') }}
       </div>
     </div>
 
     <!-- 分层优化弹窗 -->
     <NovelModalShell
       :show="showOptimizer"
-      size="md"
+      variant="form"
+      auto-min-width="md"
       title="分层优化"
       subtitle="选择一个维度进行深度优化，让文字更有灵魂"
       aria-label="分层优化"
+      foot-class="novel-modal__foot--form"
       @close="showOptimizer = false"
     >
-      <div class="optimizer-dimensions grid grid-cols-2 gap-4 mb-6">
+      <div class="novel-modal__compact-form">
+      <div class="optimizer-dimensions grid grid-cols-2 gap-4">
         <button
           v-for="dim in optimizeDimensions"
           :key="dim.key"
@@ -64,13 +39,14 @@
       </div>
 
       <div>
-        <label class="md-text-field-label mb-2">额外优化指令（可选）</label>
+        <label class="md-text-field-label">额外优化指令（可选）</label>
         <textarea
           v-model="additionalNotes"
           rows="4"
           class="md-textarea w-full resize-none"
           placeholder="例如：加强主角内心的挣扎感，让对话更有张力..."
         />
+      </div>
       </div>
 
       <template #footer>
@@ -149,6 +125,12 @@ interface Props {
 const props = defineProps<Props>()
 
 defineEmits(['showVersionSelector', 'editChapter'])
+
+defineExpose({
+  openOptimizer: () => {
+    showOptimizer.value = true
+  },
+})
 
 // 优化相关状态
 const showOptimizer = ref(false)
@@ -288,6 +270,11 @@ const applyOptimization = async () => {
 </script>
 
 <style scoped>
+.wd-chapter-content__body {
+  color: var(--md-on-surface);
+  line-height: 1.85;
+}
+
 .m3-option {
   border-color: var(--md-outline-variant);
 }

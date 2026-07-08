@@ -7,6 +7,7 @@ import {
   hasMaterialSelection,
   type CreateProjectMaterialSelection,
 } from '@renderer/services/novel/material-library-apply'
+import { NovelAPI } from '@renderer/services/novel/api'
 import { useNovelStore } from '@renderer/stores/novel'
 
 export type { CreateProjectMaterialSelection }
@@ -49,6 +50,11 @@ export function useCreateNovelProject() {
       )
       if (hasMaterialSelection(options?.materials)) {
         project = await applyMaterialsToProject(project.id, options!.materials!)
+        novelStore.currentProject = project
+      }
+      const chatModelId = options?.materials?.chatModelId?.trim()
+      if (chatModelId) {
+        project = await NovelAPI.updateProjectModels(project.id, { chat_model_id: chatModelId })
         novelStore.currentProject = project
       }
       await options?.onCreated?.(project)

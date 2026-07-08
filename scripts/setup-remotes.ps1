@@ -5,9 +5,9 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $root
 
-$GiteeUrl = 'https://gitee.com/czmanong/arena.git'
+$GiteeUrl = 'https://gitee.com/czmanong/novel.git'
 $GithubOwner = 'qq1171910065'
-$GithubRepo = 'manong-arena'
+$GithubRepo = 'manong-novel'
 $GithubUrl = "https://github.com/$GithubOwner/$GithubRepo.git"
 
 if (-not (Test-Path '.git')) {

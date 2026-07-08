@@ -6,6 +6,47 @@ const MIN_SENTENCE_DEDUPE = 8
 const MIN_PARAGRAPH_DEDUPE = 10
 const NEAR_DUPLICATE_THRESHOLD = 0.78
 
+const META_COMMENTARY_PATTERN =
+  /(?:我觉得|思考下来|还需要注意|还要注意|需要注意的是|要让人想知道|制造悬念|符合约束|满足.*要求|写出一章|禁止.*名单|不能直接点名|动作要停在|结尾的钩子|这一章不能|就能很好地满足|上述约束|写作计划|创作思路|自我分析|导演脚本|pace_budget|macro_beat|sequel_required)/i
+
+function removeThinkTags(content: string): string {
+  if (!content) return content
+  return content
+    .replace(/<think>[\s\S]*?<\/redacted_thinking>/gi, '')
+    .replace(/<thinking>[\s\S]*?<\/thinking>/gi, '')
+    .replace(/[\s\S]*?<\/think>/gi, '')
+    .trim()
+}
+
+function isMetaCommentaryParagraph(paragraph: string): boolean {
+  const norm = paragraph.trim()
+  if (!norm || norm.length < 10) return false
+  if (META_COMMENTARY_PATTERN.test(norm)) return true
+
+  const hasDialogue = /[「""''"]/.test(norm)
+  const planningHits = [
+    /(?:应该|需要|必须|不要|禁止|确保|可以|要让)/.test(norm),
+    /(?:首先|然后|接下来|最后|总之|所以|这样)/.test(norm),
+    /(?:读者|章节|正文|写作|生成|输出|约束|要求|钩子|悬念)/.test(norm),
+  ].filter(Boolean).length
+
+  return !hasDialogue && planningHits >= 2 && norm.length <= 160
+}
+
+export function stripAuthoringMetaCommentary(content: string): string {
+  let text = removeThinkTags(content.trim())
+  if (!text) return text
+
+  const paragraphs = splitParagraphs(text)
+  const kept = paragraphs.filter((part) => !isMetaCommentaryParagraph(part))
+
+  while (kept.length > 1 && isMetaCommentaryParagraph(kept[kept.length - 1])) {
+    kept.pop()
+  }
+
+  return kept.join('\n\n').trim()
+}
+
 function normalizeBlock(text: string): string {
   return text.replace(/\s+/g, '').trim()
 }
@@ -264,7 +305,7 @@ export function detectRepetitionIssues(
 }
 
 export function sanitizeChapterContent(content: string, priorContent?: string | null): string {
-  let next = content.trim()
+  let next = stripAuthoringMetaCommentary(content)
   if (!next) return next
 
   for (let pass = 0; pass < (countChapterChars(next) > 4200 ? 3 : 2); pass += 1) {
@@ -295,7 +336,30 @@ export function hasRepeatedSentenceLoop(content: string): boolean {
 
 export function hasSevereRepetition(content: string, priorContent?: string | null): boolean {
   if (hasRepeatedSentenceLoop(content)) return true
-  return detectRepetitionIssues(content, priorContent).length >= 1
+  return detectRepetitionIssues(content, priorContent).length >= 2
+}
+
+/** 仅本章内部的重复才触发重写（衔接上一章的重叠不算） */
+export function hasInternalRepetitionNeedingRewrite(content: string): boolean {
+  if (hasRepeatedSentenceLoop(content)) return true
+  const internal = detectRepetitionIssues(content, null).filter(
+    (issue) => issue.kind === 'duplicate_paragraph' || issue.kind === 'near_duplicate'
+  )
+  return internal.length >= 2
+}
+
+export function formatInternalRepetitionRewriteHint(content: string): string {
+  const issues = detectRepetitionIssues(content, null)
+    .filter((issue) => issue.kind !== 'prior_overlap')
+    .slice(0, 5)
+  if (!issues.length) return ''
+
+  const samples = issues.map((item) => `「${item.sample}…」`).join('、')
+  return [
+    '上一版存在章节内重复或近重复片段，请重写本章正文。',
+    `请勿再次出现这些表达或同义改写：${samples}`,
+    '每个信息点、动作、情绪描写在本章内只能出现一次。',
+  ].join('\n')
 }
 
 /** 超出硬上限时按段落/句子边界截断，保留章末钩子 */
@@ -338,6 +402,10 @@ export function formatRepetitionRewriteHint(content: string, priorContent?: stri
   const issues = detectRepetitionIssues(content, priorContent).slice(0, 5)
   if (!issues.length) return ''
 
+  const priorOverlapOnly =
+    issues.length > 0 && issues.every((issue) => issue.kind === 'prior_overlap')
+  if (priorOverlapOnly && issues.length < 2) return ''
+
   const samples = issues.map((item) => `「${item.sample}…」`).join('、')
   return [
     '上一版存在重复或近重复片段，请重写本章正文。',
@@ -360,17 +428,165 @@ export function formatWordCountFeedback(actual: number, target: number): string 
   return null
 }
 
+export const VERNACULAR_PROSE_HINT =
+  '语言基调：现代白话网文。叙述用完整、流畅、口语化的句子；禁止文言虚词（遂/俄而/须臾/矣等）、禁止「一句一断」的极简古风短句堆砌。'
+
+const ARCHAIC_WORD_PATTERN =
+  /(?:遂|俄而|须臾|然则|不可谓|却也是|却道|竟也|且说|不复|犹自|不成也)/
+
+/** 是否为对话行（对话内短句不判为文言腔） */
+function isDialogueLine(line: string): boolean {
+  const trimmed = line.trim()
+  return /^[「『""']/.test(trimmed) || /[」』""']$/.test(trimmed)
+}
+
+/** 检测叙述段中的文言腔/极简断句 */
+export function detectArchaicProseIssues(content: string): string[] {
+  const issues: string[] = []
+  if (!content.trim()) return issues
+
+  const archaicHits = content.match(new RegExp(ARCHAIC_WORD_PATTERN.source, 'g'))
+  if (archaicHits?.length) {
+    issues.push(`出现文言/古风用语：${[...new Set(archaicHits)].slice(0, 5).join('、')}`)
+  }
+
+  const paragraphs = splitParagraphs(content)
+  for (const paragraph of paragraphs) {
+    if (isDialogueLine(paragraph)) continue
+    const sentences = paragraph
+      .split(/(?<=[。！？!?…])/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+    let streak = 0
+    for (const sentence of sentences) {
+      const norm = normalizeBlock(sentence)
+      if (norm.length > 0 && norm.length <= 8 && !isDialogueLine(sentence)) {
+        streak += 1
+      } else {
+        streak = 0
+      }
+      if (streak >= 3) {
+        issues.push('叙述段连续出现 3 句以上极短断句，像文言/剧本分镜而非白话网文')
+        break
+      }
+    }
+    if (issues.some((item) => item.includes('极短断句'))) break
+  }
+
+  return [...new Set(issues)].slice(0, 3)
+}
+
+export function formatArchaicProseRewriteHint(content: string): string {
+  const issues = detectArchaicProseIssues(content)
+  if (!issues.length) return ''
+
+  return [
+    '上一版语言偏文言/古风或「一句一断」，请重写本章正文。',
+    ...issues.map((issue) => `- ${issue}`),
+    '改用现代白话：叙述句写完整（谁+做了什么+怎样），合并极短断句，去掉遂/俄而/须臾/矣等文言词。',
+  ].join('\n')
+}
+
 export function buildChapterRewriteHint(
   content: string,
   target: number,
-  priorContent?: string | null
+  priorContent?: string | null,
+  options?: {
+    priorEnding?: string | null
+    characterNames?: string[]
+  }
 ): string {
   const actual = countChapterChars(content)
   const parts = [
     formatRepetitionRewriteHint(content, priorContent),
+    formatContinuityRewriteHint(content, options?.priorEnding, options?.characterNames),
+    formatArchaicProseRewriteHint(content),
     formatWordCountFeedback(actual, target),
   ].filter(Boolean)
   return parts.join('\n')
+}
+
+const TIME_SKIP_PATTERN =
+  /(?:次日|第二天|翌日|数(?:个)?小时(?:后|之后)|三天后|一夜过后|醒来(?:时|后)|清晨|黄昏|翌晨|半个月后|数日后)/
+
+export interface ContinuityIssue {
+  kind: 'weak_opening_bridge' | 'missing_prior_characters'
+  detail: string
+}
+
+/** 检测本章开场与上一章结尾的衔接质量 */
+export function detectContinuityIssues(
+  content: string,
+  priorEnding: string | null | undefined,
+  characterNames: string[] = []
+): ContinuityIssue[] {
+  const opening = content.trim().slice(0, 900)
+  const ending = priorEnding?.trim() || ''
+  if (!opening || !ending) return []
+
+  const issues: ContinuityIssue[] = []
+  const hasTimeSkip = TIME_SKIP_PATTERN.test(opening.slice(0, 220))
+
+  if (characterNames.length) {
+    const endChars = characterNames.filter(
+      (name) => name.length >= 2 && ending.includes(name)
+    )
+    const openingHasEndChar = endChars.some((name) => opening.includes(name))
+    if (endChars.length && !openingHasEndChar && !hasTimeSkip) {
+      issues.push({
+        kind: 'missing_prior_characters',
+        detail: `上一章结尾仍在场的 ${endChars.join('、')} 未在本章开场出现`,
+      })
+    }
+  }
+
+  const lastBeat = ending.split(/(?<=[。！？!?…])/).map((s) => s.trim()).filter(Boolean).pop() || ''
+  if (lastBeat.length >= 10) {
+    const bridgeCue = /(?:仍|还|刚|此时|身后|面前|手里|刚才|那|这|未|还没)/.test(opening.slice(0, 240))
+    const overlap = jaccardSimilarity(opening.slice(0, 420), lastBeat)
+    if (overlap < 0.06 && !bridgeCue && !hasTimeSkip) {
+      issues.push({
+        kind: 'weak_opening_bridge',
+        detail: '开场与上一章最后一拍缺少动作/情绪/场景承接',
+      })
+    }
+  }
+
+  return issues
+}
+
+export function formatContinuityRewriteHint(
+  content: string,
+  priorEnding?: string | null,
+  characterNames?: string[]
+): string {
+  const issues = detectContinuityIssues(content, priorEnding, characterNames).slice(0, 3)
+  if (!issues.length) return ''
+
+  const lastBeat =
+    priorEnding
+      ?.trim()
+      .split(/(?<=[。！？!?…])/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(-1)[0] || ''
+
+  return [
+    '上一版开场与上一章结尾衔接不足，请重写本章正文（重点改开场 1–3 段）。',
+    ...issues.map((issue) => `- ${issue.detail}`),
+    lastBeat ? `必须自然承接上一章最后一拍：「${lastBeat.slice(0, 80)}」` : '',
+    '承接后再推进本章新情节；若时间/场景跳跃，首段须明确交代过渡。',
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
+export function hasContinuityIssuesNeedingRewrite(
+  content: string,
+  priorEnding?: string | null,
+  characterNames?: string[]
+): boolean {
+  return detectContinuityIssues(content, priorEnding, characterNames).length > 0
 }
 
 export function summarizeContentGuard(content: string): { chars: number; paragraphCount: number } {

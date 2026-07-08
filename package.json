@@ -12,7 +12,9 @@
     "test:watch": "vitest",
     "preview": "electron-vite preview",
     "build:unpack": "pnpm run build && electron-builder --dir --config electron-builder.config.cjs --publish never",
-    "build:win": "pnpm run build && electron-builder --win --config electron-builder.config.cjs --publish never"
+    "build:win": "pnpm run build && electron-builder --win --config electron-builder.config.cjs --publish never",
+    "publish:github": "powershell -ExecutionPolicy Bypass -File scripts/publish-github.ps1",
+    "push": "powershell -ExecutionPolicy Bypass -File scripts/push.ps1"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.0",

@@ -6,6 +6,7 @@
   >
     <div class="page__inner page__inner--full h-full min-h-0 flex flex-col mx-auto w-full">
     <WDHeader
+      v-if="!embedded"
       :project="project"
       :progress="progress"
       :completed-chapters="completedChapters"
@@ -30,7 +31,7 @@
       </div>
 
       <!-- 错误状态 -->
-      <div v-else-if="novelStore.error" class="text-center py-20">
+      <div v-else-if="novelStore.error && !project" class="text-center py-20">
         <div class="md-card md-card-outlined p-8 max-w-md mx-auto" style="border-radius: var(--md-radius-xl);">
           <div class="w-12 h-12 rounded-full mx-auto mb-4 flex items-center justify-center" style="background-color: var(--md-error-container);">
             <svg class="w-6 h-6" style="color: var(--md-error);" fill="currentColor" viewBox="0 0 20 20">
@@ -45,9 +46,6 @@
 
       <!-- 主要内容 -->
       <div v-else-if="project" class="wd-desk-stack">
-        <div v-if="autoWriteLocked" class="wd-auto-write-banner">
-          AI 正在后台接管创作，写作台操作已暂时锁定。可在状态栏任务列表查看进度或暂停。
-        </div>
         <div :class="embedded ? 'wd-desk__columns' : 'h-full flex gap-6'">
         <WDSidebar
           :project="project"
@@ -61,13 +59,14 @@
           @close-sidebar="closeSidebar"
           @select-chapter="selectChapter"
           @generate-chapter="generateChapter"
-          @edit-chapter="openEditChapterModal"
           @delete-chapter="deleteChapter"
+          @clear-chapter="clearChapterForRewrite"
           @generate-outline="generateOutline"
         />
 
-        <div class="flex-1 min-w-0">
+        <div class="flex-1 min-w-0 wd-desk__main-column">
           <WDWorkspace
+            ref="workspaceRef"
             :project="project"
             :selected-chapter-number="selectedChapterNumber"
             :generating-chapter="generatingChapter"
@@ -91,6 +90,59 @@
           @edit-chapter="editChapterContent"
           @cancel-chapter-task="cancelChapterTask"
           />
+
+          <footer v-if="embedded && footerState.visible" class="wd-desk__footer">
+            <div class="wd-desk__footer-group wd-desk__footer-group--left">
+              <div
+                v-if="footerDangerButtons.length"
+                ref="dangerMenuRef"
+                class="novel-modal__smart-menu"
+                @focusout="handleDangerMenuFocusOut"
+              >
+                <button
+                  type="button"
+                  class="novel-modal__toolbar-btn novel-modal__smart-menu-trigger md-ripple"
+                  :class="{ 'is-open': dangerMenuOpen }"
+                  :disabled="footerDangerButtons.every((button) => button.disabled)"
+                  @click.stop="toggleDangerMenu"
+                >
+                  <MoreHorizontal :size="14" aria-hidden="true" />
+                  <span>危险操作</span>
+                  <ChevronDown :size="14" aria-hidden="true" class="novel-modal__smart-menu-chevron" />
+                </button>
+                <div
+                  v-if="dangerMenuOpen"
+                  class="novel-modal__smart-menu-dropdown novel-modal__smart-menu-dropdown--dropup"
+                  role="menu"
+                >
+                  <button
+                    v-for="button in footerDangerButtons"
+                    :key="button.action"
+                    type="button"
+                    role="menuitem"
+                    class="novel-modal__smart-menu-item"
+                    :disabled="button.disabled || button.loading"
+                    @click="handleDangerMenuAction(button.action)"
+                  >
+                    <component :is="footerMenuIcon(button.action)" :size="14" aria-hidden="true" />
+                    <span>{{ button.loading ? '处理中...' : button.label }}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div class="wd-desk__footer-group wd-desk__footer-group--right">
+              <button
+                v-for="button in footerRightButtons"
+                :key="button.action"
+                type="button"
+                :class="[footerButtonClass(button), 'disabled:opacity-50']"
+                :disabled="button.disabled || button.loading"
+                @click="handleFooterAction(button.action)"
+              >
+                {{ button.loading ? '处理中...' : button.label }}
+              </button>
+            </div>
+          </footer>
         </div>
         </div>
       </div>
@@ -109,12 +161,6 @@
       :evaluation="selectedChapter?.evaluation || null"
       @close="showEvaluationDetailModal = false"
     />
-    <WDEditChapterModal
-      :show="showEditChapterModal"
-      :chapter="editingChapter"
-      @close="showEditChapterModal = false"
-      @save="saveChapterChanges"
-    />
     <WDGenerateOutlineModal
       :show="showGenerateOutlineModal"
       @close="showGenerateOutlineModal = false"
@@ -125,9 +171,10 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ChevronDown, MoreHorizontal, RefreshCw, Trash2 } from 'lucide-vue-next'
 import { useRoute, useRouter } from '@renderer/novel/composables/useNovelRouter'
 import { useNovelStore } from '@renderer/stores/novel'
-import type { ChapterOutline, ChapterGenerationResponse } from '@renderer/services/novel/api'
+import type { ChapterGenerationResponse } from '@renderer/services/novel/api'
 import { NovelAPI } from '@renderer/services/novel/api'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
 import * as writing from '@renderer/services/novel/writing-service'
@@ -145,8 +192,13 @@ import WDSidebar from '@renderer/novel/components/writing-desk/WDSidebar.vue'
 import WDWorkspace from '@renderer/novel/components/writing-desk/WDWorkspace.vue'
 import WDVersionDetailModal from '@renderer/novel/components/writing-desk/WDVersionDetailModal.vue'
 import WDEvaluationDetailModal from '@renderer/novel/components/writing-desk/WDEvaluationDetailModal.vue'
-import WDEditChapterModal from '@renderer/novel/components/writing-desk/WDEditChapterModal.vue'
 import WDGenerateOutlineModal from '@renderer/novel/components/writing-desk/WDGenerateOutlineModal.vue'
+import type {
+  WritingDeskFooterAction,
+  WritingDeskFooterButton,
+  WritingDeskFooterState,
+} from '@renderer/novel/components/writing-desk/writing-desk-footer'
+import { EMPTY_WRITING_DESK_FOOTER } from '@renderer/novel/components/writing-desk/writing-desk-footer'
 
 interface Props {
   projectId?: string
@@ -160,7 +212,10 @@ const props = withDefaults(defineProps<Props>(), {
   autoWriteLocked: false,
 })
 
-const emit = defineEmits<{ close: [] }>()
+const emit = defineEmits<{
+  close: []
+  'footer-state': [state: WritingDeskFooterState]
+}>()
 
 const router = useRouter()
 const route = useRoute()
@@ -185,8 +240,23 @@ const sidebarOpen = ref(false)
 const showVersionDetailModal = ref(false)
 const detailVersionIndex = ref<number>(0)
 const showEvaluationDetailModal = ref(false)
-const showEditChapterModal = ref(false)
-const editingChapter = ref<ChapterOutline | null>(null)
+const showGenerateOutlineModal = ref(false)
+const isConfirmingVersion = ref(false)
+const footerState = ref<WritingDeskFooterState>(EMPTY_WRITING_DESK_FOOTER)
+const dangerMenuOpen = ref(false)
+const dangerMenuRef = ref<HTMLElement | null>(null)
+const workspaceRef = ref<{
+  openChapterOptimizer: () => void
+  openChapterEditor: () => void
+} | null>(null)
+
+const footerDangerButtons = computed(() =>
+  footerState.value.buttons.filter((button) => button.danger)
+)
+const footerRightButtons = computed(() =>
+  footerState.value.buttons.filter((button) => button.align === 'right')
+)
+
 const generatingChapter = computed(() => {
   const projectId = resolvedProjectId.value
   if (!projectId) return null
@@ -198,8 +268,6 @@ const isGeneratingOutline = computed(() => {
   if (!projectId) return false
   return isOutlineGenerating(projectId)
 })
-const showGenerateOutlineModal = ref(false)
-const isConfirmingVersion = ref(false)
 
 // 计算属性
 const project = computed(() => novelStore.currentProject)
@@ -539,23 +607,6 @@ const confirmVersionSelection = async () => {
   await selectVersion(selectedVersionIndex.value)
 }
 
-const openEditChapterModal = (chapter: ChapterOutline) => {
-  editingChapter.value = chapter
-  showEditChapterModal.value = true
-}
-
-const saveChapterChanges = async (updatedChapter: ChapterOutline) => {
-  try {
-    await novelStore.updateChapterOutline(updatedChapter)
-    globalAlert.showSuccess('章节大纲已更新', '保存成功')
-  } catch (error) {
-    console.error('更新章节大纲失败:', error)
-    globalAlert.showError(`更新章节大纲失败: ${error instanceof Error ? error.message : '未知错误'}`, '保存失败')
-  } finally {
-    showEditChapterModal.value = false
-  }
-}
-
 const evaluateChapter = async () => {
   if (selectedChapterNumber.value === null) return
   if (availableVersions.value.length < 2) {
@@ -637,6 +688,299 @@ const deleteChapter = async (chapterNumbers: number | number[]) => {
   }
 }
 
+function listSubsequentWrittenChapters(chapterNumber: number): number[] {
+  if (!project.value?.chapters) return []
+  return project.value.chapters
+    .filter((chapter) => chapter.chapter_number > chapterNumber)
+    .filter((chapter) => {
+      return (
+        chapter.generation_status === 'successful' ||
+        Boolean(chapter.content?.trim()) ||
+        (chapter.versions?.length ?? 0) > 0
+      )
+    })
+    .map((chapter) => chapter.chapter_number)
+    .sort((a, b) => a - b)
+}
+
+const clearChapterForRewrite = async (chapterNumber: number) => {
+  if (!project.value) return
+
+  const confirmed = await globalAlert.showConfirm(
+    `确定清除第 ${chapterNumber} 章的正文？章节大纲会保留，可重新生成。`,
+    '清除重写'
+  )
+  if (!confirmed) return
+
+  let numbersToClear = [chapterNumber]
+  const subsequent = listSubsequentWrittenChapters(chapterNumber)
+  if (subsequent.length > 0) {
+    const alsoClear = await globalAlert.showConfirm(
+      `第 ${chapterNumber} 章之后还有 ${subsequent.length} 章已写正文。为避免剧情脱节，建议一并清除。是否清除第 ${subsequent.join('、')} 章的正文？`,
+      '清除后续章节'
+    )
+    if (alsoClear) {
+      numbersToClear = [chapterNumber, ...subsequent]
+    }
+  }
+
+  try {
+    await novelStore.clearChapterContent(numbersToClear)
+    globalAlert.showSuccess(
+      numbersToClear.length > 1
+        ? `已清除第 ${numbersToClear.join('、')} 章正文`
+        : `已清除第 ${chapterNumber} 章正文`,
+      '清除成功'
+    )
+    if (selectedChapterNumber.value && numbersToClear.includes(selectedChapterNumber.value)) {
+      selectedChapterNumber.value = chapterNumber
+    }
+  } catch (error) {
+    console.error('清除章节正文失败:', error)
+    globalAlert.showError(
+      `清除失败: ${error instanceof Error ? error.message : '未知错误'}`,
+      '清除失败'
+    )
+  }
+}
+
+function hasChapterContent(chapterNumber: number): boolean {
+  if (!project.value?.chapters) return false
+  const chapter = project.value.chapters.find((ch) => ch.chapter_number === chapterNumber)
+  if (!chapter) return false
+  return (
+    chapter.generation_status !== 'not_generated' ||
+    Boolean(chapter.content?.trim()) ||
+    (chapter.versions?.length ?? 0) > 0
+  )
+}
+
+function buildEmbeddedFooterState(): WritingDeskFooterState {
+  if (!props.embedded || selectedChapterNumber.value === null || !project.value) {
+    return EMPTY_WRITING_DESK_FOOTER
+  }
+
+  const chapterNumber = selectedChapterNumber.value
+  const chapter = project.value.chapters?.find((ch) => ch.chapter_number === chapterNumber)
+  const status = chapter?.generation_status
+  const evaluating = evaluatingChapter.value === chapterNumber
+  const generating = generatingChapter.value === chapterNumber
+
+  if (
+    status === 'generating' ||
+    status === 'evaluating' ||
+    status === 'selecting' ||
+    generating ||
+    evaluating
+  ) {
+    return {
+      visible: true,
+      buttons: [{ action: 'cancel', label: '取消', variant: 'tonal', align: 'right' }],
+    }
+  }
+
+  if (status === 'waiting_for_confirm' || status === 'evaluation_failed') {
+    const versionCount = availableVersions.value.length
+    return {
+      visible: true,
+      buttons: [
+        {
+          action: 'clear',
+          label: '清除本章',
+          variant: 'outlined',
+          align: 'left',
+          danger: true,
+          disabled: props.autoWriteLocked || generating,
+        },
+        {
+          action: 'regenerate',
+          label: generating ? '生成中...' : '重新生成',
+          variant: 'outlined',
+          align: 'left',
+          danger: true,
+          disabled: props.autoWriteLocked || generating,
+          loading: generating,
+        },
+        {
+          action: 'evaluate',
+          label: evaluating ? '评审中...' : 'AI 评审',
+          variant: 'tonal',
+          align: 'right',
+          disabled: props.autoWriteLocked || evaluating || versionCount < 2,
+          loading: evaluating,
+        },
+        {
+          action: 'confirm-version',
+          label: isConfirmingVersion.value ? '确认中...' : '确认选择此版本',
+          variant: 'filled',
+          align: 'right',
+          disabled:
+            isConfirmingVersion.value ||
+            props.autoWriteLocked ||
+            !availableVersions.value?.[selectedVersionIndex.value]?.content,
+          loading: isConfirmingVersion.value,
+        },
+      ],
+    }
+  }
+
+  const buttons: WritingDeskFooterButton[] = []
+
+  if (!chapter?.content && status !== 'successful') {
+    buttons.push({
+      action: 'generate',
+      label: generating ? '生成中...' : status === 'failed' ? '重试' : '开始创作',
+      variant: 'filled',
+      align: 'right',
+      disabled: !canGenerateChapter(chapterNumber) || props.autoWriteLocked || generating,
+      loading: generating,
+    })
+  } else {
+    if (hasChapterContent(chapterNumber)) {
+      buttons.push({
+        action: 'clear',
+        label: '清除本章',
+        variant: 'outlined',
+        align: 'left',
+        danger: true,
+        disabled: props.autoWriteLocked || generating,
+      })
+    }
+    buttons.push({
+      action: 'regenerate',
+      label: generating ? '生成中...' : '重新生成',
+      variant: 'outlined',
+      align: 'left',
+      danger: true,
+      disabled: props.autoWriteLocked || generating,
+      loading: generating,
+    })
+    if (status === 'successful') {
+      buttons.push(
+        {
+          action: 'optimize',
+          label: '分层优化',
+          variant: 'tonal',
+          align: 'right',
+          disabled: props.autoWriteLocked,
+        },
+        {
+          action: 'edit',
+          label: '手动编辑',
+          variant: 'filled',
+          align: 'right',
+          disabled: props.autoWriteLocked,
+        }
+      )
+    }
+  }
+
+  return {
+    visible: buttons.length > 0,
+    buttons,
+  }
+}
+
+function footerButtonClass(button: WritingDeskFooterButton): string {
+  if (button.variant === 'outlined') return 'md-btn md-btn-outlined md-ripple'
+  if (button.variant === 'tonal') return 'md-btn md-btn-tonal md-ripple'
+  return 'md-btn md-btn-filled md-ripple'
+}
+
+function footerMenuIcon(action: WritingDeskFooterAction) {
+  if (action === 'clear') return Trash2
+  if (action === 'regenerate') return RefreshCw
+  return MoreHorizontal
+}
+
+function toggleDangerMenu() {
+  dangerMenuOpen.value = !dangerMenuOpen.value
+}
+
+function closeDangerMenu() {
+  dangerMenuOpen.value = false
+}
+
+function handleDangerMenuAction(action: WritingDeskFooterAction) {
+  closeDangerMenu()
+  void handleFooterAction(action)
+}
+
+function handleDangerMenuFocusOut(event: FocusEvent) {
+  const next = event.relatedTarget
+  if (next instanceof Node && dangerMenuRef.value?.contains(next)) return
+  closeDangerMenu()
+}
+
+function handleDocumentClick(event: MouseEvent) {
+  if (!dangerMenuOpen.value) return
+  const target = event.target
+  if (!(target instanceof Node)) return
+  if (dangerMenuRef.value?.contains(target)) return
+  closeDangerMenu()
+}
+
+watch(
+  () => [
+    props.embedded,
+    selectedChapterNumber.value,
+    project.value,
+    generatingChapter.value,
+    evaluatingChapter.value,
+    isConfirmingVersion.value,
+    props.autoWriteLocked,
+    selectedChapter.value?.generation_status,
+    selectedChapter.value?.content,
+    selectedVersionIndex.value,
+    availableVersions.value.length,
+  ],
+  () => {
+    footerState.value = buildEmbeddedFooterState()
+    emit('footer-state', footerState.value)
+    closeDangerMenu()
+  },
+  { immediate: true, deep: true }
+)
+
+async function handleFooterAction(action: WritingDeskFooterAction) {
+  if (selectedChapterNumber.value === null) return
+  const chapterNumber = selectedChapterNumber.value
+
+  switch (action) {
+    case 'generate':
+      await generateChapter(chapterNumber)
+      return
+    case 'regenerate': {
+      const confirmed = await globalAlert.showConfirm(
+        '重新生成会覆盖当前章节的生成结果，确定继续吗？',
+        '重新生成确认'
+      )
+      if (confirmed) await regenerateChapter()
+      return
+    }
+    case 'clear':
+      await clearChapterForRewrite(chapterNumber)
+      return
+    case 'cancel':
+      cancelChapterTask()
+      return
+    case 'confirm-version':
+      await confirmVersionSelection()
+      return
+    case 'evaluate':
+      await evaluateChapter()
+      return
+    case 'optimize':
+      workspaceRef.value?.openChapterOptimizer()
+      return
+    case 'edit':
+      workspaceRef.value?.openChapterEditor()
+      return
+  }
+}
+
+defineExpose({ handleFooterAction, workspaceRef })
+
 const generateOutline = async () => {
   showGenerateOutlineModal.value = true
 }
@@ -695,6 +1039,7 @@ function restoreActiveChapterSelection() {
 
 onMounted(() => {
   if (!props.embedded) document.body.classList.add('m3-novel')
+  document.addEventListener('click', handleDocumentClick)
   void (async () => {
     await loadProject()
     const projectId = resolvedProjectId.value
@@ -714,6 +1059,7 @@ watch(
 )
 
 onUnmounted(() => {
+  document.removeEventListener('click', handleDocumentClick)
   if (!props.embedded) document.body.classList.remove('m3-novel')
 })
 </script>
@@ -753,17 +1099,6 @@ onUnmounted(() => {
   min-height: 0;
 }
 
-.wd-auto-write-banner {
-  flex: 0 0 auto;
-  padding: 10px 14px;
-  border-radius: var(--radius-md);
-  border: 1px solid color-mix(in srgb, var(--brand) 20%, transparent);
-  background: color-mix(in srgb, var(--brand-soft) 72%, var(--surface));
-  color: var(--text-secondary);
-  font-size: var(--text-sm);
-  line-height: 1.5;
-}
-
 .wd-desk__main {
   display: flex;
   flex-direction: column;
@@ -774,6 +1109,39 @@ onUnmounted(() => {
   flex: 1;
   min-height: 0;
   height: 100%;
+}
+
+.wd-desk__main-column {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.wd-desk__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-shrink: 0;
+  padding: 12px 18px;
+  border-top: 1px solid color-mix(in srgb, var(--line, var(--md-outline-variant)) 72%, transparent);
+  background: transparent;
+}
+
+.wd-desk__footer-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.wd-desk__footer-group--left {
+  margin-right: auto;
+}
+
+.wd-desk__footer-group--right {
+  margin-left: auto;
 }
 
 .wd-no-scrollbar {

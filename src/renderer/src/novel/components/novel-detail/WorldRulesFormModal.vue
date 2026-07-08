@@ -38,7 +38,8 @@ function save() {
     foot-class="novel-modal__foot--form"
     @close="emit('close')"
   >
-    <div class="md-text-field md-text-field-filled">
+    <div class="novel-modal__compact-form">
+      <div class="md-text-field md-text-field-filled">
       <label class="md-text-field-label" for="world-rules">核心规则</label>
       <textarea
         id="world-rules"
@@ -47,6 +48,7 @@ function save() {
         rows="10"
         placeholder="描述世界观的基本法则、力量体系与限制…"
       />
+    </div>
     </div>
 
     <template #footer>

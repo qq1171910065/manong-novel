@@ -24,7 +24,8 @@
     />
     <RelationshipsEditor v-else-if="props.field === 'relationships'" v-model="editableContent" />
     <FactionsEditor v-else-if="props.field === 'world_setting.factions'" v-model="editableContent" />
-    <div v-else-if="isSingleLineField" class="md-text-field md-text-field-filled">
+    <div v-else-if="isSingleLineField" class="novel-modal__compact-form">
+    <div class="md-text-field md-text-field-filled">
       <input
         v-model="editableContent"
         type="text"
@@ -32,13 +33,16 @@
         :placeholder="fieldPlaceholder"
       />
     </div>
-    <div v-else class="md-text-field md-text-field-filled">
+    </div>
+    <div v-else class="novel-modal__compact-form">
+    <div class="md-text-field md-text-field-filled">
       <textarea
         v-model="editableContent"
         class="md-textarea w-full"
         :rows="textareaRows"
         :placeholder="fieldPlaceholder"
       />
+    </div>
     </div>
 
     <template #footer>

@@ -110,7 +110,7 @@ const canSave = computed(() => {
     foot-class="novel-modal__foot--form"
     @close="emit('close')"
   >
-    <div class="character-form">
+    <div class="character-form novel-modal__compact-form">
       <div
         v-for="field in visibleFields"
         :key="field.key"

@@ -4,6 +4,7 @@ import { Copy, ImagePlus, Loader2, Sparkles, Users } from 'lucide-vue-next'
 import NovelModalShell from '@renderer/novel/components/shared/NovelModalShell.vue'
 import ArenaSelect from '@renderer/components/common/ArenaSelect.vue'
 import MaterialAiEditPanel from '@renderer/novel/components/shared/MaterialAiEditPanel.vue'
+import MaterialStyleOverviewPanel from '@renderer/novel/components/shared/MaterialStyleOverviewPanel.vue'
 import { confirm } from '@renderer/composables/useAppDialog'
 import { getMaterialLibraryConfig } from '@renderer/data/material-library-config'
 import {
@@ -29,7 +30,7 @@ import {
   setMaterialAutoEnrichOnSave,
 } from '@renderer/services/novel/material-library-prefs'
 import { activityLogService } from '@renderer/services/activity-log-service'
-import { buildCharacterPortraitDraft, generateCharacterPortrait } from '@renderer/services/image-service'
+import { buildCharacterPortraitDraft, generateCharacterPortrait, generateStyleCoverImage } from '@renderer/services/image-service'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
 
 const props = defineProps<{
@@ -51,11 +52,14 @@ const readonlyMode = ref(false)
 const saving = ref(false)
 const enriching = ref(false)
 const portraitLoading = ref(false)
+const coverLoading = ref(false)
 const focusedField = ref<MaterialFocusField | null>(null)
 const autoEnrichOnSave = ref(isMaterialAutoEnrichOnSave())
 const sourceItem = ref<MaterialItem | null>(null)
+const aiBusy = ref(false)
 
 const config = computed(() => getMaterialLibraryConfig(props.type))
+const isStyleChatLayout = computed(() => props.type === 'styles')
 
 const modalTitle = computed(() => {
   if (isNew.value) return config.value.createLabel
@@ -63,12 +67,29 @@ const modalTitle = computed(() => {
 })
 
 const modalSubtitle = computed(() => {
+  if (isStyleChatLayout.value) {
+    if (isNew.value) return '通过对话完善文风，保存后可在开书时一键选用'
+    const parts: string[] = []
+    if (sourceItem.value) parts.push(`更新于 ${formatMaterialDate(sourceItem.value.updatedAt)}`)
+    if (readonlyMode.value) parts.push('内置预设 · 只读')
+    return parts.join(' · ')
+  }
   if (isNew.value) return '填写后可保存到物料库，供开书与写作流程引用'
   const parts: string[] = []
   if (sourceItem.value) parts.push(`更新于 ${formatMaterialDate(sourceItem.value.updatedAt)}`)
   if (readonlyMode.value) parts.push('内置预设 · 只读')
   return parts.join(' · ')
 })
+
+const styleCategoryLabel = computed(() => {
+  const match = categoryOptions.value.find((option) => option.value === draft.value.category)
+  return match?.label ?? draft.value.category
+})
+
+const styleShellTitle = computed(() => (isStyleChatLayout.value ? '文风对话' : modalTitle.value))
+const styleShellSubtitle = computed(() =>
+  isStyleChatLayout.value ? '与文思一起打磨文风预设' : modalSubtitle.value
+)
 
 const isDirty = computed(() => JSON.stringify(draft.value) !== savedSnapshot.value)
 
@@ -96,23 +117,6 @@ const characterFields: Array<{
   { key: 'abilities', label: '能力', placeholder: '技能、特长或优势' },
 ]
 
-const styleFields: Array<{
-  key: MaterialFocusField
-  label: string
-  multiline?: boolean
-  placeholder: string
-}> = [
-  { key: 'genre', label: '题材', placeholder: '例如：仙侠、悬疑、都市' },
-  { key: 'style', label: '叙述风格', placeholder: '例如：诗意飘逸、克制理性' },
-  { key: 'tone', label: '基调口吻', placeholder: '例如：苍凉悠远、温暖舒缓' },
-  {
-    key: 'writingHints',
-    label: '写作提示',
-    multiline: true,
-    placeholder: '给 AI 写作的具体风格指引',
-  },
-]
-
 function snapshotDraft() {
   savedSnapshot.value = JSON.stringify(draft.value)
 }
@@ -122,6 +126,7 @@ function resetState() {
   saving.value = false
   enriching.value = false
   portraitLoading.value = false
+  coverLoading.value = false
 }
 
 function loadEditor() {
@@ -204,14 +209,27 @@ async function runEnrichCardMeta(silent = false) {
 
 async function saveItem() {
   if (readonlyMode.value) return
-  if (!draft.value.title.trim() && !draft.value.character.name?.trim()) {
+  if (props.type === 'styles') {
+    const hasStyleContent = [
+      draft.value.title,
+      draft.value.summary,
+      draft.value.genre,
+      draft.value.style,
+      draft.value.tone,
+      draft.value.writingHints,
+    ].some((value) => value.trim())
+    if (!hasStyleContent) {
+      globalAlert.showError('请先通过对话完善文风设定', '无法保存')
+      return
+    }
+  } else if (!draft.value.title.trim() && !draft.value.character.name?.trim()) {
     globalAlert.showError('请填写标题或角色姓名', '无法保存')
     return
   }
 
   saving.value = true
   try {
-    if (autoEnrichOnSave.value) {
+    if (!isStyleChatLayout.value && autoEnrichOnSave.value) {
       await runEnrichCardMeta(true)
     }
 
@@ -265,6 +283,28 @@ function duplicateCurrent() {
 
 function applyAiDraft(next: MaterialDraft) {
   draft.value = next
+}
+
+async function generateStyleCover() {
+  if (readonlyMode.value) return
+
+  coverLoading.value = true
+  try {
+    draft.value.coverUrl = await generateStyleCoverImage({
+      title: draft.value.title,
+      summary: draft.value.summary,
+      genre: draft.value.genre,
+      style: draft.value.style,
+      tone: draft.value.tone,
+      writingHints: draft.value.writingHints,
+      tags: draft.value.tags,
+    })
+    globalAlert.showSuccess('文风配图已生成', '生成成功')
+  } catch (error) {
+    globalAlert.showError(error instanceof Error ? error.message : '生成失败', 'AI 生图')
+  } finally {
+    coverLoading.value = false
+  }
 }
 
 async function generatePortrait() {
@@ -341,17 +381,79 @@ watch(
 <template>
   <NovelModalShell
     :show="show"
-    size="xl"
-    variant="form"
-    panel-class="material-edit-modal__panel"
-    :title="modalTitle"
-    :subtitle="modalSubtitle"
-    :aria-label="config.title"
-    foot-class="novel-modal__foot--form material-edit-modal__foot"
-    body-class="material-edit-modal__body-shell"
+    :size="isStyleChatLayout ? 'lg' : 'xl'"
+    :variant="isStyleChatLayout ? 'default' : 'form'"
+    :panel-class="
+      isStyleChatLayout
+        ? 'novel-modal__panel--chat material-edit-modal__panel--style-chat'
+        : 'material-edit-modal__panel'
+    "
+    :title="styleShellTitle"
+    :subtitle="styleShellSubtitle"
+    :aria-label="isStyleChatLayout ? '文风对话' : config.title"
+    :foot-class="isStyleChatLayout ? undefined : 'novel-modal__foot--form material-edit-modal__foot'"
+    :body-class="
+      isStyleChatLayout
+        ? 'material-edit-modal__body-shell inspiration-modal__body--chat'
+        : 'material-edit-modal__body-shell'
+    "
     @close="requestClose"
   >
-    <div class="material-edit-modal__split">
+    <template v-if="isStyleChatLayout" #toolbar>
+      <div class="inspiration-modal__toolbar">
+        <button
+          v-if="readonlyMode"
+          type="button"
+          class="novel-modal__toolbar-btn md-ripple"
+          @click="duplicateCurrent"
+        >
+          复制为我的
+        </button>
+        <template v-else>
+          <button
+            type="button"
+            class="novel-modal__toolbar-text-btn md-ripple"
+            :disabled="coverLoading || saving || aiBusy"
+            @click="generateStyleCover"
+          >
+            {{ coverLoading ? '生成中…' : 'AI 生图' }}
+          </button>
+          <button
+            type="button"
+            class="novel-modal__toolbar-btn md-ripple"
+            :disabled="saving || !isDirty || aiBusy"
+            @click="saveItem"
+          >
+            {{ saving ? '保存中…' : '保存' }}
+          </button>
+        </template>
+      </div>
+    </template>
+
+    <div
+      v-if="isStyleChatLayout"
+      class="material-edit-modal__style-chat-layout inspiration-chat-layout"
+    >
+      <MaterialStyleOverviewPanel
+        :draft="draft"
+        :category-label="styleCategoryLabel"
+        :is-refining="aiBusy"
+        :cover-url="draft.coverUrl || null"
+      />
+      <MaterialAiEditPanel
+        variant="chat"
+        embedded-modal
+        :show="show"
+        :type="type"
+        :draft="draft"
+        :accent="config.accent"
+        :readonly="readonlyMode"
+        @apply="applyAiDraft"
+        @busy="aiBusy = $event"
+      />
+    </div>
+
+    <div v-else class="material-edit-modal__split">
       <MaterialAiEditPanel
         column
         :show="true"
@@ -512,55 +614,11 @@ watch(
           </div>
         </section>
 
-        <section v-else class="material-edit-modal__section">
-          <h3 class="material-edit-modal__section-title">文风设定</h3>
-          <div class="material-edit-form">
-            <div
-              v-for="field in styleFields"
-              :key="field.key"
-              class="md-text-field md-text-field-filled"
-            >
-              <div class="material-edit-modal__label-row">
-                <label :for="`mat-style-${field.key}`" class="md-text-field-label">
-                  {{ field.label }}
-                </label>
-                <button
-                  v-if="!readonlyMode"
-                  type="button"
-                  class="material-edit-modal__ai-chip"
-                  @click="focusField(field.key)"
-                >
-                  AI
-                </button>
-              </div>
-              <textarea
-                v-if="field.multiline"
-                :id="`mat-style-${field.key}`"
-                v-model="(draft as any)[field.key]"
-                class="md-textarea w-full"
-                rows="4"
-                :readonly="readonlyMode"
-                :placeholder="field.placeholder"
-                @focus="focusField(field.key)"
-              />
-              <input
-                v-else
-                :id="`mat-style-${field.key}`"
-                v-model="(draft as any)[field.key]"
-                type="text"
-                class="md-text-field-input w-full"
-                :readonly="readonlyMode"
-                :placeholder="field.placeholder"
-                @focus="focusField(field.key)"
-              />
-            </div>
-          </div>
-        </section>
         </div>
       </div>
     </div>
 
-    <template #footer>
+    <template v-if="!isStyleChatLayout" #footer>
       <div class="material-edit-modal__foot-left">
         <label v-if="!readonlyMode" class="material-edit-modal__pref">
           <input type="checkbox" :checked="autoEnrichOnSave" @change="onAutoEnrichChange" />

@@ -225,7 +225,11 @@ export const readingDomain = {
   openReadingWindow: (projectId: string) =>
     ipcRenderer.invoke('reading:open', projectId) as Promise<{ ok: boolean; error?: string }>,
   closeReadingWindow: () => ipcRenderer.invoke('reading:close') as Promise<{ ok: boolean }>,
-  bossHideReadingWindow: () => ipcRenderer.invoke('reading:boss-hide') as Promise<{ ok: boolean }>,
+  returnToMainFromReading: () => ipcRenderer.invoke('reading:return-main') as Promise<{ ok: boolean }>,
+  bossHideReadingWindow: () => ipcRenderer.invoke('reading:boss-toggle') as Promise<{ ok: boolean }>,
+  toggleBossHide: () => ipcRenderer.invoke('reading:boss-toggle') as Promise<{ ok: boolean }>,
+  syncReadingBossKey: (payload: { enabled: boolean; accelerator: string }) =>
+    ipcRenderer.invoke('reading:sync-boss-key', payload) as Promise<{ ok: boolean }>,
 }
 
 export const windowControls = {

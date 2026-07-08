@@ -1,6 +1,13 @@
 import type { NovelProject } from '@shared/novel/types'
+import {
+  buildChapterContentRows,
+  extractForeshadowings,
+  type ForeshadowingItem,
+} from '@shared/novel/foreshadowing-tracker'
 import { parseLlmJsonObject } from './json-utils'
 import { chat } from './writing-service'
+
+export type { ForeshadowingItem } from '@shared/novel/foreshadowing-tracker'
 
 export interface EmotionPoint {
   chapter_number: number
@@ -18,17 +25,6 @@ export interface EmotionCurveResponse {
   emotion_points: EmotionPoint[]
   average_intensity: number
   emotion_distribution: Record<string, number>
-}
-
-export interface ForeshadowingItem {
-  id: string
-  description: string
-  planted_chapter: number
-  planted_chapter_title: string
-  expected_payoff_chapter?: number
-  actual_payoff_chapter?: number
-  status: 'planted' | 'paid_off' | 'overdue'
-  importance: 'short' | 'medium' | 'long'
 }
 
 export interface ForeshadowingResponse {
@@ -62,53 +58,8 @@ const NARRATIVE_PHASE_KEYWORDS: Record<string, string[]> = {
   回击4: ['揭露', '真相', '幕后', '黑手', '终极'],
 }
 
-const FORESHADOWING_PLANT_PATTERNS = [
-  /(?:似乎|好像|仿佛).*(?:隐藏|藏着|暗示)/,
-  /(?:不知道|不清楚|不明白).*(?:为什么|原因)/,
-  /(?:神秘|奇怪|诡异).*(?:人物|事件|现象)/,
-  /(?:留下|埋下|种下).*(?:伏笔|悬念|谜团)/,
-  /(?:日后|将来|以后).*(?:会|将)/,
-  /(?:这件事|此事).*(?:蹊跷|古怪|不简单)/,
-]
-
-const FORESHADOWING_PAYOFF_PATTERNS = [
-  /(?:原来|原来如此|所以)/,
-  /(?:真相|谜底|答案).*(?:揭开|揭晓|大白)/,
-  /(?:终于|最终).*(?:明白|理解|知道)/,
-  /(?:之前|当初|那时).*(?:原来|竟然)/,
-  /(?:恍然大悟|豁然开朗)/,
-]
-
-function chapterOutlineEntry(project: NovelProject, chapterNumber: number) {
-  return project.blueprint?.chapter_outline?.find((c) => c.chapter_number === chapterNumber)
-}
-
 function buildChapterRows(project: NovelProject) {
-  const chapters = [...(project.chapters || [])].sort(
-    (a, b) => a.chapter_number - b.chapter_number
-  )
-  const outlineOnly = (project.blueprint?.chapter_outline || []).filter(
-    (o) => !chapters.some((c) => c.chapter_number === o.chapter_number)
-  )
-
-  const fromChapters = chapters.map((chapter) => {
-    const outline = chapterOutlineEntry(project, chapter.chapter_number)
-    return {
-      chapter_number: chapter.chapter_number,
-      title: outline?.title || chapter.title || `第${chapter.chapter_number}章`,
-      summary: outline?.summary || chapter.summary || '',
-      content: chapter.content || '',
-    }
-  })
-
-  const fromOutline = outlineOnly.map((outline) => ({
-    chapter_number: outline.chapter_number,
-    title: outline.title || `第${outline.chapter_number}章`,
-    summary: outline.summary || '',
-    content: '',
-  }))
-
-  return [...fromChapters, ...fromOutline].sort((a, b) => a.chapter_number - b.chapter_number)
+  return buildChapterContentRows(project)
 }
 
 function analyzeEmotion(text: string): [string, number] {
@@ -182,87 +133,6 @@ function generateEmotionDescription(emotion: string, intensity: number, title: s
   return `《${title}》的情感基调为${emotion}`
 }
 
-function extractForeshadowings(
-  chaptersData: Array<{
-    chapter_number: number
-    title: string
-    summary: string
-    content: string
-  }>
-): ForeshadowingItem[] {
-  const foreshadowings: ForeshadowingItem[] = []
-  const plantedItems: Array<{
-    id: string
-    description: string
-    planted_chapter: number
-    planted_chapter_title: string
-    importance: 'short' | 'medium' | 'long'
-    actual_payoff_chapter?: number
-  }> = []
-
-  for (const chapter of chaptersData) {
-    const combined = `${chapter.content} ${chapter.summary}`
-
-    for (let i = 0; i < FORESHADOWING_PLANT_PATTERNS.length; i += 1) {
-      const pattern = FORESHADOWING_PLANT_PATTERNS[i]
-      const matches = combined.match(new RegExp(pattern.source, 'g'))
-      if (!matches) continue
-
-      for (const match of matches) {
-        const foreshadowingId = `fs_${chapter.chapter_number}_${i}_${plantedItems.length}`
-        const escaped = match.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-        const contextMatch = combined.match(new RegExp(`.{0,20}${escaped}.{0,20}`))
-        const description = contextMatch?.[0]?.trim() || match
-
-        plantedItems.push({
-          id: foreshadowingId,
-          description,
-          planted_chapter: chapter.chapter_number,
-          planted_chapter_title: chapter.title,
-          importance: i < 2 ? 'short' : i < 4 ? 'medium' : 'long',
-        })
-      }
-    }
-
-    for (const pattern of FORESHADOWING_PAYOFF_PATTERNS) {
-      if (!pattern.test(combined)) continue
-      for (const planted of plantedItems) {
-        if (planted.actual_payoff_chapter != null) continue
-        const keywords = planted.description.split(/\s+/).slice(0, 3)
-        if (keywords.some((word) => word.length > 1 && combined.includes(word))) {
-          planted.actual_payoff_chapter = chapter.chapter_number
-          break
-        }
-      }
-    }
-  }
-
-  const currentChapter = chaptersData.length
-    ? Math.max(...chaptersData.map((c) => c.chapter_number))
-    : 0
-  const importanceOffset: Record<string, number> = { short: 2, medium: 6, long: 15 }
-
-  for (const planted of plantedItems) {
-    const expectedPayoff = planted.planted_chapter + (importanceOffset[planted.importance] ?? 5)
-    let status: ForeshadowingItem['status'] = 'planted'
-    if (planted.actual_payoff_chapter != null) status = 'paid_off'
-    else if (currentChapter > expectedPayoff) status = 'overdue'
-
-    foreshadowings.push({
-      id: planted.id,
-      description: planted.description,
-      planted_chapter: planted.planted_chapter,
-      planted_chapter_title: planted.planted_chapter_title,
-      expected_payoff_chapter: expectedPayoff,
-      actual_payoff_chapter: planted.actual_payoff_chapter,
-      status,
-      importance: planted.importance,
-    })
-  }
-
-  return foreshadowings
-}
-
 export function getEmotionCurve(project: NovelProject): EmotionCurveResponse {
   const rows = buildChapterRows(project)
   const emotionPoints: EmotionPoint[] = []
@@ -298,8 +168,7 @@ export function getEmotionCurve(project: NovelProject): EmotionCurveResponse {
 }
 
 export function getForeshadowing(project: NovelProject): ForeshadowingResponse {
-  const rows = buildChapterRows(project)
-  const foreshadowings = extractForeshadowings(rows)
+  const foreshadowings = extractForeshadowings(project)
 
   return {
     project_id: project.id,

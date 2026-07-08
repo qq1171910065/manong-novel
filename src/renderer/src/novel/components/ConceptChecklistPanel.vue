@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import { ChevronDown } from 'lucide-vue-next'
 import {
+  buildConceptBlueprintPreview,
   resolveConceptBriefForDisplay,
   type ConceptConversationState,
 } from '@shared/novel/concept-checklist'
@@ -12,10 +14,17 @@ const props = defineProps<{
   isRefining?: boolean
 }>()
 
+const briefOpen = ref(true)
+const checklistOpen = ref(true)
+
 const display = computed(() =>
   resolveConceptBriefForDisplay(props.conversationState, props.mode, {
     isRefining: props.isRefining,
   })
+)
+
+const preview = computed(() =>
+  buildConceptBlueprintPreview(props.conversationState, props.mode)
 )
 
 const paragraphs = computed(() =>
@@ -23,145 +32,330 @@ const paragraphs = computed(() =>
     ? display.value.brief.split(/\n\s*\n/).filter((p) => p.trim())
     : []
 )
+
+const pendingItems = computed(() => preview.value.items.filter((item) => !item.done))
+
+function truncate(text: string, max = 72): string {
+  const trimmed = text.trim()
+  if (trimmed.length <= max) return trimmed
+  return `${trimmed.slice(0, max)}…`
+}
+
+function toggleBrief() {
+  briefOpen.value = !briefOpen.value
+}
+
+function toggleChecklist() {
+  checklistOpen.value = !checklistOpen.value
+}
 </script>
 
 <template>
-  <aside class="concept-brief-panel" aria-label="故事概念综述">
-    <div class="concept-brief-panel__head">
-      <h3 class="concept-brief-panel__title">故事概念</h3>
-      <span class="concept-brief-panel__progress">
+  <aside class="concept-panel" aria-label="故事设定">
+    <div class="concept-panel__head">
+      <h3 class="concept-panel__title">故事设定</h3>
+      <span class="concept-panel__progress">
         {{ display.completeness.completed }}/{{ display.completeness.total }}
       </span>
     </div>
 
     <div
-      class="concept-brief-panel__bar"
+      class="concept-panel__bar"
       role="progressbar"
       :aria-valuenow="display.completeness.percent"
       aria-valuemin="0"
       aria-valuemax="100"
     >
-      <div
-        class="concept-brief-panel__bar-fill"
-        :style="{ width: `${display.completeness.percent}%` }"
-      />
+      <div class="concept-panel__bar-fill" :style="{ width: `${display.completeness.percent}%` }" />
     </div>
 
-    <p class="concept-brief-panel__hint">
-      根据对话持续整合的故事概念，每轮 AI 回复后整体更新。
-    </p>
-
-    <div v-if="isRefining" class="concept-brief-panel__status concept-brief-panel__status--refining">
-      <span class="concept-brief-panel__spinner" aria-hidden="true" />
-      正在对照对话整合概念…
+    <div v-if="isRefining" class="concept-panel__status">
+      <span class="concept-panel__spinner" aria-hidden="true" />
+      整合设定中…
     </div>
 
-    <div v-else-if="display.status === 'empty'" class="concept-brief-panel__empty">
-      开始对话后，AI 会在这里整理出连贯的故事概念综述。
-    </div>
+    <div v-else class="concept-panel__accordions">
+      <section class="concept-panel__accordion" :class="{ 'is-open': briefOpen }">
+        <button
+          type="button"
+          class="concept-panel__accordion-head"
+          :aria-expanded="briefOpen"
+          @click="toggleBrief"
+        >
+          <span>综述</span>
+          <ChevronDown :size="14" class="concept-panel__accordion-chevron" aria-hidden="true" />
+        </button>
+        <div v-show="briefOpen" class="concept-panel__accordion-body">
+          <div v-if="!paragraphs.length" class="concept-panel__empty">
+            对话开始后，AI 会在这里整理故事综述。
+          </div>
+          <article v-else class="concept-panel__brief">
+            <p v-for="(para, index) in paragraphs" :key="index">{{ para }}</p>
+          </article>
+        </div>
+      </section>
 
-    <article v-else class="concept-brief-panel__body">
-      <p v-for="(para, index) in paragraphs" :key="index" class="concept-brief-panel__para">
-        {{ para }}
-      </p>
-    </article>
+      <section
+        class="concept-panel__accordion concept-panel__accordion--list"
+        :class="{ 'is-open': checklistOpen }"
+      >
+        <button
+          type="button"
+          class="concept-panel__accordion-head"
+          :aria-expanded="checklistOpen"
+          @click="toggleChecklist"
+        >
+          <span>清单</span>
+          <span v-if="pendingItems.length" class="concept-panel__accordion-badge">
+            {{ pendingItems.length }} 待确认
+          </span>
+          <ChevronDown :size="14" class="concept-panel__accordion-chevron" aria-hidden="true" />
+        </button>
+        <div v-show="checklistOpen" class="concept-panel__accordion-body">
+          <div v-if="display.status === 'empty'" class="concept-panel__empty">
+            已确认的设定会出现在这里。
+          </div>
+          <ul v-else class="concept-panel__list">
+            <li
+              v-for="item in preview.items"
+              :key="item.key"
+              class="concept-panel__item"
+              :class="{ 'is-done': item.done }"
+            >
+              <span class="concept-panel__item-mark" aria-hidden="true">{{ item.done ? '✓' : '○' }}</span>
+              <div class="concept-panel__item-body">
+                <span class="concept-panel__item-label">{{ item.label }}</span>
+                <p class="concept-panel__item-value">{{ truncate(item.value) }}</p>
+              </div>
+            </li>
+          </ul>
+        </div>
+      </section>
+    </div>
   </aside>
 </template>
 
 <style scoped>
-.concept-brief-panel {
-  width: 280px;
+.concept-panel {
+  width: 300px;
   flex-shrink: 0;
-  padding: 0.85rem;
-  border-radius: 12px;
-  border: 1px solid var(--md-sys-color-outline-variant, #e5e7eb);
-  background: var(--md-sys-color-surface-container-lowest, #fafafa);
-  align-self: stretch;
-  overflow-y: auto;
-}
-
-.concept-brief-panel__head {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
   gap: 0.5rem;
-  margin-bottom: 0.5rem;
-}
-
-.concept-brief-panel__title {
-  margin: 0;
-  font-size: 0.875rem;
-  font-weight: 600;
-}
-
-.concept-brief-panel__progress {
-  font-size: 0.75rem;
-  color: var(--md-sys-color-on-surface-variant, #666);
-}
-
-.concept-brief-panel__bar {
-  height: 4px;
-  border-radius: 999px;
-  background: #e5e7eb;
+  padding: 16px 18px 18px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  border-right: 1px solid color-mix(in srgb, var(--line, var(--md-outline-variant)) 88%, var(--text) 12%);
+  align-self: stretch;
   overflow: hidden;
-  margin-bottom: 0.65rem;
+  min-height: 0;
 }
 
-.concept-brief-panel__bar-fill {
+.concept-panel__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.45rem;
+  padding-bottom: 2px;
+}
+
+.concept-panel__title {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 650;
+  color: var(--text);
+}
+
+.concept-panel__progress {
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  color: var(--soft, var(--muted, #6b7280));
+  white-space: nowrap;
+}
+
+.concept-panel__bar {
+  height: 3px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted, #6b7280) 18%, transparent);
+  overflow: hidden;
+}
+
+.concept-panel__bar-fill {
   height: 100%;
-  background: var(--md-sys-color-primary, #6750a4);
-  transition: width 0.25s ease;
+  background: var(--brand, #6c63ff);
+  transition: width 0.2s ease;
 }
 
-.concept-brief-panel__hint {
-  margin: 0 0 0.75rem;
-  font-size: 0.75rem;
-  line-height: 1.45;
-  color: var(--md-sys-color-on-surface-variant, #666);
+.concept-panel__accordions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
-.concept-brief-panel__status {
+.concept-panel__accordion {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line, #e5e7eb) 55%, transparent);
+}
+
+.concept-panel__accordion--list {
+  flex: 1;
+  min-height: 0;
+  border-bottom: 0;
+}
+
+.concept-panel__accordion-head {
   display: flex;
   align-items: center;
-  gap: 0.45rem;
-  font-size: 0.8125rem;
-  color: var(--md-sys-color-on-surface-variant, #666);
-  font-style: italic;
+  gap: 0.35rem;
+  width: 100%;
+  padding: 0.45rem 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
 }
 
-.concept-brief-panel__spinner {
-  width: 0.75rem;
-  height: 0.75rem;
+.concept-panel__accordion-head:hover {
+  color: var(--brand, #6c63ff);
+}
+
+.concept-panel__accordion-badge {
+  margin-left: auto;
+  font-size: 0.625rem;
+  font-weight: 600;
+  color: var(--muted, #6b7280);
+}
+
+.concept-panel__accordion-chevron {
+  flex-shrink: 0;
+  color: var(--muted, #6b7280);
+  transition: transform 0.18s ease;
+}
+
+.concept-panel__accordion.is-open .concept-panel__accordion-chevron {
+  transform: rotate(180deg);
+}
+
+.concept-panel__accordion-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding-bottom: 0.35rem;
+}
+
+.concept-panel__accordion--list .concept-panel__accordion-body {
+  flex: 1;
+  overflow: hidden;
+}
+
+.concept-panel__status,
+.concept-panel__empty {
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--muted, #6b7280);
+}
+
+.concept-panel__status {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.concept-panel__spinner {
+  width: 0.7rem;
+  height: 0.7rem;
   border: 2px solid #e5e7eb;
-  border-top-color: var(--md-sys-color-primary, #6750a4);
+  border-top-color: var(--brand, #6c63ff);
   border-radius: 50%;
-  animation: concept-brief-spin 0.8s linear infinite;
+  animation: concept-spin 0.75s linear infinite;
 }
 
-@keyframes concept-brief-spin {
+@keyframes concept-spin {
   to {
     transform: rotate(360deg);
   }
 }
 
-.concept-brief-panel__empty {
-  font-size: 0.8125rem;
-  line-height: 1.55;
-  color: var(--md-sys-color-on-surface-variant, #888);
-}
-
-.concept-brief-panel__body {
+.concept-panel__list {
+  list-style: none;
   margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1;
 }
 
-.concept-brief-panel__para {
-  margin: 0 0 0.75rem;
-  font-size: 0.8125rem;
-  line-height: 1.6;
-  color: var(--md-sys-color-on-surface, #1a1a1a);
+.concept-panel__item {
+  display: flex;
+  gap: 0.45rem;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line, #e5e7eb) 80%, transparent);
 }
 
-.concept-brief-panel__para:last-child {
+.concept-panel__item:last-child {
+  border-bottom: none;
+}
+
+.concept-panel__item-mark {
+  flex-shrink: 0;
+  width: 1rem;
+  font-size: 0.6875rem;
+  line-height: 1.4;
+  color: var(--muted, #9ca3af);
+}
+
+.concept-panel__item.is-done .concept-panel__item-mark {
+  color: var(--brand, #6c63ff);
+}
+
+.concept-panel__item-body {
+  min-width: 0;
+}
+
+.concept-panel__item-label {
+  display: block;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--muted, #6b7280);
+  margin-bottom: 0.1rem;
+}
+
+.concept-panel__item-value {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--text, #111827);
+  word-break: break-word;
+}
+
+.concept-panel__item:not(.is-done) .concept-panel__item-value {
+  color: var(--muted, #9ca3af);
+}
+
+.concept-panel__brief {
+  overflow-y: auto;
+  max-height: min(28vh, 220px);
+  min-height: 0;
+}
+
+.concept-panel__brief p {
+  margin: 0 0 0.65rem;
+  font-size: 0.75rem;
+  line-height: 1.55;
+  color: var(--text-secondary, #374151);
+}
+
+.concept-panel__brief p:last-child {
   margin-bottom: 0;
 }
 </style>
