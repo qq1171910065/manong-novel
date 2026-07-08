@@ -6,7 +6,7 @@ export const THEME_PRESETS: Record<
 > = {
   'enterprise-light': {
     label: '墨玉（浅色）',
-    description: 'Arboris 默认墨玉风格，温润纸色与深玉绿主色',
+    description: 'Manong Novel 默认墨玉风格，温润纸色与深玉绿主色',
     primary: '#1F7A67',
     background: '#F5F5ED',
   },

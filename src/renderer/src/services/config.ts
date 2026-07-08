@@ -3,7 +3,8 @@ import { BUILTIN_PLATFORM_API_URL } from '@shared/app-release-config'
 /** localStorage 键：用户在本机覆盖的平台 API 根地址 */
 export const API_BASE_URL_STORAGE_KEY = 'mntools-api-base-url'
 
-const DEV_DEFAULT_API_BASE_URL = 'http://127.0.0.1:8010'
+/** 默认 Platform API 根地址（登录页写死，生产构建亦内置此值） */
+export const DEFAULT_PLATFORM_API_URL = 'http://local.czmanong.com'
 
 export function getDefaultApiBaseUrl(): string {
   const isDev = typeof import.meta !== 'undefined' && Boolean(import.meta.env?.DEV)
@@ -13,9 +14,9 @@ export function getDefaultApiBaseUrl(): string {
         ? String(import.meta.env.VITE_PLATFORM_API_URL).trim()
         : ''
     if (env) return env
-    return DEV_DEFAULT_API_BASE_URL
+    return DEFAULT_PLATFORM_API_URL
   }
-  return BUILTIN_PLATFORM_API_URL
+  return BUILTIN_PLATFORM_API_URL || DEFAULT_PLATFORM_API_URL
 }
 
 function normalizeApiBaseUrl(raw: string): string {

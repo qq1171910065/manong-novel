@@ -4,8 +4,8 @@ import type { MntoolsModuleId } from '../shared/types'
 const modules = ('request,sse,notification,storage,shell,window,file,tray'.split(',').filter(Boolean) as MntoolsModuleId[])
 
 createMntoolsApp({
-  appId: 'com.arboris.novel',
-  appName: 'Arboris Novel',
+  appId: 'com.manong.novel',
+  appName: 'Manong Novel',
   modules,
   features: {
     autoUpdate: false,

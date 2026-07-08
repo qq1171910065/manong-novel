@@ -22,7 +22,7 @@ export function createMntoolsApp(config: MntoolsAppConfig): void {
 
   const gotLock = app.requestSingleInstanceLock()
   if (!gotLock) {
-    console.warn('[app] 已有实例在运行，本次启动已退出。请先关闭其他 Arboris Novel 窗口或结束 electron 进程后再试。')
+    console.warn('[app] 已有实例在运行，本次启动已退出。请先关闭其他 Manong Novel 窗口或结束 electron 进程后再试。')
     app.quit()
     return
   }
