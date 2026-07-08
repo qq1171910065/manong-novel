@@ -1,6 +1,7 @@
 import type { Blueprint, ConversationMessage } from '@shared/novel/types'
 import type { UIControl } from '@renderer/services/novel/api'
 import { resolveDisplayAiMessage } from '@renderer/services/novel/json-utils'
+import { normalizeUiControl } from '@renderer/novel/utils/chat-options'
 import { randomUUID } from '@renderer/utils/id'
 import {
   coalescePolishBlueprintUpdates,
@@ -133,12 +134,15 @@ export function restorePolishSession(
         type: 'text_input',
         placeholder: '正在根据上次对话生成可应用的修改稿…',
       }
-    } else if (
-      lastParsed.ui_control &&
-      typeof lastParsed.ui_control === 'object' &&
-      (lastParsed.ui_control as UIControl).type !== 'single_choice'
-    ) {
-      currentUIControl = lastParsed.ui_control as UIControl
+    } else if (lastParsed.ui_control && typeof lastParsed.ui_control === 'object') {
+      currentUIControl =
+        normalizeUiControl(
+          lastParsed.ui_control,
+          resolveDisplayAiMessage(String(lastParsed.ai_message || ''))
+        ) || {
+          type: 'text_input',
+          placeholder,
+        }
     }
   }
 

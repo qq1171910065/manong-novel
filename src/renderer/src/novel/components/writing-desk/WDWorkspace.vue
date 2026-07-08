@@ -520,6 +520,8 @@ const currentComponentProps = computed(() => {
       generatingChapter: props.generatingChapter,
       autoWriteLocked: props.autoWriteLocked,
       embedded: props.embedded,
+      errorMessage: selectedChapter.value?.generation_error_message || '',
+      modelResponse: selectedChapter.value?.generation_error_response || '',
     }
   }
   return {

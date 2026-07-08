@@ -297,9 +297,13 @@ export const useNovelStore = defineStore('novel', () => {
       } catch (err) {
         if (isAbortError(err)) {
           writing.upsertChapterStatus(currentProject.value, chapterNumber, 'not_generated')
-        } else if (currentProject.value.chapters) {
-          const chapter = currentProject.value.chapters.find((item) => item.chapter_number === chapterNumber)
-          if (chapter) chapter.generation_status = 'failed'
+        } else {
+          try {
+            currentProject.value = await novelClient.getProject(projectId)
+          } catch {
+            const chapter = currentProject.value.chapters?.find((item) => item.chapter_number === chapterNumber)
+            if (chapter) chapter.generation_status = 'failed'
+          }
         }
         throw err
       } finally {

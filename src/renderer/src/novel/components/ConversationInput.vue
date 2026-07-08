@@ -15,11 +15,14 @@
           class="novel-chat-choice-card"
           :class="{ 'is-selected': isMultiChoice && selectedOptionIds.has(option.id) }"
           :disabled="loading"
-          @click="handleOptionClick(option.id, option.label)"
+          @click="handleOptionClick(option.id, option.label || option.description || '')"
         >
           <span class="novel-chat-choice-card__body">
-            <span class="novel-chat-choice-card__title">{{ option.label }}</span>
-            <span v-if="option.description" class="novel-chat-choice-card__desc">
+            <span class="novel-chat-choice-card__title">{{ option.label || option.description }}</span>
+            <span
+              v-if="option.description && option.label && option.description !== option.label"
+              class="novel-chat-choice-card__desc"
+            >
               {{ option.description }}
             </span>
           </span>

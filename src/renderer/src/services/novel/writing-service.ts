@@ -26,8 +26,7 @@ import {
 } from './json-utils'
 import {
   extractOptionsFromMessage,
-  normalizeOptionLabel,
-  parseOptionText,
+  normalizeUiControl,
 } from '@renderer/novel/utils/chat-options'
 import type {
   Blueprint,
@@ -108,6 +107,7 @@ import {
 } from '@shared/novel/chapter-writing-context'
 import { extractSingleChapterContent } from './chapter-splitter'
 import {
+  getChapterGenProgressSnapshot,
   patchChapterGenProgress,
   setChapterGenProgress,
 } from '@renderer/novel/composables/chapter-generation-progress'
@@ -266,6 +266,7 @@ export async function chat(
   let timeoutId: number | undefined
   let streamIdleId: number | undefined
   let abortListener: (() => void) | undefined
+  const streamCapture = { content: '', reasoning: '' }
 
   const resetTimeout = () => {
     if (timeoutId) window.clearTimeout(timeoutId)
@@ -345,6 +346,7 @@ export async function chat(
       {
         onChunk: (chunk) => {
           contentText += chunk
+          streamCapture.content = contentText
           if (
             params?.maxOutputChars &&
             countChapterChars(contentText) >= params.maxOutputChars &&
@@ -359,6 +361,7 @@ export async function chat(
         },
         onReasoningChunk: (chunk) => {
           reasoningText += chunk
+          streamCapture.reasoning = reasoningText
           if (params?.contentOnly) return
           if (!contentText.trim()) {
             pushVisibleChunk(chunk)
@@ -448,7 +451,13 @@ export async function chat(
       params.signal.removeEventListener('abort', abortListener)
     }
     if (pipelineId) {
-      pipelineLogService.finish(pipelineId, { error })
+      const partial = params?.contentOnly
+        ? pickContentOnlyPayload(streamCapture.content)
+        : pickBestLlmPayload(streamCapture.content, streamCapture.reasoning)
+      pipelineLogService.finish(pipelineId, {
+        error,
+        response: partial.trim() ? partial : undefined,
+      })
     }
     if (timedOut) {
       throw new Error(`流式响应超时（${Math.round(timeoutMs / 1000)}s 内无数据）`)
@@ -522,8 +531,9 @@ ui_control 规则：
 - 根据对话需要灵活决定 ui_control.type：开放性问题用 text_input；需要用户从若干方向中选一个用 single_choice；允许多选组合（如类型混搭、多重特质）用 multiple_choice
 - options 数量与内容应贴合当前问题，2-8 个均可，不要机械凑满固定数量；id 用简短序号即可
 - conversation_state.concept_brief：**每轮必填**。对照整段对话**整体改写**故事概念（2-5 段连贯 prose，像策划案梗概）。这是用户左侧唯一可见的设定板：禁止粘贴用户原话、禁止问答式分条罗列
-- conversation_state.checklist / checklist_answers：内部进度与结构化备份，每轮同步更新；用户可见内容只在 concept_brief 中体现
-- 用户补充或修改设定时，应合并进 concept_brief 整体叙述，而非另起一条问答记录
+- conversation_state.checklist / checklist_answers：内部进度与结构化备份，每轮同步更新；**每项 checklist_answers 必须是提炼后的 1-2 句，且写入语义正确的键**（类型≠主角，冲突≠火花）。用户一句透露多项时须同时更新多个键
+- 用户补充或修改设定时，应合并进 concept_brief 整体叙述，并拆解到对应 checklist 键，而非把整段用户发言塞进当前追问项
+- 主动引导用户补齐尚未完成的设定项，但左侧展示的内容必须是你提炼后的结果
 不要输出额外的文本或解释。
 `
 
@@ -624,35 +634,9 @@ function resolveAiMessage(raw: string, parsed: Record<string, unknown>): string 
   )
 }
 
-function normalizeChoiceOptions(options: UIControl['options']): UIControl['options'] {
-  if (!Array.isArray(options) || !options.length) return []
-  return options.map((option, idx) => {
-    const id = option.id || String(idx + 1)
-    const labelRaw = option.label || ''
-    const parsed = option.description
-      ? { label: normalizeOptionLabel(labelRaw), description: option.description.trim() }
-      : parseOptionText(labelRaw)
-    return { id, label: parsed.label, description: parsed.description }
-  })
-}
-
 function parseUiControl(raw: unknown, fallbackMessage: string): UIControl {
-  if (raw && typeof raw === 'object') {
-    const control = raw as UIControl
-    if (
-      (control.type === 'single_choice' || control.type === 'multiple_choice') &&
-      Array.isArray(control.options) &&
-      control.options.length
-    ) {
-      return {
-        type: control.type,
-        options: normalizeChoiceOptions(control.options),
-      }
-    }
-    if (control.type === 'text_input') {
-      return control
-    }
-  }
+  const normalized = normalizeUiControl(raw, fallbackMessage)
+  if (normalized) return normalized
   return buildUiControl(fallbackMessage)
 }
 
@@ -768,6 +752,7 @@ export async function converseConcept(
     changedFields: userChangedKeys,
     partialUpdate,
     baseBrief,
+    userValue: formattedInput.value,
   })
   const materialSupplement = buildConceptMaterialPromptSupplement(project)
   const revisionSupplement = inRevision
@@ -1914,6 +1899,7 @@ async function generatePolishedChapterVersion(input: {
   versionCount: number
   versionIndex: number
   onStream?: (chars: number, preview: string) => void
+  onDraft?: (raw: string) => void
 }): Promise<string> {
   const priorContent = input.prior.priorContent
 
@@ -1942,6 +1928,7 @@ async function generatePolishedChapterVersion(input: {
     targetWordCount: input.targetWordCount,
     onStream: input.onStream,
   })
+  input.onDraft?.(content)
 
   let normalized = normalizeGeneratedChapterContent(content, input.chapterNumber, priorContent)
   if (normalized.multiChapterTruncated) {
@@ -1969,6 +1956,7 @@ async function generatePolishedChapterVersion(input: {
         temperature: 0.65,
         onStream: input.onStream,
       })
+      input.onDraft?.(content)
       normalized = normalizeGeneratedChapterContent(content, input.chapterNumber, priorContent)
       sanitized = normalized.content
     }
@@ -1999,6 +1987,7 @@ async function generatePolishedChapterVersion(input: {
       temperature: 0.68,
       onStream: input.onStream,
     })
+    input.onDraft?.(content)
     normalized = normalizeGeneratedChapterContent(content, input.chapterNumber, priorContent)
     sanitized = normalized.content
   }
@@ -2042,6 +2031,32 @@ function buildRecentWordCountEntries(
     })
 }
 
+function resolveGenerationErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) return error.message.trim()
+  if (typeof error === 'string' && error.trim()) return error.trim()
+  return '未知错误'
+}
+
+function truncateGenerationErrorResponse(text: string, max = 12000): string {
+  const trimmed = text.trim()
+  if (!trimmed) return ''
+  if (trimmed.length <= max) return trimmed
+  return `${trimmed.slice(0, max)}\n\n…（已截断，共 ${trimmed.length} 字）`
+}
+
+export function markChapterGenerationFailed(
+  project: NovelProject,
+  chapterNumber: number,
+  error: unknown,
+  response?: string | null
+): Chapter {
+  const chapter = upsertChapterStatus(project, chapterNumber, 'failed')
+  chapter.generation_error_message = resolveGenerationErrorMessage(error)
+  const responseText = truncateGenerationErrorResponse(response || '')
+  chapter.generation_error_response = responseText || undefined
+  return chapter
+}
+
 export function upsertChapterStatus(
   project: NovelProject,
   chapterNumber: number,
@@ -2063,6 +2078,11 @@ export function upsertChapterStatus(
         generation_status: status,
         word_count: 0,
       }
+
+  if (status === 'generating' || status === 'not_generated' || status === 'successful') {
+    chapter.generation_error_message = undefined
+    chapter.generation_error_response = undefined
+  }
 
   const idx = project.chapters.findIndex((c) => c.chapter_number === chapterNumber)
   if (idx >= 0) project.chapters.splice(idx, 1, chapter)
@@ -2109,20 +2129,21 @@ export async function generateChapterContent(
     updatedAt: Date.now(),
   })
 
-  patchChapterGenProgress({
-    phase: 'planning',
-    message: `规划第 ${chapterNumber} 章导演脚本…`,
-  })
-  const mission = await generateChapterMission(
-    project,
-    chapterNumber,
-    outline,
-    prior,
-    options
-  )
-
-  const versions: string[] = []
+  let lastModelResponse = ''
   try {
+    patchChapterGenProgress({
+      phase: 'planning',
+      message: `规划第 ${chapterNumber} 章导演脚本…`,
+    })
+    const mission = await generateChapterMission(
+      project,
+      chapterNumber,
+      outline,
+      prior,
+      options
+    )
+
+    const versions: string[] = []
     for (let i = 0; i < versionCount; i += 1) {
       if (options?.signal?.aborted) {
         throw new DOMException('The operation was aborted.', 'AbortError')
@@ -2160,8 +2181,12 @@ export async function generateChapterContent(
         signal: options?.signal,
         versionCount,
         versionIndex: i,
+        onDraft: (raw) => {
+          if (raw.trim()) lastModelResponse = raw
+        },
         onStream: (chars, preview) => {
           streamedChars = chars
+          if (preview.trim()) lastModelResponse = preview
           patchChapterGenProgress({
             phase: 'writing',
             chars: streamedChars,
@@ -2180,6 +2205,7 @@ export async function generateChapterContent(
         message: `整理第 ${chapterNumber} 章正文（${countChapterChars(sanitized)} 字）…`,
       })
       versions.push(sanitized)
+      if (sanitized.trim()) lastModelResponse = sanitized
     }
 
     patchChapterGenProgress({
@@ -2205,6 +2231,17 @@ export async function generateChapterContent(
     project.chapters.sort((a, b) => a.chapter_number - b.chapter_number)
     projectStatsService.recordChapterComplete(project.id)
     return chapter
+  } catch (error) {
+    if (!(error instanceof DOMException && error.name === 'AbortError')) {
+      const snapshot = getChapterGenProgressSnapshot()
+      markChapterGenerationFailed(
+        project,
+        chapterNumber,
+        error,
+        lastModelResponse || snapshot?.streamPreview
+      )
+    }
+    throw error
   } finally {
     setChapterGenProgress(null)
   }

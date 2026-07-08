@@ -45,40 +45,31 @@
           </div>
 
           <div v-else class="material-library-grid">
-            <article
+            <MaterialLibraryCard
               v-for="item in filteredItems"
               :key="item.id"
-              class="material-library-card material-library-card--interactive"
-              :class="{ 'material-library-card--portrait': Boolean(getItemImageUrl(item)) }"
-              :style="{ '--accent': config.accent }"
+              :title="item.title"
+              :meta="cardMeta(item)"
+              :image-url="getItemImageUrl(item)"
+              :accent="config.accent"
+              :placeholder-icon="libraryIcon"
+              interactive
               @click="openEdit(item)"
             >
-              <div class="material-library-card__media">
-                <img v-if="getItemImageUrl(item)" :src="getItemImageUrl(item)!" :alt="item.title" />
-                <div v-else class="material-library-card__media-placeholder">
-                  <component :is="libraryIcon" :size="24" />
-                </div>
-              </div>
-              <div class="material-library-card__body">
-                <div class="material-library-card__head">
-                  <h3>{{ item.title }}</h3>
-                  <div class="material-library-card__actions">
-                    <MaterialLibraryCardMenu
-                      show-favorite
-                      :favorited="isFavorite(item.id)"
-                      :show-delete="!isMaterialBuiltIn(item)"
-                      :show-duplicate="isMaterialBuiltIn(item)"
-                      @preview="openPreview(item)"
-                      @edit="openEdit(item)"
-                      @duplicate="duplicateItem(item)"
-                      @favorite="toggleFavorite(item.id)"
-                      @delete="confirmRemoveItem(item)"
-                    />
-                  </div>
-                </div>
-                <p class="material-library-card__meta">{{ cardMeta(item) }}</p>
-              </div>
-            </article>
+              <template #actions>
+                <MaterialLibraryCardMenu
+                  show-favorite
+                  :favorited="isFavorite(item.id)"
+                  :show-delete="!isMaterialBuiltIn(item)"
+                  :show-duplicate="isMaterialBuiltIn(item)"
+                  @preview="openPreview(item)"
+                  @edit="openEdit(item)"
+                  @duplicate="duplicateItem(item)"
+                  @favorite="toggleFavorite(item.id)"
+                  @delete="confirmRemoveItem(item)"
+                />
+              </template>
+            </MaterialLibraryCard>
           </div>
         </div>
       </section>
@@ -107,6 +98,7 @@ import { computed, ref, watch } from 'vue'
 import { PenLine, Plus, Search, SlidersHorizontal, Users } from 'lucide-vue-next'
 import NovelPageShell from '@renderer/components/novel/NovelPageShell.vue'
 import ArenaSelect from '@renderer/components/common/ArenaSelect.vue'
+import MaterialLibraryCard from '@renderer/novel/components/shared/MaterialLibraryCard.vue'
 import MaterialPreviewDialog from '@renderer/novel/components/shared/MaterialPreviewDialog.vue'
 import MaterialLibraryEditModal from '@renderer/novel/components/shared/MaterialLibraryEditModal.vue'
 import MaterialLibraryCardMenu from '@renderer/novel/components/shared/MaterialLibraryCardMenu.vue'

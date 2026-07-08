@@ -47,6 +47,7 @@ import type {
 import type { SectionPolishContext } from '@renderer/novel/utils/section-polish'
 import { novelClient } from './client'
 import { isAbortError } from './async-task-registry'
+import { getChapterGenProgressSnapshot } from '@renderer/novel/composables/chapter-generation-progress'
 import { ensureBlueprintAssetIds } from './blueprint-asset'
 import { applyProjectModelPrefs } from './project-model'
 import * as writing from './writing-service'
@@ -363,11 +364,21 @@ export class NovelAPI {
       })
       return novelClient.saveProject(project)
     } catch (error) {
-      writing.upsertChapterStatus(
-        project,
-        chapterNumber,
-        isAbortError(error) ? 'not_generated' : 'failed'
-      )
+      if (isAbortError(error)) {
+        writing.upsertChapterStatus(project, chapterNumber, 'not_generated')
+      } else {
+        const chapter = project.chapters?.find((item) => item.chapter_number === chapterNumber)
+        if (!chapter?.generation_error_message) {
+          writing.markChapterGenerationFailed(
+            project,
+            chapterNumber,
+            error,
+            getChapterGenProgressSnapshot()?.streamPreview
+          )
+        } else {
+          writing.upsertChapterStatus(project, chapterNumber, 'failed')
+        }
+      }
       await novelClient.saveProject(project)
       throw error
     }

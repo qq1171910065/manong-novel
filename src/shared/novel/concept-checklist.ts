@@ -43,6 +43,22 @@ export const CONCEPT_CHECKLIST_LABELS: Record<ConceptChecklistKey, string> = {
   chapter_count: '预期篇幅',
 }
 
+/** 供 prompt 使用的设定项语义说明，帮助模型把用户发言拆解到正确字段 */
+export const CONCEPT_FIELD_MAPPING_GUIDE = `
+## 设定项字段映射（必须严格遵守）
+用户一句发言可能同时涉及多项，你必须**拆解**后分别写入 checklist_answers 对应键，禁止把整段用户原话塞进单一字段：
+- spark：最原始的概念、画面、核心 hook（「一个能品尝谎言的侦探」）
+- genre_tone：宏观类型 + 情感基调/世界质感（赛博朋克、黑色幽默、史诗奇幻）
+- prose_style：叙事语言与笔触（冷峻、诗性、第一人称、快节奏）
+- protagonist：主角身份、驱动力、致命缺陷（不是类型，不是冲突本身）
+- central_conflict：贯穿全书的主线障碍与内外斗争
+- antagonist：对立力量/反派/系统性阻力（具体人或抽象力量）
+- inciting_incident：打破平衡、迫使主角行动的催化事件
+- core_theme：故事想探讨的深层主题或命题
+- working_title：暂定书名或标题方向
+- chapter_count：预期章节体量（如「12 章左右」「中篇」）
+`.trim()
+
 const SIMPLE_REQUIRED: ConceptChecklistKey[] = [
   'spark',
   'genre_tone',
@@ -107,6 +123,58 @@ export function firstIncompleteTopic(
 
 export function isChecklistComplete(checklist: ConceptChecklist, mode: WritingMode): boolean {
   return firstIncompleteTopic(checklist, mode) === null
+}
+
+const EXPLICIT_CHECKLIST_LABEL_ENTRIES = (
+  Object.entries(CONCEPT_CHECKLIST_LABELS) as Array<[ConceptChecklistKey, string]>
+).sort((a, b) => b[1].length - a[1].length)
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function truncateChecklistAnswer(text: string, max = 200): string {
+  const trimmed = text.trim()
+  if (!trimmed) return ''
+  if (trimmed.length <= max) return trimmed
+  return `${trimmed.slice(0, max - 1)}…`
+}
+
+/** 识别「文风笔触：…」「类型与基调：…」等显式字段修改 */
+export function parseExplicitChecklistFieldEdit(
+  message: string
+): { key: ConceptChecklistKey; value: string } | null {
+  const text = message.trim()
+  if (!text) return null
+
+  for (const [key, label] of EXPLICIT_CHECKLIST_LABEL_ENTRIES) {
+    const pattern = new RegExp(`^${escapeRegExp(label)}\\s*[：:]\\s*(.+)$`, 's')
+    const match = text.match(pattern)
+    const value = match?.[1]?.trim()
+    if (value) return { key, value }
+  }
+
+  return null
+}
+
+function collectExplicitChecklistEditsFromHistory(
+  history: Array<{ role: string; content: string }>
+): ConceptChecklistAnswers {
+  const edits: ConceptChecklistAnswers = {}
+
+  for (const msg of history) {
+    if (msg.role !== 'user') continue
+    try {
+      const input = JSON.parse(msg.content) as { value?: string | null }
+      const explicit = parseExplicitChecklistFieldEdit(String(input.value ?? ''))
+      if (explicit) edits[explicit.key] = explicit.value
+    } catch {
+      const explicit = parseExplicitChecklistFieldEdit(msg.content)
+      if (explicit) edits[explicit.key] = explicit.value
+    }
+  }
+
+  return edits
 }
 
 const TOPIC_PATTERNS: Array<{ key: ConceptChecklistKey; patterns: RegExp[] }> = [
@@ -259,27 +327,48 @@ export function applyUserAnswerToChecklist(
     return { checklist, answers, drafts, pendingTopic }
   }
 
+  const explicitEdit = parseExplicitChecklistFieldEdit(value)
+  if (explicitEdit) {
+    const { key, value: explicitValue } = explicitEdit
+    drafts[key] = explicitValue
+    pendingTopic = key
+
+    const chapterCount = parseExpectedChapterCount(explicitValue)
+    if (key === 'chapter_count' && chapterCount !== null) {
+      const chapterLabel = `${chapterCount} 章左右`
+      answers.chapter_count = chapterLabel
+      drafts.chapter_count = chapterLabel
+      checklist.chapter_count = true
+    }
+
+    return { checklist, answers, drafts, pendingTopic }
+  }
+
   const multiHints = extractMultiTopicHintsFromMessage(value, previousPending)
 
   for (const [key, hint] of Object.entries(multiHints) as Array<[ConceptChecklistKey, string]>) {
     drafts[key] = mergeDraftText(drafts[key], hint)
   }
 
-  // 用户点选/短答：优先归入 AI 上一轮追问项
+  const hintedKeys = Object.keys(multiHints) as ConceptChecklistKey[]
+
   if (previousPending) {
-    drafts[previousPending] = mergeDraftText(drafts[previousPending], value)
-    pendingTopic = previousPending
+    // 多设定并存时按线索拆分，不把整句塞进 pending 项
+    if (hintedKeys.length === 0) {
+      drafts[previousPending] = mergeDraftText(drafts[previousPending], value)
+    }
+    pendingTopic = hintedKeys.includes(previousPending)
+      ? previousPending
+      : hintedKeys[0] ?? previousPending
+  } else if (hintedKeys.length > 0) {
+    pendingTopic = hintedKeys[0]
   } else {
     const inferred = inferTopicFromUserAnswer(value)
-    const targetTopic =
-      inferred ??
-      (Object.keys(multiHints)[0] as ConceptChecklistKey | undefined) ??
-      firstIncompleteTopic(checklist, mode)
-
-    if (targetTopic) {
-      drafts[targetTopic] = mergeDraftText(drafts[targetTopic], value)
-      pendingTopic = targetTopic
+    if (inferred) {
+      drafts[inferred] = mergeDraftText(drafts[inferred], value)
+      pendingTopic = inferred
     }
+    // 无明确字段时不强行归入 firstIncompleteTopic，交给模型拆解
   }
 
   // 仅篇幅类可本地确定性勾选；其余勾选权交给 AI 回传的 checklist
@@ -323,6 +412,9 @@ export function detectUserEditTopics(
   if (!text) return pendingTopic ? [pendingTopic] : []
 
   const topics = new Set<ConceptChecklistKey>()
+  const explicit = parseExplicitChecklistFieldEdit(text)
+  if (explicit) topics.add(explicit.key)
+
   const hints = extractMultiTopicHintsFromMessage(text, pendingTopic)
   for (const key of Object.keys(hints) as ConceptChecklistKey[]) {
     topics.add(key)
@@ -330,7 +422,7 @@ export function detectUserEditTopics(
 
   const detected = detectTopicFromMessage(text) ?? inferTopicFromUserAnswer(text)
   if (detected) topics.add(detected)
-  if (pendingTopic) topics.add(pendingTopic)
+  if (pendingTopic && !explicit) topics.add(pendingTopic)
 
   return [...topics]
 }
@@ -339,6 +431,9 @@ export function isExplicitUnlockRequest(
   message: string,
   key: ConceptChecklistKey
 ): boolean {
+  const explicit = parseExplicitChecklistFieldEdit(message)
+  if (explicit?.key === key) return true
+
   const patterns = UNLOCK_REQUEST_PATTERNS[key]
   if (!patterns?.length) return false
   const text = String(message ?? '').trim()
@@ -529,6 +624,33 @@ export function mergeConceptBriefForTurn(
   return modelBrief || baseBrief || composeConceptBriefFromAnswers(options.answers, options.mode)
 }
 
+export function buildUserMessageHintsSupplement(
+  userValue: string | null | undefined,
+  pendingTopic?: ConceptChecklistKey | null
+): string {
+  const value = String(userValue ?? '').trim()
+  if (!value) return ''
+
+  const hints = extractMultiTopicHintsFromMessage(value, pendingTopic)
+  const keys = Object.keys(hints) as ConceptChecklistKey[]
+  if (!keys.length) {
+    return `
+## 用户本轮发言（须由你拆解写入对应 checklist 键）
+原文：${value.slice(0, 500)}
+- 请判断涉及哪些设定项，分别提炼写入 checklist_answers；**禁止**把整段原话塞进单一字段
+`
+  }
+
+  const lines = keys.map(
+    (key) => `- ${CONCEPT_CHECKLIST_LABELS[key]}：（线索：${hints[key]?.slice(0, 200)}）`
+  )
+  return `
+## 用户本轮发言线索（须拆解写入对应 checklist 键，禁止整段塞进一项）
+${lines.join('\n')}
+- 若线索跨多项，须**同时**更新 concept_brief 与多个 checklist 键；未涉及的已确定项保持不变
+`
+}
+
 export function buildChecklistPromptSupplement(
   checklist: ConceptChecklist,
   answers: ConceptChecklistAnswers,
@@ -540,6 +662,7 @@ export function buildChecklistPromptSupplement(
     changedFields?: ConceptChecklistKey[]
     partialUpdate?: boolean
     baseBrief?: string
+    userValue?: string | null
   }
 ): string {
   const required = requiredChecklistKeys(mode)
@@ -565,6 +688,7 @@ export function buildChecklistPromptSupplement(
 
   const lockedSupplement = buildLockedFieldsSupplement(lockedFields, answers)
   const changedLabels = changedFields.map((key) => CONCEPT_CHECKLIST_LABELS[key])
+  const userHintsSupplement = buildUserMessageHintsSupplement(options?.userValue, options?.forcedNextTopic)
   const briefInstruction = partialUpdate
     ? `
 **局部更新模式（优先速度与稳定）**
@@ -579,12 +703,14 @@ ${(options?.baseBrief || '（尚无综述）').slice(0, 1200)}`
 
   if (allDone) {
     return `
+${CONCEPT_FIELD_MAPPING_GUIDE}
+${userHintsSupplement}
 ## 系统清单进度（必须遵守，不可违背）
 ${lines.join('\n')}
 ${lockedSupplement}
 所有必填项已在系统侧标记完成。请：
 1. ${partialUpdate ? '仅按用户本轮诉求**局部更新** concept_brief（未涉及段落原样保留）' : '在 conversation_state.concept_brief 输出**完整故事概念综述**（2-5 段，整合全部已知设定，像策划案梗概；禁止问答式罗列或粘贴用户原话）'}
-2. 同步输出完整的 checklist 与 checklist_answers（内部用，勿在 concept_brief 中重复分条抄录）
+2. 同步输出完整的 checklist 与 checklist_answers（内部用，每项须为**提炼后的 1-2 句**，写入**语义正确**的键；勿在 concept_brief 中重复分条抄录）
 3. 输出简短总结性收尾；**不要**设置 is_complete 或 ready_for_blueprint（何时进入蓝图确认由用户自行点击按钮决定）
 ${briefInstruction}
 `
@@ -594,15 +720,17 @@ ${briefInstruction}
   const completedLabels = required.filter((key) => checklist[key]).map((key) => CONCEPT_CHECKLIST_LABELS[key])
 
   return `
+${CONCEPT_FIELD_MAPPING_GUIDE}
+${userHintsSupplement}
 ## 系统清单进度（必须遵守，不可违背）
 ${lines.join('\n')}
 ${lockedSupplement}
-**本轮必须收集：${nextLabel}**
+**本轮优先引导补齐：${nextLabel}**（若用户已透露相关信息，须先拆解写入对应键，再自然追问下一缺失项）
 - 禁止重复询问已标记 ✓ 的项（${completedLabels.join('、') || '无'}）
 - 已锁定 🔒 项不得擅自修改，除非用户明确要求
 ${briefInstruction}
-- 同步更新 checklist / checklist_answers（内部进度与结构化备份，勿在 concept_brief 里逐条复读）
-- 若用户一句透露多项设定，须同时更新 concept_brief 与 checklist
+- 同步更新 checklist / checklist_answers（每项须提炼后写入**正确**字段；checklist 勾选仅针对已有高质量摘要的项）
+- 若用户一句透露多项设定，须**同时**更新 concept_brief 与多个 checklist 键，勿只改一项
 `
 }
 
@@ -669,26 +797,36 @@ export function extractMultiTopicHintsFromMessage(
   const text = message.trim()
   if (!text) return {}
 
+  const explicit = parseExplicitChecklistFieldEdit(text)
+  if (explicit) {
+    return { [explicit.key]: explicit.value }
+  }
+
   const hints: ConceptChecklistDrafts = {}
   const segments = splitMessageSegments(text)
   const candidates = segments.length ? segments : [text]
+  const assignedSegments = new Set<string>()
 
   for (const segment of candidates) {
     const topic = detectTopicFromMessage(segment) ?? inferTopicFromUserAnswer(segment)
     if (topic) {
       hints[topic] = mergeDraftText(hints[topic], segment)
+      assignedSegments.add(segment)
     }
   }
 
   for (const segment of candidates) {
+    if (assignedSegments.has(segment)) continue
     for (const { key, patterns } of HEURISTIC_CLUES) {
       if (patterns.some((pattern) => pattern.test(segment))) {
         hints[key] = mergeDraftText(hints[key], segment)
+        assignedSegments.add(segment)
+        break
       }
     }
   }
 
-  if (pendingTopic && !hints[pendingTopic]) {
+  if (pendingTopic && !hints[pendingTopic] && Object.keys(hints).length === 0) {
     hints[pendingTopic] = mergeDraftText(hints[pendingTopic], text)
   }
 
@@ -697,8 +835,8 @@ export function extractMultiTopicHintsFromMessage(
     hints.chapter_count = mergeDraftText(hints.chapter_count, `${chapterCount} 章左右`)
   }
 
-  // 首句长描述默认视为核心火花
-  if (!Object.keys(hints).length && text.length >= 8) {
+  // 首句长描述且无其他线索时，仅作 spark 线索供模型参考，不当作已确认答案
+  if (!Object.keys(hints).length && text.length >= 12 && !pendingTopic) {
     hints.spark = text
   }
 
@@ -765,9 +903,30 @@ export function reconcileConceptConversationState(
     latestUserValue?: string | null
   }
 ): ConceptConversationState {
+  const checklist = normalizeChecklist(state.checklist)
   const answers: ConceptChecklistAnswers = { ...(state.checklist_answers ?? {}) }
   const drafts: ConceptChecklistDrafts = { ...(state.checklist_drafts ?? {}) }
   const brief = state.concept_brief?.trim() || ''
+
+  const explicitEdits = options?.history
+    ? collectExplicitChecklistEditsFromHistory(options.history)
+    : {}
+  const latestExplicit = parseExplicitChecklistFieldEdit(String(options?.latestUserValue ?? ''))
+  if (latestExplicit) explicitEdits[latestExplicit.key] = latestExplicit.value
+
+  for (const [rawKey, rawValue] of Object.entries(explicitEdits)) {
+    const key = rawKey as ConceptChecklistKey
+    const value = rawValue?.trim()
+    if (!value) continue
+    drafts[key] = value
+    if (key === 'chapter_count') {
+      const count = parseExpectedChapterCount(value)
+      if (count !== null) {
+        answers.chapter_count = `${count} 章左右`
+        checklist.chapter_count = true
+      }
+    }
+  }
 
   const fromLatestUser = parseExpectedChapterCount(String(options?.latestUserValue ?? '').trim())
   const userText = options?.history ? buildUserConversationTextFromHistory(options.history) : ''
@@ -794,7 +953,9 @@ export function reconcileConceptConversationState(
 
   return {
     ...state,
+    checklist,
     checklist_answers: answers,
+    checklist_drafts: drafts,
   }
 }
 
@@ -959,10 +1120,14 @@ export function buildConceptBlueprintPreview(
   const items: ConceptBlueprintPreviewItem[] = required.map((key) => {
     const answer = answers[key]?.trim()
     const draft = drafts[key]?.trim()
-    let value = answer || draft || '待补充'
+    const hasRefinedAnswer = Boolean(
+      answer &&
+        !PLACEHOLDER_ANSWER_RE.test(answer) &&
+        (checklist[key] || isRefinedConceptAnswer(answer, draft))
+    )
+    let value = hasRefinedAnswer ? answer! : '待补充'
     if (key === 'chapter_count' && expectedCount > 0) {
       value =
-        (draft && parseExpectedChapterCount(draft) === expectedCount ? draft : null) ||
         (answer && parseExpectedChapterCount(answer) === expectedCount ? answer : null) ||
         chaptersLabel
     }
@@ -970,7 +1135,7 @@ export function buildConceptBlueprintPreview(
       key,
       label: CONCEPT_CHECKLIST_LABELS[key],
       value,
-      done: Boolean(checklist[key] && (answer || draft || key === 'chapter_count')),
+      done: Boolean(checklist[key] && (hasRefinedAnswer || (key === 'chapter_count' && expectedCount > 0))),
     }
   })
 

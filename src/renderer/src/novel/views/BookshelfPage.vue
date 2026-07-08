@@ -60,41 +60,28 @@
           </div>
 
           <div v-else class="material-library-grid">
-            <article
+            <MaterialLibraryCard
               v-for="project in filteredProjects"
               :key="project.id"
-              class="material-library-card material-library-card--portrait bookshelf-card"
-              :style="{ '--accent': resolveAccent(project.genre || '') }"
+              :title="project.title"
+              :meta="projectMeta(project)"
+              :image-url="project.cover_url"
+              :accent="resolveAccent(project.genre || '')"
+              :placeholder-icon="BookOpen"
             >
-              <div class="material-library-card__media">
-                <img
-                  v-if="project.cover_url"
-                  :src="project.cover_url"
-                  :alt="project.title"
+              <template #actions>
+                <MaterialLibraryCardMenu
+                  :show-favorite="false"
+                  :show-edit="false"
+                  :show-preview="false"
+                  show-create
+                  show-read
+                  @create="enterProject(project)"
+                  @read="openProjectReading(project)"
+                  @delete="handleDeleteProject(project.id)"
                 />
-                <div v-else class="material-library-card__media-placeholder">
-                  <BookOpen :size="24" />
-                </div>
-              </div>
-              <div class="material-library-card__body">
-                <div class="material-library-card__head">
-                  <h3>{{ project.title }}</h3>
-                  <div class="material-library-card__actions">
-                    <MaterialLibraryCardMenu
-                      :show-favorite="false"
-                      :show-edit="false"
-                      :show-preview="false"
-                      show-create
-                      show-read
-                      @create="enterProject(project)"
-                      @read="openProjectReading(project)"
-                      @delete="handleDeleteProject(project.id)"
-                    />
-                  </div>
-                </div>
-                <p class="material-library-card__meta">{{ projectMeta(project) }}</p>
-              </div>
-            </article>
+              </template>
+            </MaterialLibraryCard>
           </div>
         </div>
       </section>
@@ -156,6 +143,7 @@ import {
 } from 'lucide-vue-next'
 import NovelPageShell from '@renderer/components/novel/NovelPageShell.vue'
 import ArenaSelect from '@renderer/components/common/ArenaSelect.vue'
+import MaterialLibraryCard from '@renderer/novel/components/shared/MaterialLibraryCard.vue'
 import MaterialLibraryCardMenu from '@renderer/novel/components/shared/MaterialLibraryCardMenu.vue'
 import WritingModeSelectModal from '@renderer/novel/components/shared/WritingModeSelectModal.vue'
 import BookshelfImportModal from '@renderer/novel/components/shared/BookshelfImportModal.vue'

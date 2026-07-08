@@ -131,7 +131,7 @@
 
 .material-library-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(192px, 1fr));
   gap: 16px;
   align-content: start;
   padding: 0 2px 8px;
@@ -139,7 +139,7 @@
 
 @media (min-width: 900px) {
   .material-library-grid {
-    grid-template-columns: repeat(auto-fill, minmax(188px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(216px, 1fr));
   }
 }
 
@@ -154,7 +154,7 @@
 
 .material-library-card {
   --accent: var(--brand);
-  --media-aspect: 16 / 10;
+  --media-aspect: 3 / 4;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -173,10 +173,6 @@
 
 .material-library-card--interactive {
   cursor: pointer;
-}
-
-.material-library-card--portrait {
-  --media-aspect: 3 / 4;
 }
 
 .material-library-card:hover {
@@ -198,6 +194,25 @@
   color: rgba(255, 255, 255, 0.92);
 }
 
+.material-library-card__media.is-empty::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 28% 18%, rgba(255, 255, 255, 0.16), transparent 52%),
+    radial-gradient(circle at 78% 82%, rgba(255, 255, 255, 0.08), transparent 48%);
+  pointer-events: none;
+}
+
+.material-library-card__media:not(.is-empty)::after {
+  content: '';
+  position: absolute;
+  inset: auto 0 0;
+  height: 32%;
+  background: linear-gradient(to top, rgba(15, 75, 68, 0.22), transparent);
+  pointer-events: none;
+}
+
 .material-library-card__media img {
   width: 100%;
   height: 100%;
@@ -207,12 +222,32 @@
 }
 
 .material-library-card__media-placeholder {
+  position: relative;
   display: grid;
   place-items: center;
   width: 100%;
   height: 100%;
-  color: rgba(255, 252, 247, 0.88);
-  opacity: 0.92;
+  color: rgba(255, 252, 247, 0.9);
+}
+
+.material-library-card__media-watermark {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: clamp(3.2rem, 42%, 4.8rem);
+  font-weight: 700;
+  color: rgba(255, 252, 247, 0.14);
+  line-height: 1;
+  user-select: none;
+  pointer-events: none;
+}
+
+.material-library-card__media-icon {
+  position: relative;
+  z-index: 1;
+  opacity: 0.94;
+  filter: drop-shadow(0 2px 8px rgba(15, 75, 68, 0.18));
 }
 
 .material-library-card__body {

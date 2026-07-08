@@ -17,6 +17,7 @@ import {
   buildFallbackRelationshipsFromConcept,
   reconcileConceptConversationState,
   resolveBlueprintExpectedChapterCount,
+  parseExplicitChecklistFieldEdit,
   parseExpectedChapterCount,
   resolveConceptBriefForDisplay,
   resolveFinalConceptAnswers,
@@ -51,8 +52,43 @@ describe('extractMultiTopicHintsFromMessage', () => {
   })
 })
 
+describe('parseExplicitChecklistFieldEdit', () => {
+  it('识别显式字段前缀', () => {
+    expect(
+      parseExplicitChecklistFieldEdit(
+        '文风笔触：激烈狂野：高强度、多样玩法直击高潮，节奏如风暴席卷。'
+      )
+    ).toEqual({
+      key: 'prose_style',
+      value: '激烈狂野：高强度、多样玩法直击高潮，节奏如风暴席卷。',
+    })
+  })
+})
+
 describe('applyUserAnswerToChecklist', () => {
-  it('选项/短答优先写入 pending_topic 草稿', () => {
+  it('显式修改文风时写入 drafts，answers 由模型提炼后再展示', () => {
+    const result = applyUserAnswerToChecklist(
+      {
+        pending_topic: 'protagonist',
+        checklist: { prose_style: true, protagonist: false },
+        checklist_answers: { prose_style: '人物你给我设计; 旧文风' },
+        checklist_drafts: {
+          prose_style: '人物你给我设计; 激烈狂野',
+          protagonist: '人物你给我设计',
+        },
+      },
+      '文风笔触：激烈狂野：高强度、多样玩法直击高潮，节奏如风暴席卷。',
+      'full'
+    )
+
+    expect(result.pendingTopic).toBe('prose_style')
+    expect(result.answers.prose_style).toBe('人物你给我设计; 旧文风')
+    expect(result.drafts.prose_style).toContain('激烈狂野')
+    expect(result.drafts.protagonist).toBe('人物你给我设计')
+    expect(result.checklist.prose_style).toBe(true)
+  })
+
+  it('单题短答且无其他线索时归入 pending_topic', () => {
     const result = applyUserAnswerToChecklist(
       { pending_topic: 'genre_tone', checklist: {}, checklist_answers: {} },
       '近未来赛博朋克',
@@ -60,6 +96,17 @@ describe('applyUserAnswerToChecklist', () => {
     )
     expect(result.drafts.genre_tone).toContain('近未来')
     expect(result.checklist.genre_tone).toBe(false)
+  })
+
+  it('多设定并存时不把整句塞进 pending_topic', () => {
+    const result = applyUserAnswerToChecklist(
+      { pending_topic: 'genre_tone', checklist: {}, checklist_answers: {} },
+      '赛博朋克黑色幽默，主角是个能品尝谎言的侦探',
+      'full'
+    )
+    expect(result.drafts.genre_tone).toBeTruthy()
+    expect(result.drafts.protagonist).toBeTruthy()
+    expect(result.drafts.genre_tone).not.toContain('品尝谎言')
   })
 
   it('篇幅回答可本地勾选 chapter_count', () => {
@@ -372,6 +419,32 @@ describe('reconcileConceptConversationState', () => {
     const chapterItem = preview.items.find((item) => item.key === 'chapter_count')
     expect(chapterItem?.value).toContain('5')
     expect(preview.expectedChaptersLabel).toContain('5')
+  })
+
+  it('显式文风修改仅保留 drafts，answers 待模型提炼', () => {
+    const state = reconcileConceptConversationState(
+      {
+        checklist: { prose_style: true },
+        checklist_answers: { prose_style: '冷峻第三人称，节奏紧凑' },
+        checklist_drafts: { prose_style: '人物你给我设计; 激烈狂野' },
+      },
+      'full',
+      {
+        history: [
+          {
+            role: 'user',
+            content: JSON.stringify({
+              value: '文风笔触：激烈狂野：高强度、多样玩法直击高潮，节奏如风暴席卷。',
+            }),
+          },
+        ],
+      }
+    )
+    const preview = buildConceptBlueprintPreview(state, 'full')
+    const proseItem = preview.items.find((item) => item.key === 'prose_style')
+    expect(proseItem?.value).toContain('冷峻')
+    expect(proseItem?.value).not.toContain('激烈狂野')
+    expect(state.checklist_drafts?.prose_style).toContain('激烈狂野')
   })
 })
 
