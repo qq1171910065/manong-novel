@@ -1,5 +1,7 @@
 /** 解析对话选项文本为标题 + 描述 */
 
+import type { UIControl } from '@shared/novel/types'
+
 export interface ParsedChoiceOption {
   id: string
   label: string
@@ -28,6 +30,83 @@ export function parseOptionText(raw: string): Pick<ParsedChoiceOption, 'label' |
   }
 
   return { label: text }
+}
+
+function pickOptionString(raw: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = raw[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+  }
+  return ''
+}
+
+export function normalizeChoiceOption(option: unknown, idx: number): ParsedChoiceOption | null {
+  if (typeof option === 'string') {
+    const parsed = parseOptionText(option)
+    if (!parsed.label) return null
+    return { id: String(idx + 1), ...parsed }
+  }
+
+  if (!option || typeof option !== 'object') return null
+  const raw = option as Record<string, unknown>
+
+  const id = pickOptionString(raw, ['id']) || String(idx + 1)
+  let label = normalizeOptionLabel(pickOptionString(raw, ['label', 'title', 'text', 'name', 'value']))
+  let description = pickOptionString(raw, ['description', 'desc', 'detail', 'subtitle']) || undefined
+
+  if (label) {
+    if (!description) {
+      const parsed = parseOptionText(label)
+      label = parsed.label
+      description = parsed.description
+    }
+  } else if (description) {
+    const parsed = parseOptionText(description)
+    label = parsed.label || description
+    description = parsed.description
+  }
+
+  if (!label) return null
+  return { id, label, description }
+}
+
+export function normalizeChoiceOptions(options: unknown): ParsedChoiceOption[] {
+  if (!Array.isArray(options) || !options.length) return []
+  return options
+    .map((option, idx) => normalizeChoiceOption(option, idx))
+    .filter((option): option is ParsedChoiceOption => option !== null)
+}
+
+export function normalizeUiControl(raw: unknown, fallbackMessage?: string): UIControl | null {
+  if (!raw || typeof raw !== 'object') return null
+  const control = raw as Record<string, unknown>
+  const type = control.type
+
+  if (
+    (type === 'single_choice' || type === 'multiple_choice') &&
+    Array.isArray(control.options) &&
+    control.options.length
+  ) {
+    let options = normalizeChoiceOptions(control.options)
+    if (!options.length && fallbackMessage?.trim()) {
+      options = extractOptionsFromMessage(fallbackMessage)
+    }
+    if (!options.length) return null
+    return {
+      type,
+      options,
+    }
+  }
+
+  if (type === 'text_input') {
+    return {
+      type: 'text_input',
+      placeholder: typeof control.placeholder === 'string' ? control.placeholder : undefined,
+    }
+  }
+
+  return null
 }
 
 export function extractOptionsFromMessage(message: string): ParsedChoiceOption[] {

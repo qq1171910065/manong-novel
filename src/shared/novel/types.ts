@@ -116,6 +116,10 @@ export interface Chapter {
     | 'evaluation_failed'
     | 'waiting_for_confirm'
     | 'successful'
+  /** 最近一次生成失败时的错误说明 */
+  generation_error_message?: string
+  /** 最近一次生成失败时模型已返回的正文（用于排查） */
+  generation_error_response?: string
   word_count?: number
 }
 

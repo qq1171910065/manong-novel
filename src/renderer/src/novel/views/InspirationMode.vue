@@ -277,6 +277,7 @@ import {
   LONG_TASK_NO_TOTAL_TIMEOUT,
 } from '@renderer/novel/composables/useBlueprintGeneration'
 import { resolveDisplayAiMessage } from '@renderer/services/novel/json-utils'
+import { normalizeUiControl } from '@renderer/novel/utils/chat-options'
 import { randomUUID } from '@renderer/utils/id'
 import { formatGatewayContentFilterError } from '@renderer/services/gateway-api'
 import { resolveWritingMode } from '@shared/novel/writing-mode'
@@ -778,7 +779,11 @@ const restoreConversation = async (projectId: string) => {
       if (lastAssistantMsgStr) {
         const lastAssistantMsg = JSON.parse(lastAssistantMsgStr)
 
-        currentUIControl.value = lastAssistantMsg.ui_control || { ...DEFAULT_UI_CONTROL }
+        currentUIControl.value =
+          normalizeUiControl(
+            lastAssistantMsg.ui_control,
+            resolveDisplayAiMessage(String(lastAssistantMsg.ai_message || ''))
+          ) || { ...DEFAULT_UI_CONTROL }
         novelStore.currentConversationState = rebuildFullConceptStateFromHistory(
           project.conversation_history,
           projectWritingMode.value,

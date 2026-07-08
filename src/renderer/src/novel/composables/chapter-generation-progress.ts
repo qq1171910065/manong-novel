@@ -32,6 +32,10 @@ export function patchChapterGenProgress(patch: Partial<ChapterGenProgress>): voi
   }
 }
 
+export function getChapterGenProgressSnapshot(): ChapterGenProgress | null {
+  return activeProgress.value ? { ...activeProgress.value } : null
+}
+
 export function useChapterGenProgress() {
   return { activeProgress }
 }

@@ -1,6 +1,6 @@
 {
   "name": "manong-novel",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Manong Novel — open-source AI novel writing desktop app for authors (Electron + Vue 3)",
   "main": "./out/main/index.js",
   "license": "MIT",
