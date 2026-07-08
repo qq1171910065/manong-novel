@@ -67,17 +67,30 @@ async function createBlob(filePath) {
 async function main() {
   const remoteSha = (await api(`/git/ref/heads/${branch}`)).object.sha
   const localSha = git('git rev-parse HEAD')
-  const mergeBase = git(`git merge-base ${remoteSha} ${localSha}`)
 
   if (remoteSha === localSha) {
     console.log('[push-github-via-api] remote already up to date')
-  } else if (mergeBase !== remoteSha) {
-    throw new Error(
-      `Remote ${branch} diverged (remote=${remoteSha.slice(0, 7)}, merge-base=${mergeBase.slice(0, 7)}). Resolve manually.`
-    )
+    if (!tag) return
   }
 
-  const diffLines = git(`git diff --name-status ${remoteSha}..${localSha}`).split('\n').filter(Boolean)
+  let diffLines = []
+  let baseTreeSha = ''
+
+  try {
+    const mergeBase = git(`git merge-base ${remoteSha} ${localSha}`)
+    if (mergeBase !== remoteSha) {
+      throw new Error(`Remote ${branch} diverged`)
+    }
+    diffLines = git(`git -c core.quotePath=false diff --name-status ${remoteSha}..${localSha}`).split('\n').filter(Boolean)
+    baseTreeSha = (await api(`/git/commits/${remoteSha}`)).tree.sha
+  } catch {
+    console.warn('[push-github-via-api] remote commit not in local git, diffing from shared ancestor c299524')
+    diffLines = git('git -c core.quotePath=false diff --name-status c299524..HEAD')
+      .split('\n')
+      .filter(Boolean)
+    baseTreeSha = (await api(`/git/commits/${remoteSha}`)).tree.sha
+  }
+
   if (!diffLines.length && remoteSha === localSha) {
     if (!tag) return
   } else if (!diffLines.length) {
@@ -86,7 +99,7 @@ async function main() {
 
   console.log(`[push-github-via-api] remote=${remoteSha.slice(0, 7)} local=${localSha.slice(0, 7)} files=${diffLines.length}`)
 
-  const { tree: baseTree } = await api(`/git/commits/${remoteSha}`)
+  const baseTree = baseTreeSha ? { sha: baseTreeSha } : null
   const entries = []
   let processed = 0
 
@@ -116,7 +129,7 @@ async function main() {
   const { sha: newTreeSha } = await api('/git/trees', {
     method: 'POST',
     body: {
-      base_tree: baseTree.sha,
+      ...(baseTree ? { base_tree: baseTree.sha } : {}),
       tree: entries.map((entry) => {
         if (!entry.sha) {
           return { path: entry.path, mode: entry.mode, sha: null }
