@@ -6,6 +6,8 @@
 
 **Manong Novel** 是一款面向小说作者的 AI 写作桌面客户端。基于 Electron + Vue 3 构建，支持从灵感构思、大纲蓝图到章节生成的完整创作流程，并可接入自有的 Platform 后端与 AI 网关。
 
+> Keywords: AI novel writing, fiction author tool, chapter generator, story outline, writing desk, LLM, Electron desktop app, 小说写作, AI 写小说, 网文创作
+
 [English](#english) · [下载](#下载) · [快速开始](#快速开始) · [开发](#开发) · [发布](#发布)
 
 ---
@@ -15,8 +17,8 @@
 | 平台 | 链接 |
 |------|------|
 | **最新 Release** | https://github.com/qq1171910065/manong-novel/releases/latest |
-| **v0.1.1（Windows）** | [manong-novel-0.1.1-setup.exe](https://github.com/qq1171910065/manong-novel/releases/download/v0.1.1/manong-novel-0.1.1-setup.exe) |
-| **v0.1.1（macOS）** | [manong-novel-0.1.1.dmg](https://github.com/qq1171910065/manong-novel/releases/download/v0.1.1/manong-novel-0.1.1.dmg) |
+| **v0.1.2（Windows）** | [manong-novel-0.1.2-setup.exe](https://github.com/qq1171910065/manong-novel/releases/download/v0.1.2/manong-novel-0.1.2-setup.exe) |
+| **v0.1.2（macOS）** | [manong-novel-0.1.2.dmg](https://github.com/qq1171910065/manong-novel/releases/download/v0.1.2/manong-novel-0.1.2.dmg) |
 | **全部版本** | https://github.com/qq1171910065/manong-novel/releases |
 
 > Windows / macOS 安装包由 GitHub Actions 在推送 `v*` tag 时自动构建。
