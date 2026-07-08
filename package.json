@@ -1,6 +1,6 @@
 {
   "name": "manong-novel",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Manong Novel — 为小说家打造的 AI 写作桌面客户端",
   "main": "./out/main/index.js",
   "license": "MIT",
@@ -13,6 +13,7 @@
     "preview": "electron-vite preview",
     "build:unpack": "pnpm run build && electron-builder --dir --config electron-builder.config.cjs --publish never",
     "build:win": "pnpm run build && electron-builder --win --config electron-builder.config.cjs --publish never",
+    "build:mac": "pnpm run build && electron-builder --mac --config electron-builder.config.cjs --publish never",
     "publish:github": "powershell -ExecutionPolicy Bypass -File scripts/publish-github.ps1",
     "push": "powershell -ExecutionPolicy Bypass -File scripts/push.ps1"
   },
