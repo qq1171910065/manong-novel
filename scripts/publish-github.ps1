@@ -64,8 +64,11 @@ if ($LASTEXITCODE -ne 0) {
   throw 'GITHUB_TOKEN invalid or expired. Generate a new Classic PAT with repo scope.'
 }
 
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
 $repoJson = & $gh api "repos/$GithubOwner/$GithubRepo" 2>$null
 $repoExists = $LASTEXITCODE -eq 0
+$ErrorActionPreference = $prevEap
 
 if (-not $repoExists -and -not $SkipCreate) {
   Write-Host "Creating public repository $GithubOwner/$GithubRepo ..."
