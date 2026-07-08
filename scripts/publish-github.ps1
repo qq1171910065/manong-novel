@@ -73,7 +73,7 @@ $ErrorActionPreference = $prevEap
 if (-not $repoExists -and -not $SkipCreate) {
   Write-Host "Creating public repository $GithubOwner/$GithubRepo ..."
   & $gh repo create $GithubRepo --public `
-    --description 'Manong Novel — AI 小说写作桌面客户端 (Electron)' `
+    --description 'AI-powered novel writing desktop client (Electron + Vue 3)' `
     --homepage "https://github.com/$GithubOwner/$GithubRepo"
   if ($LASTEXITCODE -ne 0) {
     throw @"

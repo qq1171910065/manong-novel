@@ -1,67 +1,130 @@
-# Arboris Novel Desktop
+# Manong Novel
 
-基于 [Arena](https://github.com/qq1171910065/manong-arena) Electron 基座，整合 [Arboris-Novel](https://github.com/t59688/arboris-novel) 开源写作项目的前后端，形成桌面端 AI 写作应用。
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/qq1171910065/manong-novel)](https://github.com/qq1171910065/manong-novel/releases/latest)
+[![CI](https://github.com/qq1171910065/manong-novel/actions/workflows/ci.yml/badge.svg)](https://github.com/qq1171910065/manong-novel/actions/workflows/ci.yml)
 
-## 架构
+**Manong Novel** 是一款面向小说作者的 AI 写作桌面客户端。基于 Electron + Vue 3 构建，支持从灵感构思、大纲蓝图到章节生成的完整创作流程，并可接入自有的 Platform 后端与 AI 网关。
 
-```
-Electron 壳层 (Arena 基座)
-├── 登录 / 账户 / AI 网关 / 设置中心
-└── WebView 嵌入 Arboris 前端（保留原 UI 与业务）
+[English](#english) · [下载](#下载) · [快速开始](#快速开始) · [开发](#开发) · [发布](#发布)
 
-FastAPI 后端 (Arboris)
-├── 小说 / 大纲 / 写作 / 分析等业务 API
-├── Arena 认证桥接 (/api/arena/auth-bridge)
-└── AI 网关同步 (/api/arena/gateway-sync)
-```
+---
 
-## 功能分工
+## 下载
 
-| 模块 | 来源 | 说明 |
-|------|------|------|
-| 登录、Platform 账户 | Arena 基座 | 邮箱验证码 / 密码 / 微信 OAuth |
-| 设置中心、AI 网关、密钥 | Arena 基座 | ProfilePage 中的账户与模型配置 |
-| 写作台 UI、大纲、角色 | Arboris 前端 | 原 Vue + Tailwind 样式完整保留 |
-| 小说业务 API | Arboris 后端 | FastAPI + SQLite（桌面默认） |
+| 平台 | 链接 |
+|------|------|
+| **最新 Release** | https://github.com/qq1171910065/manong-novel/releases/latest |
+| **v0.1.0（Windows）** | [arboris-novel-desktop-0.1.0-setup.exe](https://github.com/qq1171910065/manong-novel/releases/download/v0.1.0/arboris-novel-desktop-0.1.0-setup.exe) |
+| **全部版本** | https://github.com/qq1171910065/manong-novel/releases |
+
+> Windows 安装包由 GitHub Actions 自动构建。macOS 版本暂未纳入 Release 流程。
+
+---
+
+## 功能
+
+- **书架与项目管理** — 创建、导入、导出小说项目
+- **灵感模式** — 对话式构思，生成概念与创作方向
+- **蓝图系统** — 世界观、角色、关系、章节大纲的结构化管理
+- **写作台** — AI 辅助章节生成、润色、版本切换
+- **素材库** — 角色库、文风库，可复用于多个项目
+- **阅读窗口** — 独立阅读模式，支持章节导航与 TTS
+- **AI 网关** — 通过 Platform 后端配置模型与 API 密钥
+
+---
 
 ## 环境要求
 
-- Node.js 18+，pnpm
-- Python 3.10+
-- Platform 后端（登录与 AI 网关，在应用设置中配置 URL）
+- **Node.js** 18+
+- **pnpm** 9+
+- **Platform 后端**（登录与 AI 网关，可在应用设置中配置 URL）
+
+---
 
 ## 快速开始
 
 ```bash
+git clone https://github.com/qq1171910065/manong-novel.git
+cd manong-novel
 pnpm install
-pnpm --dir frontend install
-cd backend && python -m pip install -r requirements.txt && cd ..
 pnpm dev
 ```
 
-首次启动后：
+首次启动：
 
 1. 在登录页完成 Platform 账户登录
-2. 进入「写作台」，自动桥接 Arboris 本地用户并注入 token
-3. AI 调用走 Arena 网关（设置 → 模型 / 密钥）
+2. 进入「书架」创建或打开项目
+3. 在「设置 → 模型 / 密钥」中配置 AI 网关
 
-## 端口
+可选环境变量见 [`.env.example`](.env.example)。
 
-| 服务 | 端口 |
-|------|------|
-| Arboris 后端 | 8765 |
-| Arboris 前端 (Vite) | 5173 |
-| Electron 壳层 | electron-vite 自动分配 |
+---
 
-## 构建
+## 开发
 
 ```bash
-pnpm build:frontend
-pnpm build
-pnpm build:win
+pnpm dev          # 启动 Electron 开发模式
+pnpm typecheck    # TypeScript 类型检查
+pnpm test         # 运行单元测试
+pnpm build        # 构建渲染层与主进程
+pnpm build:win    # 打包 Windows 安装包（本地）
 ```
+
+项目结构：
+
+```
+src/main/       主进程（窗口、IPC、托盘）
+src/preload/    预加载桥接
+src/renderer/   Vue 3 渲染层
+src/shared/     跨进程共享逻辑与 Prompt
+```
+
+更多约定见 [AGENTS.md](AGENTS.md)。
+
+---
+
+## 发布
+
+GitHub Release 由 tag 推送自动触发：
+
+```bash
+# 更新 package.json 中的 version 后
+git tag v0.1.1
+pnpm publish:github
+```
+
+CI 会在 push 到 `master` 时运行 typecheck / test / build；推送 `v*` tag 时构建 Windows 安装包并发布到 [Releases](https://github.com/qq1171910065/manong-novel/releases)。
+
+---
+
+## 仓库
+
+| 平台 | 地址 |
+|------|------|
+| GitHub（开源） | https://github.com/qq1171910065/manong-novel |
+| Gitee（镜像） | https://gitee.com/czmanong/novel |
+
+---
 
 ## 致谢
 
-- [t59688/arboris-novel](https://github.com/t59688/arboris-novel)
-- [qq1171910065/manong-arena](https://github.com/qq1171910065/manong-arena)
+本项目基于以下开源项目演进：
+
+- [t59688/arboris-novel](https://github.com/t59688/arboris-novel) — 小说写作业务逻辑与 UI 参考
+- [qq1171910065/manong-arena](https://github.com/qq1171910065/manong-arena) — Electron 基座与 Platform 集成
+
+---
+
+## License
+
+[MIT](LICENSE)
+
+---
+
+## English
+
+**Manong Novel** is an AI-powered desktop writing client for novelists, built with Electron and Vue 3. It covers the full workflow from inspiration and blueprint planning to chapter generation, with optional integration to your own Platform backend and AI gateway.
+
+- **Download:** [Latest Release](https://github.com/qq1171910065/manong-novel/releases/latest)
+- **Docs:** see sections above (Quick Start, Development, Releases)
