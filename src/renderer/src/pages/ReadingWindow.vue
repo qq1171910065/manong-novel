@@ -166,15 +166,12 @@ const tts = useReadingTts({
 const {
   isActive: ttsActive,
   isPlaying: ttsPlaying,
-  isPaused: ttsPaused,
   isLoading: ttsLoading,
   currentSegmentIndex: ttsCurrentSegmentIndex,
   segments: ttsSegments,
   errorMessage: ttsErrorMessage,
   setSegmentElement,
   start: startTts,
-  pause: pauseTts,
-  resume: resumeTts,
   stop: stopTts,
   toggle: toggleTts,
 } = tts
