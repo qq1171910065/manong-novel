@@ -45,7 +45,7 @@ function submit() {
     </div>
 
     <p class="factory-reset-lead">
-      此操作将删除 Arboris Novel 在本机的全部数据，包括小说项目、素材库、阅读进度、操作记录与应用设置，并退出当前登录。
+      此操作将删除 Manong Novel 在本机的全部数据，包括小说项目、素材库、阅读进度、操作记录与应用设置，并退出当前登录。
     </p>
 
     <ul class="factory-reset-list">

@@ -1,7 +1,7 @@
 {
-  "name": "arboris-novel-desktop",
+  "name": "manong-novel",
   "version": "0.1.0",
-  "description": "Arboris Novel — 为小说家打造的 AI 写作桌面客户端",
+  "description": "Manong Novel — 为小说家打造的 AI 写作桌面客户端",
   "main": "./out/main/index.js",
   "license": "MIT",
   "scripts": {

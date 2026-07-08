@@ -73,7 +73,7 @@ export const dataManagementService = {
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
-    link.download = `arboris-novel-backup-${stamp}.json`
+    link.download = `manong-novel-backup-${stamp}.json`
     link.click()
     URL.revokeObjectURL(url)
   },

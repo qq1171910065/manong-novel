@@ -7,7 +7,7 @@ import ProfileSectionLayout from './ProfileSectionLayout.vue'
 <template>
   <ProfileSectionLayout
     title="项目文档"
-    desc="Arboris Novel 完整使用说明，帮助中心问答基于本文档。"
+    desc="Manong Novel 完整使用说明，帮助中心问答基于本文档。"
   >
     <div class="portal-doc-content">
       <MarkdownContent :source="projectDocsRaw" />

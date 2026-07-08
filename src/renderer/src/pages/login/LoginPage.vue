@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { CheckCircle2, Lock, Mail, QrCode, Server, X } from 'lucide-vue-next'
+import { Lock, Mail, QrCode, X } from 'lucide-vue-next'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NAlert, NButton, NInput, NInputGroup } from '../../ui'
-import { authApi, completeAuthSession, fetchPlatformPing, getPortalSession } from '@renderer/services'
+import { authApi, completeAuthSession, getPortalSession } from '@renderer/services'
 import { toWechatLoginQrDataUrl } from './wechat-qr'
 import { isWebRuntime } from '@renderer/composables/useRuntime'
-import { getApiBaseUrl, getDefaultApiBaseUrl, saveApiBaseUrlFromInput } from '@renderer/services/config'
+import { DEFAULT_PLATFORM_API_URL, saveApiBaseUrlFromInput } from '@renderer/services/config'
 import type { LoginCapabilities, PortalSession } from '@shared/types'
 import { loginBundledAssets } from '@renderer/data/login-bundled-assets'
 import SleepyCatWidget from '@renderer/components/support/SleepyCatWidget.vue'
@@ -19,7 +19,7 @@ const props = defineProps<{
 type LoginMethod = 'email' | 'password'
 type AuthView = 'login' | 'register' | 'wechat'
 
-const LOGIN_CACHE_KEY = 'arena-login-cache-v2'
+const LOGIN_CACHE_KEY = 'manong-novel-login-cache-v1'
 
 interface LoginCache {
   account?: string
@@ -62,14 +62,7 @@ const captchaCode = ref('')
 const captchaLoading = ref(false)
 const loading = ref(false)
 const error = ref('')
-const settingsError = ref('')
 const countdown = ref(0)
-const apiBaseInput = ref(getApiBaseUrl())
-const settingsSaved = ref(false)
-const pingOk = ref(false)
-const pingLoading = ref(false)
-const configOpen = ref(false)
-const configWrapRef = ref<HTMLElement | null>(null)
 
 const wechatState = ref('')
 const wechatQr = ref('')
@@ -206,20 +199,13 @@ function closeLogin() {
   void window.windowControls?.close?.()
 }
 
-function toggleConfigOpen() {
-  configOpen.value = !configOpen.value
-}
-
-function closeConfigPopover() {
-  configOpen.value = false
-}
-
-function onDocumentClick(event: MouseEvent) {
-  if (!configOpen.value) return
-  const root = configWrapRef.value
-  if (root && !root.contains(event.target as Node)) {
-    closeConfigPopover()
+function ensurePlatformApiUrl(): boolean {
+  const r = saveApiBaseUrlFromInput(DEFAULT_PLATFORM_API_URL)
+  if (!r.ok) {
+    error.value = 'Platform 地址配置无效'
+    return false
   }
+  return true
 }
 
 function startCountdown(sec = 60) {
@@ -527,50 +513,7 @@ async function submitWechatLink() {
 }
 
 function syncApiBaseForRequest(): boolean {
-  const r = saveApiBaseUrlFromInput(apiBaseInput.value)
-  if (!r.ok) {
-    error.value = 'undefined'
-    return false
-  }
-  return true
-}
-
-function saveApiBase() {
-  const r = saveApiBaseUrlFromInput(apiBaseInput.value)
-  if (!r.ok) {
-    settingsError.value = 'undefined'
-    settingsSaved.value = false
-    pingOk.value = false
-    return
-  }
-  settingsError.value = ''
-  settingsSaved.value = true
-  pingOk.value = false
-}
-
-async function pingApi() {
-  const r = saveApiBaseUrlFromInput(apiBaseInput.value)
-  if (!r.ok) {
-    settingsError.value = 'undefined'
-    settingsSaved.value = false
-    pingOk.value = false
-    return
-  }
-  pingOk.value = false
-  settingsSaved.value = false
-  pingLoading.value = true
-  try {
-    const res = await fetchPlatformPing(apiBaseInput.value.trim() || undefined)
-    if (res.ok) {
-      settingsError.value = ''
-      pingOk.value = true
-    } else {
-      settingsError.value = res.error
-      pingOk.value = false
-    }
-  } finally {
-    pingLoading.value = false
-  }
+  return ensurePlatformApiUrl()
 }
 
 function onLoginKeydown(e: KeyboardEvent) {
@@ -631,7 +574,7 @@ watch(email, (value) => {
 })
 
 onMounted(async () => {
-  document.addEventListener('click', onDocumentClick)
+  ensurePlatformApiUrl()
   startStageMotion()
   await detectWechatAvailability()
   if (!loginMethods.value.some((item) => item.id === loginMethod.value)) {
@@ -643,7 +586,6 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  document.removeEventListener('click', onDocumentClick)
   stopWechatPoll()
   stopWechatQrExpiry()
   if (countdownTimer) clearInterval(countdownTimer)
@@ -663,25 +605,6 @@ onBeforeUnmount(() => {
         <span>{{ appName }}</span>
       </div>
       <div class="arena-login__window-actions">
-        <div ref="configWrapRef" class="arena-login__service-popover" :class="{ 'is-open': configOpen }">
-          <button type="button" class="arena-login__icon-btn" title="服务地址" @click.stop="toggleConfigOpen">
-            <Server :size="15" />
-          </button>
-          <div v-if="configOpen" class="arena-login__service-card" @click.stop>
-            <div class="arena-login__service-head">
-              <strong>服务地址</strong>
-              <span>邮箱</span>
-            </div>
-            <NInput v-model:value="apiBaseInput" :placeholder="getDefaultApiBaseUrl()" spellcheck="false" />
-            <div class="arena-login__config-actions">
-              <NButton size="small" type="primary" @click="saveApiBase">保存</NButton>
-              <NButton size="small" :loading="pingLoading" @click="pingApi">测试连接</NButton>
-            </div>
-            <p v-if="settingsSaved && !settingsError" class="arena-login__feedback arena-login__feedback--ok"><CheckCircle2 :size="14" /> 已保存</p>
-            <p v-else-if="pingOk && !settingsError" class="arena-login__feedback arena-login__feedback--ok"><CheckCircle2 :size="14" /> 连接成功</p>
-            <NAlert v-if="settingsError" type="error" :bordered="false" class="arena-login__error">{{ settingsError }}</NAlert>
-          </div>
-        </div>
         <button
           type="button"
           class="arena-login__icon-btn arena-login__icon-btn--close"

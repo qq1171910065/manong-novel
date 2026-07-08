@@ -10,7 +10,7 @@ const message = useMessage()
 const { models, modelsLoading } = useModelService()
 
 const chatModel = ref<string | null>(null)
-const chatPrompt = ref('用一句话介绍 Arboris Novel。')
+const chatPrompt = ref('用一句话介绍 Manong Novel。')
 const chatOutput = ref('')
 const chatLoading = ref(false)
 let chatCancel: (() => void) | null = null

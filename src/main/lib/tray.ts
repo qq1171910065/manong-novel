@@ -63,7 +63,7 @@ function updateTrayMenu(getMainWindow: () => BrowserWindow | null): void {
     },
     { type: 'separator' },
     {
-      label: '退出 Manong Arena',
+      label: '退出 Manong Novel',
       click: () => {
         markAppQuitting()
         app.quit()
@@ -86,7 +86,7 @@ export function ensureTray(getMainWindow: () => BrowserWindow | null): Tray | nu
   }
 
   tray = new Tray(icon)
-  tray.setToolTip('Manong Arena')
+  tray.setToolTip('Manong Novel')
   updateTrayMenu(getMainWindow)
   tray.on('double-click', () => showMainWindow(getMainWindow))
   return tray

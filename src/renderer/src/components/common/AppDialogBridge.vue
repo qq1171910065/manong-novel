@@ -8,9 +8,9 @@ let offCloseChoice: (() => void) | undefined
 onMounted(() => {
   offCloseChoice = window.windowControls?.onRequestCloseChoice?.(() => {
     void choose({
-      title: '关闭 Arboris Novel',
+      title: '关闭 Manong Novel',
       message: '关闭主窗口？',
-      detail: '最小化到托盘后应用继续在后台运行；退出将完全关闭 Arboris Novel。',
+      detail: '最小化到托盘后应用继续在后台运行；退出将完全关闭 Manong Novel。',
       tone: 'default',
       actionsLayout: 'row',
       rememberLabel: '记住我的选择',

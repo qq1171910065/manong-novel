@@ -37,7 +37,7 @@ export type HelpChatStreamHandler = (messages: HelpChatMessage[]) => void
 
 function buildHelpSystemPrompt(): string {
   return [
-    '你是 Arboris Novel 设置中心「帮助中心」的答疑助手。',
+    '你是 Manong Novel 设置中心「帮助中心」的答疑助手。',
     '',
     '## 回答规则',
     '- 只能根据下方「项目文档」中的内容回答，不得编造文档未提及的功能、步骤、政策或数值。',

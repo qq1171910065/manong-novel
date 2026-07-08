@@ -15,7 +15,7 @@
 | 平台 | 链接 |
 |------|------|
 | **最新 Release** | https://github.com/qq1171910065/manong-novel/releases/latest |
-| **v0.1.0（Windows）** | [arboris-novel-desktop-0.1.0-setup.exe](https://github.com/qq1171910065/manong-novel/releases/download/v0.1.0/arboris-novel-desktop-0.1.0-setup.exe) |
+| **v0.1.0（Windows）** | [manong-novel-0.1.0-setup.exe](https://github.com/qq1171910065/manong-novel/releases/download/v0.1.0/manong-novel-0.1.0-setup.exe) |
 | **全部版本** | https://github.com/qq1171910065/manong-novel/releases |
 
 > Windows 安装包由 GitHub Actions 自动构建。macOS 版本暂未纳入 Release 流程。
