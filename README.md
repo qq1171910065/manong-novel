@@ -15,10 +15,11 @@
 | 平台 | 链接 |
 |------|------|
 | **最新 Release** | https://github.com/qq1171910065/manong-novel/releases/latest |
-| **v0.1.0（Windows）** | [manong-novel-0.1.0-setup.exe](https://github.com/qq1171910065/manong-novel/releases/download/v0.1.0/manong-novel-0.1.0-setup.exe) |
+| **v0.1.1（Windows）** | [manong-novel-0.1.1-setup.exe](https://github.com/qq1171910065/manong-novel/releases/download/v0.1.1/manong-novel-0.1.1-setup.exe) |
+| **v0.1.1（macOS）** | [manong-novel-0.1.1.dmg](https://github.com/qq1171910065/manong-novel/releases/download/v0.1.1/manong-novel-0.1.1.dmg) |
 | **全部版本** | https://github.com/qq1171910065/manong-novel/releases |
 
-> Windows 安装包由 GitHub Actions 自动构建。macOS 版本暂未纳入 Release 流程。
+> Windows / macOS 安装包由 GitHub Actions 在推送 `v*` tag 时自动构建。
 
 ---
 
