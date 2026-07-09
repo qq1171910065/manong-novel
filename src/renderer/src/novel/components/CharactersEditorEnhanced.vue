@@ -15,7 +15,7 @@
           variant="portrait"
           :label="`${character.name || '角色'}立绘`"
           placeholder="立绘"
-          :generating="portraitGeneratingIndex === index"
+          :generating="isPortraitGenerating(index)"
           :default-prompt="characterPrompt(character)"
           @generate="(prompt) => generatePortrait(index, prompt)"
         />
@@ -237,6 +237,11 @@ import { ref, watch, reactive, nextTick } from 'vue';
 import ImageAssetField from '@renderer/novel/components/shared/ImageAssetField.vue';
 import SubmitToLibraryButton from '@renderer/novel/components/shared/SubmitToLibraryButton.vue';
 import { buildCharacterPortraitPrompt, generateCharacterPortrait } from '@renderer/services/image-service';
+import {
+  enqueueImageGenerationJob,
+  isImageUiKeyRunning,
+  portraitUiKey,
+} from '@renderer/services/image-generation-task-service';
 import { submitCharacterToLibrary } from '@renderer/services/novel/material-library-submit';
 import { ensureCharacter } from '@renderer/services/novel/blueprint-asset';
 import { randomUUID } from '@renderer/utils/id';
@@ -319,7 +324,11 @@ const emit = defineEmits(['update:modelValue']);
 
 const localCharacters = ref<Character[]>([]);
 const expandedDNA = reactive<Record<number, boolean>>({});
-const portraitGeneratingIndex = ref<number | null>(null);
+const isPortraitGenerating = (index: number) => {
+  const pid = props.projectId?.trim();
+  if (!pid) return false;
+  return isImageUiKeyRunning(portraitUiKey(pid, index));
+};
 let syncing = false;
 
 function characterPrompt(character: Character) {
@@ -332,26 +341,33 @@ function characterPrompt(character: Character) {
   });
 }
 
-async function generatePortrait(index: number, prompt: string) {
+function generatePortrait(index: number, prompt: string) {
   const character = localCharacters.value[index];
-  if (!character || portraitGeneratingIndex.value !== null) return;
-  portraitGeneratingIndex.value = index;
-  try {
-    character.portrait_url = await generateCharacterPortrait(
-      toSharedCharacter(character),
-      undefined,
-      prompt,
-      {
-        chat_model_id: props.chatModelId || undefined,
-        image_model_id: props.imageModelId || undefined,
-      }
-    );
-    emit('update:modelValue', JSON.parse(JSON.stringify(localCharacters.value)));
-  } catch (err) {
-    alert(err instanceof Error ? err.message : '角色立绘生成失败');
-  } finally {
-    portraitGeneratingIndex.value = null;
-  }
+  if (!character) return;
+  const projectId = props.projectId?.trim() || 'local';
+  const projectTitle = props.projectTitle?.trim() || '未命名作品';
+  const name = character.name || '角色';
+  enqueueImageGenerationJob({
+    taskProjectId: projectId,
+    projectTitle,
+    subject: `角色·${name}`,
+    uiKey: portraitUiKey(projectId, index),
+    generate: () =>
+      generateCharacterPortrait(
+        toSharedCharacter(character),
+        undefined,
+        prompt,
+        {
+          chat_model_id: props.chatModelId || undefined,
+          image_model_id: props.imageModelId || undefined,
+        }
+      ),
+    onSuccess: async (portraitUrl) => {
+      character.portrait_url = portraitUrl;
+      emit('update:modelValue', JSON.parse(JSON.stringify(localCharacters.value)));
+    },
+    successMessage: '角色立绘已生成',
+  });
 }
 
 // 初始化DNA档案

@@ -14,7 +14,6 @@ export type PortalTab =
   | 'model-overview'
   | 'model-debug'
   | 'model-stream'
-  | 'model-service'
   | SettingsTab
 
 const SETTINGS_SEGMENTS: Record<string, SettingsTab> = {
@@ -43,7 +42,6 @@ const PORTAL_TABS = new Set<string>([
   'model-overview',
   'model-debug',
   'model-stream',
-  'model-service',
   'settings-display',
   'settings-audio',
   'settings-data',
@@ -74,15 +72,6 @@ export function isPortalPath(pathname: string): boolean {
 function normalizeLegacyTab(value: string | null): PortalTab | null {
   if (!value) return null
   if (value === 'model-service') return 'model-debug'
-  if (value === 'model-leaderboard') return 'model-overview'
-  if (
-    value === 'settings-match' ||
-    value === 'settings-gameplay' ||
-    value === 'settings-room' ||
-    value === 'settings-notice'
-  ) {
-    return 'settings-display'
-  }
   return isPortalTab(value) ? value : null
 }
 
@@ -101,8 +90,6 @@ export function portalTabFromRoute(route: { name: string; id: string | null; pat
   if (route.name === 'profile' || pathname.startsWith('/profile')) {
     if (!route.id) return 'overview'
     if (route.id === 'model-service') return 'model-debug'
-    if (route.id === 'model-leaderboard') return 'model-overview'
-    if (route.id === 'settings-match') return 'settings-display'
     return isPortalTab(route.id) ? route.id : 'overview'
   }
 
@@ -130,15 +117,8 @@ export function resolveLegacyPortalPath(fullPath: string): string | null {
     return '/settings/display'
   }
 
-  const legacySettingsSegments: Record<string, string> = {
-    '/settings/match': '/settings/display',
-    '/settings/gameplay': '/settings/display',
-    '/settings/room': '/settings/display',
-    '/settings/notice': '/settings/display',
-    '/profile/model-leaderboard': '/profile/model-overview',
-  }
-  if (legacySettingsSegments[pathname]) {
-    return legacySettingsSegments[pathname]
+  if (pathname === '/profile/model-service') {
+    return '/profile/model-debug'
   }
 
   return null

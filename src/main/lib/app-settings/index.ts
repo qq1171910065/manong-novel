@@ -1,7 +1,6 @@
 import { app, ipcMain } from 'electron'
-import { getAppHomePaths } from '../app-home'
 
-export function registerAppSettingsHandlers(appId = 'com.agentarena'): void {
+export function registerAppSettingsHandlers(_appId = 'com.manong.novel'): void {
   ipcMain.handle('app:get-login-item-settings', () => {
     try {
       const settings = app.getLoginItemSettings()
@@ -30,12 +29,4 @@ export function registerAppSettingsHandlers(appId = 'com.agentarena'): void {
     arch: process.arch,
     electronVersion: process.versions.electron,
   }))
-
-  ipcMain.handle('app:get-data-dirs', () => {
-    try {
-      return { ok: true, dirs: getAppHomePaths(appId) }
-    } catch (err) {
-      return { ok: false, error: (err as Error).message }
-    }
-  })
 }

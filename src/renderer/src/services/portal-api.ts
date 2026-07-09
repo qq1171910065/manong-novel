@@ -504,6 +504,16 @@ export const portalApi = {
     return portalRequest<unknown>('/portal/key/revoke', 'POST', { id })
   },
 
+  revealKey(id: number) {
+    return portalRequest<{ key: string; keyPrefix?: string }>('/portal/key/revealKey', 'POST', { id }).then(
+      (res) => {
+        const plain = String(res.key || '').trim()
+        if (!plain) throw new Error('无法获取完整 Key')
+        return plain
+      }
+    )
+  },
+
   gatewayConfig() {
     return portalRequest<PortalGatewayConfig>('/portal/key/gatewayConfig')
   },

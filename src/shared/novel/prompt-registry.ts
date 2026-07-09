@@ -26,6 +26,7 @@ export const NOVEL_PROMPT_REGISTRY: PromptRegistryEntry[] = [
   { id: 'optimize_rhythm', file: 'optimize_rhythm.md', purpose: '节奏润色', status: 'wired', wiredIn: 'optimizeChapter' },
   { id: 'import_analysis', file: 'import_analysis.md', purpose: 'txt 导入解析', status: 'wired', wiredIn: 'import-service' },
   { id: 'import_chapter_summaries', file: 'import_chapter_summaries.md', purpose: '导入章节摘要', status: 'wired', wiredIn: 'import-service' },
+  { id: 'demo_data_polish', file: 'demo_data_polish.md', purpose: '示例数据润色', status: 'wired', wiredIn: 'demo-data-service' },
   { id: 'material_library_enrich', file: 'material_library_enrich.md', purpose: '物料库 enrich', status: 'wired', wiredIn: 'material-library' },
   { id: 'material_library_ai_edit', file: 'material_library_ai_edit.md', purpose: '物料库 AI 编辑', status: 'wired', wiredIn: 'material-library' },
   { id: 'material_library_field_edit', file: 'material_library_field_edit.md', purpose: '物料库字段编辑', status: 'wired', wiredIn: 'material-library' },

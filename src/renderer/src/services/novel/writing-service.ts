@@ -377,7 +377,7 @@ export async function chat(
           settled = true
           if (streamHandlers?.onChunk) {
             const finalRaw = params?.contentOnly
-              ? pickContentOnlyPayload(contentText)
+              ? pickContentOnlyPayload(contentText, reasoningText)
               : pickBestLlmPayload(contentText, reasoningText)
             streamHandlers.onChunk({
               raw: finalRaw,
@@ -395,7 +395,7 @@ export async function chat(
             throttled.flush()
             if (streamHandlers?.onChunk) {
               const finalRaw = params?.contentOnly
-                ? pickContentOnlyPayload(contentText)
+                ? pickContentOnlyPayload(contentText, reasoningText)
                 : pickBestLlmPayload(contentText, reasoningText)
               streamHandlers.onChunk({
                 raw: finalRaw,
@@ -435,7 +435,7 @@ export async function chat(
       projectStatsService.recordAiCall(statsProjectId, usage)
     }
     const result = params?.contentOnly
-      ? pickContentOnlyPayload(content)
+      ? pickContentOnlyPayload(content, reasoning)
       : pickBestLlmPayload(content, reasoning)
     if (params?.contentOnly && !result.trim()) {
       throw new Error('模型未返回章节正文，请重试或更换模型')
@@ -452,7 +452,7 @@ export async function chat(
     }
     if (pipelineId) {
       const partial = params?.contentOnly
-        ? pickContentOnlyPayload(streamCapture.content)
+        ? pickContentOnlyPayload(streamCapture.content, streamCapture.reasoning)
         : pickBestLlmPayload(streamCapture.content, streamCapture.reasoning)
       pipelineLogService.finish(pipelineId, {
         error,

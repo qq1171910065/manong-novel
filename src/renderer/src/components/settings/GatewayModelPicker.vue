@@ -16,12 +16,14 @@ const props = withDefaults(
     loading?: boolean
     emptyHint?: string
     hideScrollbar?: boolean
+    compact?: boolean
   }>(),
   {
     recommendedIds: () => [],
     loading: false,
     emptyHint: '暂无可用模型，请先刷新网关连接。',
     hideScrollbar: false,
+    compact: false,
   }
 )
 
@@ -34,7 +36,7 @@ const query = ref('')
 const catalog = computed(() => props.models.map((item) => entryFromGateway(item)))
 
 const recommended = computed(() =>
-  pickRecommendedFromGateway(catalog.value, props.recommendedIds, 6)
+  pickRecommendedFromGateway(catalog.value, props.recommendedIds, props.compact ? 4 : 6)
 )
 
 const filtered = computed(() => {
@@ -66,8 +68,8 @@ function isSelected(id: string) {
 </script>
 
 <template>
-  <div class="gateway-model-picker">
-    <NInput v-model:value="query" clearable placeholder="搜索模型名称或 ID…" />
+  <div class="gateway-model-picker" :class="{ 'gateway-model-picker--compact': compact }">
+    <NInput v-model:value="query" clearable placeholder="搜索模型…" size="small" />
 
     <div v-if="loading" class="gateway-model-picker__loading">
       <NSpin size="small" />
@@ -93,14 +95,11 @@ function isSelected(id: string) {
               type="button"
               class="gateway-model-picker__option"
               :class="{ 'gateway-model-picker__option--selected': isSelected(item.id) }"
-              :title="`${item.label} · ${item.id}`"
+              :title="item.id"
               @click="selectModel(item)"
             >
-              <div class="model-info-card">
-                <strong>{{ item.label }}</strong>
-                <em>{{ item.id }}</em>
-                <small>{{ item.desc }}</small>
-              </div>
+              <span class="gateway-model-picker__label">{{ item.label }}</span>
+              <span class="gateway-model-picker__id">{{ item.id }}</span>
             </button>
           </div>
         </section>
@@ -116,14 +115,11 @@ function isSelected(id: string) {
               type="button"
               class="gateway-model-picker__option"
               :class="{ 'gateway-model-picker__option--selected': isSelected(item.id) }"
-              :title="`${item.label} · ${item.id}`"
+              :title="item.id"
               @click="selectModel(item)"
             >
-              <div class="model-info-card">
-                <strong>{{ item.label }}</strong>
-                <em>{{ item.id }}</em>
-                <small>{{ item.desc }}</small>
-              </div>
+              <span class="gateway-model-picker__label">{{ item.label }}</span>
+              <span class="gateway-model-picker__id">{{ item.id }}</span>
             </button>
           </div>
         </section>
@@ -131,7 +127,6 @@ function isSelected(id: string) {
 
       <p v-if="modelValue && !models.some((item) => item.id === modelValue)" class="gateway-model-picker__fallback">
         当前选中：<code>{{ modelValue }}</code>
-        <span>（不在网关列表中，保存后仍可使用）</span>
       </p>
     </template>
   </div>
@@ -140,28 +135,32 @@ function isSelected(id: string) {
 <style scoped>
 .gateway-model-picker {
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .gateway-model-picker__loading {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 24px 0;
-  color: var(--soft);
-  font-size: 13px;
+  padding: 16px 0;
+  color: var(--muted);
+  font-size: var(--text-xs);
 }
 
 .gateway-model-picker__empty {
-  padding: 12px 0;
+  padding: 8px 0;
 }
 
 .gateway-model-picker__scroll {
   display: grid;
-  gap: 14px;
+  gap: 10px;
   max-height: min(52vh, 420px);
   overflow: auto;
   padding-right: 2px;
+}
+
+.gateway-model-picker--compact .gateway-model-picker__scroll {
+  max-height: min(32vh, 240px);
 }
 
 .gateway-model-picker__scroll--no-scrollbar {
@@ -172,51 +171,72 @@ function isSelected(id: string) {
 
 .gateway-model-picker__section {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .gateway-model-picker__heading {
   margin: 0;
-  color: var(--soft);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  color: var(--muted);
+  font-size: var(--text-2xs);
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .gateway-model-picker__list {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .gateway-model-picker__option {
+  display: grid;
+  gap: 2px;
   width: 100%;
-  padding: 0;
-  border: 1px solid transparent;
-  border-radius: 14px;
-  background: transparent;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--line, rgba(0, 0, 0, 0.08)) 70%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface, #fff) 72%, transparent);
   text-align: left;
   cursor: pointer;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
-.gateway-model-picker__option:hover .model-info-card {
-  border-color: rgba(108, 99, 255, 0.28);
+.gateway-model-picker__option:hover {
+  border-color: color-mix(in srgb, var(--brand) 28%, transparent);
+  background: color-mix(in srgb, var(--brand) 5%, transparent);
 }
 
 .gateway-model-picker__option--selected {
-  border-color: rgba(108, 99, 255, 0.45);
-  box-shadow: 0 0 0 1px rgba(108, 99, 255, 0.18);
+  border-color: color-mix(in srgb, var(--brand) 38%, transparent);
+  background: color-mix(in srgb, var(--brand) 10%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--brand) 14%, transparent);
 }
 
-.gateway-model-picker__option--selected .model-info-card {
-  background: rgba(112, 105, 255, 0.12);
-  border-color: rgba(108, 99, 255, 0.32);
+.gateway-model-picker__label {
+  font-size: var(--text-sm);
+  font-weight: 650;
+  color: var(--text);
+  line-height: 1.35;
+}
+
+.gateway-model-picker__id {
+  font-size: var(--text-2xs);
+  color: var(--muted);
+  line-height: 1.35;
+  word-break: break-all;
+}
+
+.gateway-model-picker--compact .gateway-model-picker__option {
+  padding: 7px 9px;
 }
 
 .gateway-model-picker__fallback {
   margin: 0;
-  color: var(--soft);
-  font-size: 12px;
+  color: var(--muted);
+  font-size: var(--text-2xs);
   line-height: 1.5;
 }
 

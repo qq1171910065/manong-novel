@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import { Download, Trash2 } from 'lucide-vue-next'
+import { computed, onMounted, ref } from 'vue'
+import { Download, Sparkles, Trash2 } from 'lucide-vue-next'
 import { confirm } from '@renderer/composables/useAppDialog'
 import FactoryResetDialog from './FactoryResetDialog.vue'
 import {
@@ -8,6 +8,10 @@ import {
   formatUserMessage,
   type DataManagementStats,
 } from '@renderer/services/data-management-service'
+import { importDemoData } from '@renderer/services/demo-data-service'
+import { useNovelStore } from '@renderer/stores/novel'
+
+const novelStore = useNovelStore()
 
 const emit = defineEmits<{
   error: [message: string]
@@ -16,8 +20,12 @@ const emit = defineEmits<{
 const stats = ref<DataManagementStats | null>(null)
 const dataMessage = ref('')
 const dataBusy = ref(false)
+const demoImportBusy = ref(false)
+const demoImportProgress = ref('')
 const showFactoryReset = ref(false)
 const factoryResetBusy = ref(false)
+
+const canShowDemoImport = computed(() => (stats.value?.projectCount ?? 0) === 0)
 
 async function loadStats() {
   stats.value = await dataManagementService.getStats()
@@ -51,6 +59,38 @@ async function clearProjects() {
     confirmText: '清除',
   }))) return
   await runDataAction(() => dataManagementService.clearProjects(), '全部小说项目已清除。')
+}
+
+async function importSampleData() {
+  if (!canShowDemoImport.value) return
+  if (!(await confirm({
+    title: '导入示例数据',
+    message: '将创建示例小说《青玉长歌》，并由 AI 润色蓝图与首章正文。',
+    detail: '此功能仅在没有小说项目时可用，导入后可在书架与写作台体验完整流程。',
+    confirmText: '开始导入',
+  }))) return
+
+  demoImportBusy.value = true
+  demoImportProgress.value = '准备导入…'
+  dataMessage.value = ''
+  emit('error', '')
+  try {
+    const result = await importDemoData({
+      onProgress: (progress) => {
+        demoImportProgress.value = progress.message
+      },
+    })
+    await loadStats()
+    await novelStore.loadProjects()
+    dataMessage.value = result.polished
+      ? '示例数据已导入，可在书架查看《青玉长歌》。'
+      : '示例数据已导入（AI 润色未成功，已使用基础版本）。'
+  } catch (err) {
+    emit('error', formatUserMessage(err))
+  } finally {
+    demoImportBusy.value = false
+    demoImportProgress.value = ''
+  }
 }
 
 async function clearLogs() {
@@ -103,6 +143,25 @@ defineExpose({ reload: loadStats })
         <article><span>素材库</span><strong>{{ stats.materialCount }}</strong></article>
         <article><span>操作记录</span><strong>{{ stats.activityLogCount }}</strong></article>
       </div>
+    </section>
+
+    <section v-if="canShowDemoImport" class="data-block data-block--demo">
+      <h4>体验数据</h4>
+      <p class="data-demo-desc">
+        当前没有小说项目。可导入一份完整示例，快速体验蓝图、写作台与阅读等功能。
+      </p>
+      <div class="data-actions">
+        <button
+          type="button"
+          class="data-action data-action--demo"
+          :disabled="dataBusy || demoImportBusy"
+          @click="importSampleData"
+        >
+          <Sparkles :size="16" />
+          {{ demoImportBusy ? '导入中…' : '示例数据' }}
+        </button>
+      </div>
+      <p v-if="demoImportProgress" class="data-demo-progress">{{ demoImportProgress }}</p>
     </section>
 
     <section class="data-block">
@@ -222,6 +281,32 @@ defineExpose({ reload: loadStats })
 .danger-action:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+.data-block--demo {
+  padding: 14px 16px;
+  border: 1px solid rgba(31, 122, 103, 0.16);
+  border-radius: 12px;
+  background: rgba(31, 122, 103, 0.05);
+}
+
+.data-demo-desc {
+  margin: 0 0 10px;
+  color: #4a6470;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.data-action--demo {
+  border-color: rgba(31, 122, 103, 0.22);
+  color: #0f4b44;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.data-demo-progress {
+  margin: 10px 0 0;
+  color: #1f7a67;
+  font-size: 12px;
 }
 
 .data-hint {

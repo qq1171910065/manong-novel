@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import GatewayModelPicker from '@renderer/components/settings/GatewayModelPicker.vue'
+import GatewayModelPickerModal from '@renderer/components/settings/GatewayModelPickerModal.vue'
 import { useGatewayModelLabel } from '@renderer/composables/useGatewayModelLabel'
 import {
   CHARACTER_MODEL_RECOMMENDED,
@@ -15,7 +15,6 @@ import {
   type GatewayModelInfo,
 } from '@renderer/services/gateway-api'
 import { DEFAULT_SYSTEM_ROLE_MODEL_ID } from '@shared/gateway/constants'
-import { NButton, NModal } from '@renderer/ui'
 
 const props = withDefaults(
   defineProps<{
@@ -144,31 +143,21 @@ onMounted(() => {
     </div>
   </section>
 
-  <NModal
+  <GatewayModelPickerModal
     v-model:show="chatDialogOpen"
-    preset="dialog"
+    v-model="draftChatModelId"
     title="选择写作模型"
-    style="width: min(560px, 92vw)"
-  >
-    <p class="project-model-settings__note">
-      {{
-        isSimpleMode
-          ? '简易模式建议使用轻量模型，可更快完成灵感对话与章节生成。'
-          : '用于灵感对话、蓝图生成、章节写作等；未单独设置时使用全局默认模型。'
-      }}
-    </p>
-    <GatewayModelPicker
-      v-model="draftChatModelId"
-      :models="chatModels.filter(isLikelyChatModel)"
-      :recommended-ids="chatRecommendedIds"
-      :loading="modelsLoading"
-      empty-hint="暂无可用对话模型，请先在设置中确认网关连接。"
-    />
-    <template #action>
-      <NButton @click="chatDialogOpen = false">取消</NButton>
-      <NButton type="primary" @click="saveChatModel">确定</NButton>
-    </template>
-  </NModal>
+    :note="
+      isSimpleMode
+        ? '简易模式建议使用轻量模型，可更快完成灵感对话与章节生成。'
+        : '用于灵感对话、蓝图生成、章节写作等；未单独设置时使用全局默认模型。'
+    "
+    :models="chatModels.filter(isLikelyChatModel)"
+    :recommended-ids="chatRecommendedIds"
+    :loading="modelsLoading"
+    empty-hint="暂无可用对话模型，请先在设置中确认网关连接。"
+    @confirm="saveChatModel"
+  />
 </template>
 
 <style scoped>
@@ -210,12 +199,5 @@ onMounted(() => {
   flex-shrink: 0;
   flex-wrap: wrap;
   justify-content: flex-end;
-}
-
-.project-model-settings__note {
-  margin: 0 0 12px;
-  font-size: var(--text-xs);
-  line-height: 1.55;
-  color: var(--muted);
 }
 </style>

@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { BookOpen, CirclePause, Loader2, X, XCircle } from 'lucide-vue-next'
+import { BookOpen, ChevronDown, CirclePause, Loader2, X, XCircle } from 'lucide-vue-next'
 import { navigate } from '@renderer/router'
 import { openReadingWindow } from '@renderer/services/reading-service'
 import {
+  backgroundTaskDetailRows,
   backgroundTaskKindLabel,
   backgroundTaskProgressLabel,
+  backgroundTaskStatusLabel,
+  backgroundTaskSummary,
   dismissBackgroundTask,
   removeBackgroundTask,
   type BackgroundTask,
@@ -15,6 +18,7 @@ import { useAutoChapterPipeline } from '@renderer/novel/composables/useAutoChapt
 
 const panelRef = ref<HTMLElement | null>(null)
 const showPanel = ref(false)
+const expandedTaskIds = ref<Set<string>>(new Set())
 const { visibleTasks, runningCount } = useBackgroundTasks()
 const autoWrite = useAutoChapterPipeline()
 
@@ -36,21 +40,15 @@ function onDocumentClick(event: MouseEvent) {
   }
 }
 
-function statusLabel(task: BackgroundTask): string {
-  switch (task.status) {
-    case 'running':
-      return '进行中'
-    case 'paused':
-      return '已暂停'
-    case 'completed':
-      return '已完成'
-    case 'failed':
-      return '失败'
-    case 'cancelled':
-      return '已取消'
-    default:
-      return task.status
-  }
+function isExpanded(taskId: string): boolean {
+  return expandedTaskIds.value.has(taskId)
+}
+
+function toggleExpand(taskId: string) {
+  const next = new Set(expandedTaskIds.value)
+  if (next.has(taskId)) next.delete(taskId)
+  else next.add(taskId)
+  expandedTaskIds.value = next
 }
 
 function statusClass(task: BackgroundTask): string {
@@ -83,11 +81,28 @@ function openProject(task: BackgroundTask) {
     void openReadingWindow(task.projectId, task.projectTitle)
     return
   }
+  if (task.kind === 'image_generate' && task.projectId.startsWith('material:')) {
+    return
+  }
   navigate(`/detail/${task.projectId}`)
+}
+
+function canCancel(task: BackgroundTask): boolean {
+  if (task.kind === 'image_generate') return false
+  if (task.kind === 'tts_preload') return task.status === 'running'
+  return task.status === 'running' || task.status === 'paused'
 }
 
 function dismissTask(task: BackgroundTask) {
   dismissBackgroundTask(task.id)
+  const next = new Set(expandedTaskIds.value)
+  next.delete(task.id)
+  expandedTaskIds.value = next
+}
+
+function canOpenProject(task: BackgroundTask): boolean {
+  if (task.kind === 'image_generate' && task.projectId.startsWith('material:')) return false
+  return true
 }
 
 function canDismiss(task: BackgroundTask): boolean {
@@ -122,81 +137,112 @@ onUnmounted(() => document.removeEventListener('click', onDocumentClick))
       </div>
 
       <div v-if="!hasTasks" class="arena-task-popover__empty">
-        AI 接管创作、听书预合成等后台任务会显示在这里
+        AI 接管创作、AI 绘制、听书预合成等后台任务会显示在这里
       </div>
 
       <ul v-else class="arena-task-list">
-        <li v-for="task in visibleTasks" :key="task.id" class="arena-task-item" :class="statusClass(task)">
-          <div class="arena-task-item__main">
-            <p class="arena-task-item__title">{{ task.projectTitle }}</p>
-            <p class="arena-task-item__kind">{{ backgroundTaskKindLabel(task.kind) }}</p>
-            <p class="arena-task-item__message">{{ task.message || '等待处理…' }}</p>
-            <div v-if="backgroundTaskProgressLabel(task)" class="arena-task-item__meta">
-              <span>{{ backgroundTaskProgressLabel(task) }}</span>
+        <li
+          v-for="task in visibleTasks"
+          :key="task.id"
+          class="arena-task-item"
+          :class="[statusClass(task), { 'arena-task-item--expanded': isExpanded(task.id) }]"
+        >
+          <button
+            type="button"
+            class="arena-task-item__summary"
+            :aria-expanded="isExpanded(task.id)"
+            @click="toggleExpand(task.id)"
+          >
+            <div class="arena-task-item__summary-main">
+              <p class="arena-task-item__title">{{ task.projectTitle }}</p>
+              <p class="arena-task-item__kind">{{ backgroundTaskKindLabel(task.kind) }}</p>
+              <p class="arena-task-item__brief">{{ backgroundTaskSummary(task) }}</p>
             </div>
-            <div v-if="task.totalCount > 0" class="arena-task-item__bar">
-              <div class="arena-task-item__bar-fill" :style="{ width: `${Math.max(4, task.progressPercent)}%` }" />
+            <div class="arena-task-item__summary-side">
+              <span class="arena-task-item__status-pill">{{ backgroundTaskStatusLabel(task.status) }}</span>
+              <ChevronDown
+                :size="16"
+                class="arena-task-item__chevron"
+                :class="{ 'arena-task-item__chevron--open': isExpanded(task.id) }"
+              />
             </div>
-          </div>
+          </button>
 
-          <div class="arena-task-item__actions">
-            <span class="arena-task-item__status">{{ statusLabel(task) }}</span>
-            <div class="arena-task-item__buttons">
-              <button
-                v-if="task.status === 'running' && task.kind === 'auto_write'"
-                type="button"
-                class="arena-task-item__btn"
-                title="暂停"
-                @click="pauseTask(task)"
-              >
-                <CirclePause :size="14" />
-              </button>
-              <button
-                v-if="task.status === 'paused' && task.kind === 'auto_write'"
-                type="button"
-                class="arena-task-item__btn arena-task-item__btn--primary"
-                title="继续"
-                @click="resumeTask(task)"
-              >
-                继续
-              </button>
-              <button
-                v-if="(task.status === 'running' || task.status === 'paused') && task.kind !== 'tts_preload'"
-                type="button"
-                class="arena-task-item__btn"
-                title="取消"
-                @click="cancelTask(task)"
-              >
-                <X :size="14" />
-              </button>
-              <button
-                v-if="task.status === 'running' && task.kind === 'tts_preload'"
-                type="button"
-                class="arena-task-item__btn"
-                title="取消预合成"
-                @click="cancelTask(task)"
-              >
-                <X :size="14" />
-              </button>
-              <button
-                type="button"
-                class="arena-task-item__btn"
-                title="打开"
-                @click="openProject(task)"
-              >
-                {{ task.kind === 'tts_preload' ? '听书' : '查看' }}
-              </button>
-              <button
-                v-if="canDismiss(task)"
-                type="button"
-                class="arena-task-item__btn"
-                title="移除"
-                @click="dismissTask(task)"
-              >
-                <XCircle :size="14" />
-              </button>
+          <Transition name="arena-task-expand">
+            <div v-if="isExpanded(task.id)" class="arena-task-item__detail">
+              <dl class="arena-task-item__detail-list">
+                <div
+                  v-for="row in backgroundTaskDetailRows(task)"
+                  :key="row.label"
+                  class="arena-task-item__detail-row"
+                  :class="{ 'arena-task-item__detail-row--message': row.label === '说明' }"
+                >
+                  <dt>{{ row.label }}</dt>
+                  <dd>{{ row.value }}</dd>
+                </div>
+              </dl>
+
+              <div v-if="task.totalCount > 0" class="arena-task-item__bar">
+                <div
+                  class="arena-task-item__bar-fill"
+                  :style="{ width: `${Math.max(4, Math.round(task.progressPercent))}%` }"
+                />
+              </div>
+              <p v-else-if="backgroundTaskProgressLabel(task)" class="arena-task-item__meta">
+                {{ backgroundTaskProgressLabel(task) }}
+              </p>
+
+              <div class="arena-task-item__actions">
+                <div class="arena-task-item__buttons">
+                  <button
+                    v-if="task.status === 'running' && task.kind === 'auto_write'"
+                    type="button"
+                    class="arena-task-item__btn"
+                    title="暂停"
+                    @click.stop="pauseTask(task)"
+                  >
+                    <CirclePause :size="14" />
+                  </button>
+                  <button
+                    v-if="task.status === 'paused' && task.kind === 'auto_write'"
+                    type="button"
+                    class="arena-task-item__btn arena-task-item__btn--primary"
+                    title="继续"
+                    @click.stop="resumeTask(task)"
+                  >
+                    继续
+                  </button>
+                  <button
+                    v-if="canCancel(task)"
+                    type="button"
+                    class="arena-task-item__btn"
+                    :title="task.kind === 'tts_preload' ? '取消预合成' : '取消'"
+                    @click.stop="cancelTask(task)"
+                  >
+                    <X :size="14" />
+                  </button>
+                  <button
+                    v-if="canOpenProject(task)"
+                    type="button"
+                    class="arena-task-item__btn"
+                    title="打开"
+                    @click.stop="openProject(task)"
+                  >
+                    {{ task.kind === 'tts_preload' ? '听书' : task.kind === 'image_generate' ? '作品' : '查看' }}
+                  </button>
+                  <button
+                    v-if="canDismiss(task)"
+                    type="button"
+                    class="arena-task-item__btn"
+                    title="移除"
+                    @click.stop="dismissTask(task)"
+                  >
+                    <XCircle :size="14" />
+                  </button>
+                </div>
+              </div>
             </div>
-          </div>
+          </Transition>
         </li>
       </ul>
     </div>
@@ -317,11 +363,10 @@ onUnmounted(() => document.removeEventListener('click', onDocumentClick))
 .arena-task-item {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px;
   border-radius: 14px;
   border: 1px solid color-mix(in srgb, var(--brand) 10%, transparent);
   background: color-mix(in srgb, var(--surface-soft) 84%, var(--surface));
+  overflow: hidden;
 }
 
 .arena-task-item--running {
@@ -337,11 +382,47 @@ onUnmounted(() => document.removeEventListener('click', onDocumentClick))
   border-color: color-mix(in srgb, var(--danger, #ef4444) 18%, transparent);
 }
 
+.arena-task-item__summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 12px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.16s ease;
+}
+
+.arena-task-item__summary:hover {
+  background: color-mix(in srgb, var(--brand-soft) 36%, transparent);
+}
+
+.arena-task-item--expanded .arena-task-item__summary {
+  border-bottom: 1px solid color-mix(in srgb, var(--brand) 8%, transparent);
+}
+
+.arena-task-item__summary-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.arena-task-item__summary-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 .arena-task-item__title {
   margin: 0;
   color: var(--text);
   font-size: var(--text-sm);
   font-weight: 650;
+  line-height: 1.35;
 }
 
 .arena-task-item__kind {
@@ -350,22 +431,104 @@ onUnmounted(() => document.removeEventListener('click', onDocumentClick))
   font-size: 11px;
 }
 
-.arena-task-item__message {
-  margin: 4px 0 0;
+.arena-task-item__brief {
+  margin: 6px 0 0;
   color: var(--text-secondary);
   font-size: 12px;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.arena-task-item__status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--brand) 10%, transparent);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.arena-task-item--running .arena-task-item__status-pill {
+  color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 14%, transparent);
+}
+
+.arena-task-item--completed .arena-task-item__status-pill {
+  color: #15803d;
+  background: color-mix(in srgb, #22c55e 14%, transparent);
+}
+
+.arena-task-item--failed .arena-task-item__status-pill,
+.arena-task-item--cancelled .arena-task-item__status-pill {
+  color: var(--danger, #ef4444);
+  background: color-mix(in srgb, var(--danger, #ef4444) 12%, transparent);
+}
+
+.arena-task-item__chevron {
+  color: var(--muted);
+  transition: transform 0.2s ease, color 0.16s ease;
+}
+
+.arena-task-item__chevron--open {
+  transform: rotate(180deg);
+  color: var(--brand);
+}
+
+.arena-task-item__detail {
+  padding: 10px 12px 12px;
+}
+
+.arena-task-item__detail-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.arena-task-item__detail-row {
+  display: grid;
+  grid-template-columns: 52px 1fr;
+  gap: 8px;
+  align-items: start;
+}
+
+.arena-task-item__detail-row dt {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
   line-height: 1.5;
 }
 
+.arena-task-item__detail-row dd {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.arena-task-item__detail-row--message {
+  grid-template-columns: 1fr;
+}
+
+.arena-task-item__detail-row--message dt {
+  margin-bottom: 2px;
+}
+
 .arena-task-item__meta {
-  margin-top: 6px;
+  margin: 8px 0 0;
   color: var(--muted);
   font-size: 11px;
 }
 
 .arena-task-item__bar {
   height: 5px;
-  margin-top: 8px;
+  margin-top: 10px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--brand) 10%, transparent);
   overflow: hidden;
@@ -380,15 +543,8 @@ onUnmounted(() => document.removeEventListener('click', onDocumentClick))
 
 .arena-task-item__actions {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.arena-task-item__status {
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 600;
+  justify-content: flex-end;
+  margin-top: 10px;
 }
 
 .arena-task-item__buttons {
@@ -426,6 +582,26 @@ onUnmounted(() => document.removeEventListener('click', onDocumentClick))
 .arena-task-item__btn--primary {
   background: color-mix(in srgb, var(--brand) 12%, transparent);
   color: var(--brand);
+}
+
+.arena-task-expand-enter-active,
+.arena-task-expand-leave-active {
+  transition:
+    opacity 0.18s ease,
+    max-height 0.22s ease;
+  overflow: hidden;
+}
+
+.arena-task-expand-enter-from,
+.arena-task-expand-leave-to {
+  opacity: 0;
+  max-height: 0;
+}
+
+.arena-task-expand-enter-to,
+.arena-task-expand-leave-from {
+  opacity: 1;
+  max-height: 320px;
 }
 
 @keyframes arena-task-spin {

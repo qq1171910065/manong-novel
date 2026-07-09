@@ -4,6 +4,7 @@ import { Activity } from 'lucide-vue-next'
 import type { DataTableColumns } from '../../ui'
 import { useModelService } from '@renderer/composables/useModelService'
 import type { GatewayModelInfo } from '@renderer/services'
+import { isLikelyImageModel } from '@renderer/services/gateway-api'
 import ProfileSectionLayout from './ProfileSectionLayout.vue'
 import PortalDataTable from './PortalDataTable.vue'
 import {
@@ -76,8 +77,9 @@ const columns: DataTableColumns<GatewayModelInfo> = [
     title: '操作',
     key: 'actions',
     width: 100,
-    render: (row) =>
-      h(
+    render: (row) => {
+      const imageModel = isLikelyImageModel(row)
+      return h(
         NButton,
         {
           size: 'small',
@@ -85,16 +87,27 @@ const columns: DataTableColumns<GatewayModelInfo> = [
           loading: testingModel.value === row.id,
           onClick: () => void runSingle(row.id),
         },
-        () => '测试'
-      ),
+        () => (imageModel ? '测试绘图' : '测试')
+      )
+    },
   },
 ]
 
 async function runSingle(modelId: string) {
   try {
     const result = await runSingleTest(modelId)
-    if (result?.ok) message.success(`${modelId} 可用 (${result.latencyMs}ms)`)
-    else message.error(result?.message || `${modelId} 不可用`)
+    const imageModel = isLikelyImageModel(
+      models.value.find((m) => m.id === modelId) || { id: modelId, tags: [], endpointTypes: [] }
+    )
+    if (result?.ok) {
+      message.success(
+        imageModel
+          ? `${modelId} 绘图可用 (${result.latencyMs}ms)`
+          : `${modelId} 可用 (${result.latencyMs}ms)`
+      )
+    } else {
+      message.error(result?.message || `${modelId} ${imageModel ? '绘图' : ''}不可用`.trim())
+    }
   } catch (e) {
     message.error(e instanceof Error ? e.message : '测试失败')
   }

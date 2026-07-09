@@ -133,13 +133,6 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-function truncateChecklistAnswer(text: string, max = 200): string {
-  const trimmed = text.trim()
-  if (!trimmed) return ''
-  if (trimmed.length <= max) return trimmed
-  return `${trimmed.slice(0, max - 1)}…`
-}
-
 /** 识别「文风笔触：…」「类型与基调：…」等显式字段修改 */
 export function parseExplicitChecklistFieldEdit(
   message: string
@@ -309,7 +302,7 @@ export function inferTopicFromUserAnswer(value: string): ConceptChecklistKey | n
 export function applyUserAnswerToChecklist(
   state: ConceptConversationState,
   userValue: string | null | undefined,
-  mode: WritingMode
+  _mode: WritingMode
 ): {
   checklist: ConceptChecklist
   answers: ConceptChecklistAnswers

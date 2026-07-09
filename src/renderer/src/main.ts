@@ -37,7 +37,6 @@ const Root = createRoot({
   shellStyle: appConfig.shellStyle,
   defaultHomePath: appConfig.defaultHomePath,
   features: appConfig.features,
-  exampleModules: appConfig.exampleModules,
   registry: featureRegistry,
   pageLoaders,
   homeComponent: HomePage,

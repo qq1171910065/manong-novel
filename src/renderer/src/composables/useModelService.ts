@@ -6,9 +6,11 @@ import {
   getGatewayRootUrl,
   getStoredGatewayKey,
   invalidateGatewayModelCache,
+  isLikelyImageModel,
   listGatewayModels,
   resolveGatewayEndpoints,
   testGatewayConnectivity,
+  testGatewayImageModel,
   testGatewayModel,
   type GatewayConnectivityReport,
   type GatewayEndpointConfig,
@@ -132,7 +134,13 @@ export function createModelService() {
     testingModel.value = modelId
     try {
       await ensureGatewayKey()
-      const result = await testGatewayModel(modelId)
+      const modelInfo = models.value.find((m) => m.id === modelId)
+      const useImageTest = modelInfo
+        ? isLikelyImageModel(modelInfo)
+        : isLikelyImageModel({ id: modelId, tags: [], endpointTypes: [] })
+      const result = useImageTest
+        ? await testGatewayImageModel(modelId)
+        : await testGatewayModel(modelId)
       rowTests.value = { ...rowTests.value, [modelId]: result }
       return result
     } finally {

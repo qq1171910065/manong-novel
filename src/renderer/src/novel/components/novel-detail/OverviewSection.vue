@@ -47,10 +47,12 @@
               :editable="editable"
               @edit="openEdit(item.field, item.label, item.value)"
             >
-              <span class="nd-meta-row__label">{{ item.label }}</span>
-              <span class="nd-meta-row__value" :class="{ 'nd-meta-row__value--empty': !item.value }">
-                {{ item.value || '点击填写' }}
-              </span>
+              <div class="nd-meta-row__item">
+                <span class="nd-meta-row__label">{{ item.label }}</span>
+                <span class="nd-meta-row__value" :class="{ 'nd-meta-row__value--empty': !item.value }">
+                  {{ item.value || '点击填写' }}
+                </span>
+              </div>
             </DetailEditableZone>
           </div>
 

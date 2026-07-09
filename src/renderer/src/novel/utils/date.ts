@@ -33,6 +33,30 @@ export function formatDateTime(isoString: string | null | undefined): string {
 }
 
 /**
+ * 紧凑日期时间格式，适合统计卡片等窄容器
+ * @returns 如 "2026-07-09 13:26"
+ */
+export function formatDateTimeCompact(isoString: string | null | undefined): string {
+  if (!isoString) return '-'
+
+  try {
+    const date = new Date(isoString)
+    if (isNaN(date.getTime())) return isoString
+
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    const hours = String(date.getHours()).padStart(2, '0')
+    const minutes = String(date.getMinutes()).padStart(2, '0')
+
+    return `${year}-${month}-${day} ${hours}:${minutes}`
+  } catch (error) {
+    console.error('日期格式化错误:', error)
+    return isoString
+  }
+}
+
+/**
  * 将 ISO 8601 格式的时间字符串转换为仅日期的中文格式
  * @param isoString ISO 8601 格式的时间字符串
  * @returns 格式化后的日期字符串，如 "2026年01月11日"

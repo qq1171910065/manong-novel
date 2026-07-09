@@ -204,7 +204,33 @@
 .reader-page-viewport--paged {
   display: flex;
   flex-direction: column;
-  cursor: default;
+  overflow: hidden;
+  cursor: grab;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  touch-action: none;
+}
+
+.reader-page-viewport--paged.is-dragging {
+  cursor: grabbing;
+}
+
+.reader-page-viewport--paged::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.reader-page-carousel {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.reader-page-carousel.is-dragging .reader-page--current,
+.reader-page-carousel.is-dragging .reader-page--adjacent {
+  box-shadow: 0 10px 28px rgba(20, 16, 10, 0.1);
 }
 
 .reader-page-viewport--paged::before,
@@ -298,43 +324,29 @@
 
 .reader-page--paged {
   display: flex;
-  flex: 1 1 auto;
   flex-direction: column;
   justify-content: flex-start;
-  min-height: 100%;
   box-sizing: border-box;
+  overflow: hidden;
 }
 
-.reader-page--turn-forward {
-  animation: reader-page-turn-forward 0.22s ease;
+.reader-page--paged.reader-page--current,
+.reader-page--paged.reader-page--adjacent {
+  position: absolute;
+  inset: 0;
+  flex: none;
+  min-height: 0;
+  will-change: transform;
+  backface-visibility: hidden;
 }
 
-.reader-page--turn-backward {
-  animation: reader-page-turn-backward 0.22s ease;
+.reader-page--adjacent {
+  z-index: 1;
+  pointer-events: none;
 }
 
-@keyframes reader-page-turn-forward {
-  from {
-    opacity: 0.76;
-    transform: translateX(10px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-@keyframes reader-page-turn-backward {
-  from {
-    opacity: 0.76;
-    transform: translateX(-10px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
+.reader-page--current {
+  z-index: 2;
 }
 
 .reader-page--scroll {
@@ -344,7 +356,6 @@
 
 .reader-page p {
   margin: 0 0 0.95em;
-  text-indent: 2em;
   word-break: break-word;
   user-select: none;
   -webkit-user-select: none;

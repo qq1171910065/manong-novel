@@ -1,12 +1,12 @@
 # renderer 静态资源
 
-随安装包打包（Vite 内嵌），**不在** initial 素材 zip 中。
+随安装包打包（Vite 内嵌）。
 
 ```
-home/                 # 壳层 UI（背景、品牌、吉祥物、法官头像等）
-characters/avatars/   # 登录页装饰头像（doubao / gpt / claude）
+home/                 # 壳层 UI（背景、品牌等）
+characters/avatars/   # 登录页装饰封面
+login/covers/         # 登录页轮播封面
+branding/             # 应用图标与状态栏 logo
 ```
 
-角色立绘与玩法封面等大体积素材请维护 `.dev-assets/`（开发）或 userData `arena-assets/`（运行时）。
-
-角色包目录结构元数据（manifest）在 `src/renderer/src/data/pack-manifests/`。
+小说封面、角色立绘等运行时图片保存在用户数据目录 `{userData}/{appId}/novel/` 下。

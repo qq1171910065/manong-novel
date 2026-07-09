@@ -71,6 +71,15 @@
   max-height: min(80vh, calc(100vh - 48px));
 }
 
+.novel-modal__panel--model-picker {
+  width: min(480px, 100%);
+  max-height: min(72vh, 520px);
+}
+
+.novel-modal__panel--model-picker .novel-modal__body {
+  padding: 14px 18px 16px;
+}
+
 /* 非表单类 auto 弹窗：随内容收缩 */
 .novel-modal__panel--auto:not(.novel-modal__panel--form) {
   width: fit-content;

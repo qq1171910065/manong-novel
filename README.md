@@ -53,7 +53,7 @@
   </tr>
 </table>
 
-> 以上为示例界面图集，展示 Manong Novel 的主要功能页面。如需重新生成：`node scripts/capture-screenshots.mjs`
+> 以上为应用真实界面截图，展示 Manong Novel 的主要功能页面。重新生成：`pnpm capture:screenshots`（通过 Electron `webContents.capturePage()` 截取）
 
 ---
 

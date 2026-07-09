@@ -9,13 +9,13 @@ import {
   TTS_MODEL_RECOMMENDED,
 } from '@renderer/data/model-catalog'
 import { settingsService } from '@renderer/services/app-settings'
-import { isLikelyChatModel, isLikelyImageModel, isLikelyTtsModel, listImageGatewayModels, listTtsGatewayModels, type GatewayModelInfo } from '@renderer/services/gateway-api'
+import { isLikelyChatModel, isLikelyImageModel, isLikelyTtsModel, listImageGatewayModels, listTtsGatewayModels, testGatewayImageModel, type GatewayModelInfo } from '@renderer/services/gateway-api'
 import { DEFAULT_IMAGE_MODEL_ID, DEFAULT_SYSTEM_ROLE_MODEL_ID, MIMO_TTS_MODEL_ID } from '@shared/gateway/constants'
-import GatewayModelPicker from './GatewayModelPicker.vue'
+import GatewayModelPickerModal from './GatewayModelPickerModal.vue'
 import ProfileSectionLayout from './ProfileSectionLayout.vue'
 import SettingsBlock from './SettingsBlock.vue'
 import SettingsInfoRow from './SettingsInfoRow.vue'
-import { NButton, NModal, NTag, useMessage } from '../../ui'
+import { NButton, NTag, useMessage } from '../../ui'
 
 const message = useMessage()
 const { modelLabel } = useGatewayModelLabel()
@@ -44,6 +44,7 @@ const settingsReady = ref(false)
 const savingDefaultModel = ref(false)
 const savingTtsModel = ref(false)
 const savingImageModel = ref(false)
+const testingImageModel = ref(false)
 const defaultDialogOpen = ref(false)
 const ttsDialogOpen = ref(false)
 const imageDialogOpen = ref(false)
@@ -169,6 +170,23 @@ async function saveImageModel() {
   }
 }
 
+async function testDraftImageModel() {
+  if (!draftImageModelId.value || testingImageModel.value) return
+  testingImageModel.value = true
+  try {
+    const result = await testGatewayImageModel(draftImageModelId.value)
+    if (result.ok) {
+      message.success(`绘图测试通过（${result.latencyMs}ms）`)
+    } else {
+      message.error(result.message || '绘图测试失败')
+    }
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : '绘图测试失败')
+  } finally {
+    testingImageModel.value = false
+  }
+}
+
 async function copyGatewayUrl() {
   const url = gatewayRoot.value
   if (!url) return
@@ -276,50 +294,59 @@ onMounted(() => {
       <SettingsInfoRow label="可用模型" :value="`${models.length} 个`" hint="来自网关定价表" />
     </SettingsBlock>
 
-    <NModal v-model:show="imageDialogOpen" preset="dialog" title="绘图模型" style="width: min(560px, 92vw)">
-      <p class="model-dialog-note">用于生成角色立绘、书籍封面等图像，从网关可用文生图模型中选择。</p>
-      <GatewayModelPicker
-        v-model="draftImageModelId"
-        :models="imagePickerModels"
-        :recommended-ids="IMAGE_MODEL_RECOMMENDED"
-        :loading="imageModelsLoading || modelsLoading"
-        empty-hint="暂无可用绘图模型，请先刷新网关连接。"
-      />
-      <template #action>
-        <NButton @click="imageDialogOpen = false">取消</NButton>
-        <NButton type="primary" :loading="savingImageModel" @click="saveImageModel">保存</NButton>
+    <GatewayModelPickerModal
+      v-model:show="imageDialogOpen"
+      v-model="draftImageModelId"
+      title="绘图模型"
+      note="用于生成角色立绘、书籍封面等图像，从网关可用文生图模型中选择。"
+      :models="imagePickerModels"
+      :recommended-ids="IMAGE_MODEL_RECOMMENDED"
+      :loading="imageModelsLoading || modelsLoading"
+      empty-hint="暂无可用绘图模型，请先刷新网关连接。"
+      confirm-text="保存"
+      :confirm-disabled="!draftImageModelId"
+      :confirm-loading="savingImageModel"
+      @confirm="saveImageModel"
+    >
+      <template #footer-extra>
+        <button
+          type="button"
+          class="novel-btn novel-btn--ghost md-ripple"
+          :disabled="!draftImageModelId || testingImageModel"
+          @click="testDraftImageModel"
+        >
+          {{ testingImageModel ? '测试中…' : '测试绘图' }}
+        </button>
       </template>
-    </NModal>
+    </GatewayModelPickerModal>
 
-    <NModal v-model:show="defaultDialogOpen" preset="dialog" title="兜底对话模型" style="width: min(560px, 92vw)">
-      <p class="model-dialog-note">角色未绑定或所选模型不可用时使用。</p>
-      <GatewayModelPicker
-        v-model="draftDefaultModelId"
-        :models="chatModels"
-        :recommended-ids="CHARACTER_MODEL_RECOMMENDED"
-        :loading="modelsLoading"
-        empty-hint="暂无可用对话模型，请先刷新网关连接。"
-      />
-      <template #action>
-        <NButton @click="defaultDialogOpen = false">取消</NButton>
-        <NButton type="primary" :loading="savingDefaultModel" @click="saveDefaultModel">保存</NButton>
-      </template>
-    </NModal>
+    <GatewayModelPickerModal
+      v-model:show="defaultDialogOpen"
+      v-model="draftDefaultModelId"
+      title="兜底对话模型"
+      note="角色未绑定或所选模型不可用时使用。"
+      :models="chatModels"
+      :recommended-ids="CHARACTER_MODEL_RECOMMENDED"
+      :loading="modelsLoading"
+      empty-hint="暂无可用对话模型，请先刷新网关连接。"
+      confirm-text="保存"
+      :confirm-loading="savingDefaultModel"
+      @confirm="saveDefaultModel"
+    />
 
-    <NModal v-model:show="ttsDialogOpen" preset="dialog" title="语音合成模型" style="width: min(560px, 92vw)">
-      <p class="model-dialog-note">朗读播报默认使用 MiMo V2.5 TTS，也可从网关可用语音模型中选择。</p>
-      <GatewayModelPicker
-        v-model="draftTtsModelId"
-        :models="ttsPickerModels"
-        :recommended-ids="TTS_MODEL_RECOMMENDED"
-        :loading="ttsModelsLoading || modelsLoading"
-        empty-hint="暂无可用语音模型，将使用默认 mimo-v2.5-tts。"
-      />
-      <template #action>
-        <NButton @click="ttsDialogOpen = false">取消</NButton>
-        <NButton type="primary" :loading="savingTtsModel" @click="saveTtsModel">保存</NButton>
-      </template>
-    </NModal>
+    <GatewayModelPickerModal
+      v-model:show="ttsDialogOpen"
+      v-model="draftTtsModelId"
+      title="语音合成模型"
+      note="朗读播报默认使用 MiMo V2.5 TTS，也可从网关可用语音模型中选择。"
+      :models="ttsPickerModels"
+      :recommended-ids="TTS_MODEL_RECOMMENDED"
+      :loading="ttsModelsLoading || modelsLoading"
+      empty-hint="暂无可用语音模型，将使用默认 mimo-v2.5-tts。"
+      confirm-text="保存"
+      :confirm-loading="savingTtsModel"
+      @confirm="saveTtsModel"
+    />
   </ProfileSectionLayout>
 </template>
 
@@ -364,12 +391,5 @@ onMounted(() => {
 .model-row-inline code {
   word-break: break-all;
   text-align: right;
-}
-
-.model-dialog-note {
-  margin: 0 0 14px;
-  color: var(--soft);
-  font-size: 13px;
-  line-height: 1.6;
 }
 </style>

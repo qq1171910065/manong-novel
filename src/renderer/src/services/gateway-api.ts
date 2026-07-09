@@ -2,7 +2,11 @@ import { normalizeTtsAudioBuffer } from '@renderer/services/reading-tts-audio'
 import { getRuntimeConfig } from '@renderer/composables/runtime-config'
 import { portalApi } from './portal-api'
 import { ensureLocalImageDataUrl } from './image-storage'
-import { DEFAULT_IMAGE_MODEL_ID, DEFAULT_SYSTEM_ROLE_MODEL_ID, MIMO_TTS_MODEL_ID } from '@shared/gateway/constants'
+import {
+  extractGatewayResponseError,
+  shouldRetryImageWithoutResponseFormat,
+} from './gateway-image-error'
+import { DEFAULT_IMAGE_MODEL_ID, DEFAULT_SYSTEM_ROLE_MODEL_ID, IMAGE_GENERATION_TIMEOUT_MS, MIMO_TTS_MODEL_ID } from '@shared/gateway/constants'
 import type { PortalGatewayConfig } from './portal-api'
 
 const GATEWAY_KEY_STORAGE = 'wb_gateway_api_key'
@@ -388,7 +392,14 @@ export function isLikelyTtsModel(model: GatewayModelInfo): boolean {
 export function isLikelyImageModel(model: GatewayModelInfo): boolean {
   const hay = `${model.id} ${model.tags.join(' ')} ${model.endpointTypes.join(' ')}`.toLowerCase()
   if (/video|tts|whisper|transcri|asr|stt|embedding|rerank|audio|suno/.test(hay)) return false
-  return /image|dall|midjourney|flux|sdxl|stable.?diffusion|gpt-image|seedream|ideogram|imagen|recraft|playground|文生图|绘图/.test(hay)
+  if (
+    /image|dall|midjourney|flux|sdxl|stable.?diffusion|gpt-image|seedream|ideogram|imagen|recraft|playground|文生图|绘图|mj-|sd-/.test(
+      hay
+    )
+  ) {
+    return true
+  }
+  return model.endpointTypes.some((type) => /image|dall|midjourney|flux|sd|文生图|绘图/i.test(type))
 }
 
 export async function resolveImageModelId(options?: string[] | ResolveModelOptions): Promise<string> {
@@ -410,9 +421,6 @@ export async function resolveImageModelId(options?: string[] | ResolveModelOptio
   }
 
   const imageModels = await listImageGatewayModels()
-  if (!imageModels.length) {
-    throw new Error('网关暂无可用绘图模型，请在「模型概览」中确认连接与余额')
-  }
   const available = imageModels.map((m) => m.id)
   const availableSet = new Set(available)
   const dedupe = (ids: string[]) => {
@@ -432,6 +440,11 @@ export async function resolveImageModelId(options?: string[] | ResolveModelOptio
     ...available.slice(0, 8),
   ])
 
+  if (!available.length) {
+    if (explicit) return explicit
+    return fallbackDefault || DEFAULT_IMAGE_MODEL_ID
+  }
+
   for (const id of candidates) {
     if (availableSet.has(id)) return id
   }
@@ -447,6 +460,8 @@ export async function resolveImageModelId(options?: string[] | ResolveModelOptio
     if (hit) return hit
   }
 
+  if (explicit) return explicit
+
   return available[0]!
 }
 
@@ -459,6 +474,9 @@ export interface GatewayImageOptions {
 function parseImageGenerationData(data: unknown): string {
   if (!data || typeof data !== 'object') throw new Error('绘图响应格式异常')
   const root = data as Record<string, unknown>
+
+  const bodyError = extractGatewayResponseError(data)
+  if (bodyError) throw new Error(bodyError)
 
   const asImage = (value: unknown): string | null => {
     if (typeof value !== 'string') return null
@@ -489,8 +507,7 @@ function parseImageGenerationData(data: unknown): string {
   const nestedHit = asImage(nested)
   if (nestedHit) return nestedHit
 
-  const hint = (root.error as { message?: string } | undefined)?.message
-  throw new Error(hint || '响应中未找到图像数据')
+  throw new Error('响应中未找到图像数据')
 }
 
 /** OpenAI 兼容文生图，返回本地可持久化的 data URL */
@@ -508,24 +525,23 @@ export async function gatewayImageGenerate(options: GatewayImageOptions): Promis
 
   let res = await gatewayFetch('images/generations', {
     method: 'POST',
-    timeoutMs: 180_000,
+    timeoutMs: IMAGE_GENERATION_TIMEOUT_MS,
     body: { ...baseBody, response_format: 'b64_json' },
   })
 
-  if (!res.ok) {
-    const errText = String(res.error || '')
-    const retryWithoutFormat =
-      /response_format|unknown|unsupported|not support|invalid/i.test(errText) || res.status === 400
-    if (retryWithoutFormat) {
-      res = await gatewayFetch('images/generations', {
-        method: 'POST',
-        timeoutMs: 180_000,
-        body: baseBody,
-      })
-    }
+  if (!res.ok && shouldRetryImageWithoutResponseFormat(res)) {
+    res = await gatewayFetch('images/generations', {
+      method: 'POST',
+      timeoutMs: IMAGE_GENERATION_TIMEOUT_MS,
+      body: baseBody,
+    })
   }
 
   if (!res.ok) throw new Error(res.error || '图像生成失败')
+
+  const bodyError = extractGatewayResponseError(res.data)
+  if (bodyError) throw new Error(bodyError)
+
   const raw = parseImageGenerationData(res.data)
   return ensureLocalImageDataUrl(raw)
 }
@@ -658,6 +674,34 @@ export async function gatewayTtsSynthesize(options: GatewayTtsOptions): Promise<
     throw new Error(hint || '语音合成响应缺少音频数据，请确认网关已启用 mimo-v2.5-tts')
   }
   return normalizeTtsAudioBuffer(raw)
+}
+
+export async function testGatewayImageModel(
+  model: string,
+  opts: { prompt?: string; size?: string } = {}
+): Promise<ModelTestResult> {
+  const started = Date.now()
+  const prompt = opts.prompt || '一只简笔画风格的小猫，白色背景，无文字、无水印'
+  try {
+    await gatewayImageGenerate({
+      model,
+      prompt,
+      size: opts.size || '1024x1024',
+    })
+    return {
+      model,
+      ok: true,
+      latencyMs: Date.now() - started,
+      replyPreview: '图像生成成功',
+    }
+  } catch (e) {
+    return {
+      model,
+      ok: false,
+      latencyMs: Date.now() - started,
+      message: e instanceof Error ? e.message : '图像生成失败',
+    }
+  }
 }
 
 export async function testGatewayModel(

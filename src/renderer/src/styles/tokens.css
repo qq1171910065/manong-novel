@@ -426,8 +426,7 @@ code,
 
 /* ── Unified pill buttons (Novel / Workspace / shared) ── */
 .arena-btn,
-.novel-btn,
-.workspace-home__btn {
+.novel-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -449,37 +448,32 @@ code,
 }
 
 .arena-btn:disabled,
-.novel-btn:disabled,
-.workspace-home__btn:disabled {
+.novel-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
 
 .arena-btn--primary,
-.novel-btn--primary,
-.workspace-home__btn--primary {
+.novel-btn--primary {
   color: var(--on-brand);
   background: linear-gradient(135deg, var(--brand), color-mix(in srgb, var(--brand) 82%, #c5a059));
   box-shadow: var(--btn-shadow-primary);
 }
 
 .arena-btn--primary:hover:not(:disabled),
-.novel-btn--primary:hover:not(:disabled),
-.workspace-home__btn--primary:hover:not(:disabled) {
+.novel-btn--primary:hover:not(:disabled) {
   transform: translateY(-1px);
 }
 
 .arena-btn--ghost,
-.novel-btn--ghost,
-.workspace-home__btn--ghost {
+.novel-btn--ghost {
   color: var(--text-secondary);
   background: color-mix(in srgb, var(--surface) 55%, transparent);
   border: 1px solid var(--line);
 }
 
 .arena-btn--ghost:hover:not(:disabled),
-.novel-btn--ghost:hover:not(:disabled),
-.workspace-home__btn--ghost:hover:not(:disabled) {
+.novel-btn--ghost:hover:not(:disabled) {
   transform: translateY(-1px);
   background: var(--surface);
 }

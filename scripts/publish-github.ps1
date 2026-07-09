@@ -120,5 +120,3 @@ Write-Host "  Actions: https://github.com/$GithubOwner/$GithubRepo/actions"
 Write-Host "  Release: https://github.com/$GithubOwner/$GithubRepo/releases/tag/$Tag"
 Write-Host ''
 Write-Host 'Release CI builds Windows/macOS installers (~15-30 min).'
-Write-Host 'After CI completes, upload full asset zip locally:'
-Write-Host '  pnpm upload:release-assets'

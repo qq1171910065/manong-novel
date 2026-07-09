@@ -30,6 +30,11 @@ import { registerDeeplinkHandlers, initDeeplinkProtocol } from './deeplink'
 import { appIconOptions } from './app-icon'
 import { clearNovelSession, registerNovelHandlers } from './novel/ipc'
 import { registerReadingWindowHandlers, getReadingWindow, closeReadingWindow } from './reading-window'
+import {
+  isScreenshotMode,
+  prepareScreenshotMode,
+  registerScreenshotProbe,
+} from './screenshot-mode'
 import type { MntoolsAppConfig, MntoolsModuleId, PortalSession } from '../shared/types'
 
 export type WindowPhase = 'login' | 'main' | 'reading'
@@ -267,6 +272,7 @@ export function registerLoginSuccessHandler(): void {
 
   ipcMain.removeHandler('auth:logout')
   ipcMain.handle('auth:logout', () => {
+    if (isScreenshotMode()) return { ok: true }
     const endTransition = beginWindowPhaseTransition()
     try {
       setStoredSession(null)
@@ -356,6 +362,12 @@ export function cleanupModules(): void {
 }
 
 export function bootstrapWindows(): void {
+  if (isScreenshotMode()) {
+    if (appConfig) prepareScreenshotMode(appConfig.appId)
+    createMainWindow()
+    registerScreenshotProbe(() => getMainWindow(), () => getReadingWindow())
+    return
+  }
   if (hasStoredSession()) createMainWindow()
   else createLoginWindow()
 }

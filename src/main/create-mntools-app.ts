@@ -13,6 +13,7 @@ import {
   cleanupModules,
 } from './lib/window-manager'
 import { findDeeplinkInArgv, handleDeeplinkUrl } from './lib/deeplink'
+import { isScreenshotMode } from './lib/screenshot-mode'
 import type { MntoolsAppConfig } from '../shared/types'
 
 export type { MntoolsAppConfig, MntoolsModuleId, LoginCapabilities } from '../shared/types'
@@ -20,11 +21,13 @@ export type { MntoolsAppConfig, MntoolsModuleId, LoginCapabilities } from '../sh
 export function createMntoolsApp(config: MntoolsAppConfig): void {
   setAppConfig(config)
 
-  const gotLock = app.requestSingleInstanceLock()
-  if (!gotLock) {
-    console.warn('[app] 已有实例在运行，本次启动已退出。请先关闭其他 Manong Novel 窗口或结束 electron 进程后再试。')
-    app.quit()
-    return
+  if (!isScreenshotMode()) {
+    const gotLock = app.requestSingleInstanceLock()
+    if (!gotLock) {
+      console.warn('[app] 已有实例在运行，本次启动已退出。请先关闭其他 Manong Novel 窗口或结束 electron 进程后再试。')
+      app.quit()
+      return
+    }
   }
 
   app.on('second-instance', (_event, argv) => {
@@ -65,6 +68,7 @@ export function createMntoolsApp(config: MntoolsAppConfig): void {
 
   app.on('window-all-closed', () => {
     cleanupModules()
+    if (isScreenshotMode()) return
     if (process.platform !== 'darwin') app.quit()
   })
 }

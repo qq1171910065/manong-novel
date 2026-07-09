@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { Bot } from 'lucide-vue-next'
-import GatewayModelPicker from '@renderer/components/settings/GatewayModelPicker.vue'
+import GatewayModelPickerModal from '@renderer/components/settings/GatewayModelPickerModal.vue'
 import { useGatewayModelLabel } from '@renderer/composables/useGatewayModelLabel'
 import {
   CHARACTER_MODEL_RECOMMENDED,
@@ -11,7 +11,6 @@ import type { WritingMode } from '@shared/novel/types'
 import { settingsService } from '@renderer/services/app-settings'
 import { isLikelyChatModel, listChatGatewayModels, type GatewayModelInfo } from '@renderer/services/gateway-api'
 import { DEFAULT_SYSTEM_ROLE_MODEL_ID } from '@shared/gateway/constants'
-import { NButton, NModal } from '@renderer/ui'
 
 const props = defineProps<{
   disabled?: boolean
@@ -93,28 +92,17 @@ onMounted(() => {
       </button>
     </div>
 
-    <NModal
+    <GatewayModelPickerModal
       v-model:show="chatDialogOpen"
-      preset="dialog"
+      v-model="draftChatModelId"
       title="选择写作模型"
-      style="width: min(560px, 92vw)"
-    >
-      <p class="create-chat-model-picker__note">
-        用于灵感对话、蓝图与章节写作；未单独设置时使用全局默认模型。
-      </p>
-      <GatewayModelPicker
-        v-model="draftChatModelId"
-        :models="chatModels.filter(isLikelyChatModel)"
-        :recommended-ids="chatRecommendedIds"
-        :loading="modelsLoading"
-        hide-scrollbar
-        empty-hint="暂无可用对话模型，请先在设置中确认网关连接。"
-      />
-      <template #action>
-        <NButton @click="chatDialogOpen = false">取消</NButton>
-        <NButton type="primary" @click="saveChatModel">确定</NButton>
-      </template>
-    </NModal>
+      note="用于灵感对话、蓝图与章节写作；未单独设置时使用全局默认模型。"
+      :models="chatModels.filter(isLikelyChatModel)"
+      :recommended-ids="chatRecommendedIds"
+      :loading="modelsLoading"
+      empty-hint="暂无可用对话模型，请先在设置中确认网关连接。"
+      @confirm="saveChatModel"
+    />
   </div>
 </template>
 
@@ -178,12 +166,5 @@ onMounted(() => {
 .create-chat-model-picker__btn:disabled {
   opacity: 0.7;
   cursor: not-allowed;
-}
-
-.create-chat-model-picker__note {
-  margin: 0 0 12px;
-  font-size: var(--text-xs);
-  line-height: 1.55;
-  color: var(--muted);
 }
 </style>

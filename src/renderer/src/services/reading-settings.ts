@@ -9,9 +9,13 @@ export {
   buildBookPages,
   estimateCharsPerPage,
   fromGlobalPageIndex,
+  paginateChapter,
   paginateChapterText,
+  resolvePageLayoutMetrics,
   toGlobalPageIndex,
   type BookPage,
+  type PageLayoutMetrics,
+  type PaginationInput,
 } from './reading-pagination'
 
 export type ReadingTheme = 'light' | 'dark' | 'sepia'

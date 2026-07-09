@@ -1,4 +1,4 @@
-import { paginateChapterText } from '@renderer/services/reading-pagination'
+import { paginateChapter, type PaginationInput } from '@renderer/services/reading-pagination'
 
 export interface ReadingTtsVoiceOption {
   id: string
@@ -145,10 +145,10 @@ export function resolveTtsStyleInstruction(styleId: string): string {
   )
 }
 
-function mapSegmentsToPages(normalized: string, segments: string[], charsPerPage: number): number[] {
+function mapSegmentsToPages(normalized: string, segments: string[], input: PaginationInput): number[] {
   if (!segments.length) return []
 
-  const pages = paginateChapterText(normalized, charsPerPage)
+  const pages = paginateChapter(normalized, input)
   if (!pages.length) return segments.map(() => 0)
 
   const pageEndOffsets: number[] = []
@@ -181,28 +181,28 @@ function mapSegmentsToPages(normalized: string, segments: string[], charsPerPage
 }
 
 /** 一次计算 TTS 分段与翻页映射，避免重复 split/paginate */
-export function buildTtsChapterLayout(text: string, charsPerPage: number): TtsChapterLayout {
+export function buildTtsChapterLayout(text: string, input: PaginationInput): TtsChapterLayout {
   const normalized = normalizeChapterText(text)
   const segments = splitNormalizedIntoTtsSegments(normalized)
-  const pageBySegment = mapSegmentsToPages(normalized, segments, charsPerPage)
+  const pageBySegment = mapSegmentsToPages(normalized, segments, input)
   return { normalized, segments, pageBySegment }
 }
 
 /** 计算每个 TTS 分段对应的翻页页码（0-based） */
-export function mapTtsSegmentsToPages(text: string, charsPerPage: number): number[] {
-  return buildTtsChapterLayout(text, charsPerPage).pageBySegment
+export function mapTtsSegmentsToPages(text: string, input: PaginationInput): number[] {
+  return buildTtsChapterLayout(text, input).pageBySegment
 }
 
 export function resolveStartSegmentIndex(options: {
   chapterText: string
-  charsPerPage: number
+  paginationInput: PaginationInput
   isPageMode: boolean
   pageIndex: number
   scrollTop: number
   scrollHeight: number
   clientHeight: number
 }): number {
-  const layout = buildTtsChapterLayout(options.chapterText, options.charsPerPage)
+  const layout = buildTtsChapterLayout(options.chapterText, options.paginationInput)
   if (!layout.segments.length) return 0
 
   if (options.isPageMode) {

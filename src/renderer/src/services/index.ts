@@ -57,6 +57,7 @@ export {
   isLikelyImageModel,
   gatewayImageGenerate,
   testGatewayModel,
+  testGatewayImageModel,
   testGatewayConnectivity,
   resolveGatewayEndpoints,
   getGatewayRootUrl,

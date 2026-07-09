@@ -82,8 +82,12 @@ export const useNovelStore = defineStore('novel', () => {
     }
     error.value = null
     try {
+      const switched = currentProject.value?.id !== projectId
       const project = await NovelAPI.getNovel(projectId)
       currentProject.value = project
+      if (switched) {
+        currentConversationState.value = {}
+      }
       if (!silent) {
         activityLogService.logProjectOpened(project.id, project.title || '未命名作品')
       }

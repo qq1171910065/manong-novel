@@ -672,9 +672,6 @@
     justify-self: center;
   }
 
-  .nd-overview-hero__meta {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 
 .nd-overview-hero__content {
@@ -695,14 +692,12 @@
 
 .nd-overview-hero__meta {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 20px;
 }
 
 .nd-overview-hero__meta-cell {
   padding: 10px 12px;
-  display: grid;
-  gap: 4px;
 }
 
 .nd-overview-hero__meta-actions {
@@ -2035,6 +2030,14 @@
   font-weight: 650;
   letter-spacing: -0.02em;
   color: var(--text);
+}
+
+.nd-stat-card--compact .nd-stat-card__value {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .nd-stat-card__hint {

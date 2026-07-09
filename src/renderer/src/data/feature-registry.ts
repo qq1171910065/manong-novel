@@ -1,4 +1,4 @@
-import { BookOpen, Feather, Home, PenLine, Settings, Sparkles, Users } from 'lucide-vue-next'
+import { BookOpen, Home, PenLine, Settings, Sparkles, Users } from 'lucide-vue-next'
 import type { FeatureRegistry } from '@renderer/types/registry'
 
 export const featureRegistry: FeatureRegistry = [
@@ -19,16 +19,6 @@ export const featureRegistry: FeatureRegistry = [
     group: 'main',
     order: 2,
     icon: BookOpen,
-  },
-  {
-    key: 'workspace',
-    route: 'bookshelf',
-    path: '/bookshelf',
-    label: '写作台',
-    group: 'main',
-    order: 2,
-    icon: Feather,
-    hideInNav: true,
   },
   {
     key: 'inspiration',

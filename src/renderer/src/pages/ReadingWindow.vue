@@ -43,7 +43,14 @@ const settings = ref<ReadingSettings>({ ...readingSettingsService.get(), autoScr
 const pageViewportRef = ref<HTMLElement | null>(null)
 const showChrome = ref(true)
 const readingStarted = ref(false)
-const pageTurnDirection = ref<'forward' | 'backward'>('forward')
+const pageCarouselRef = ref<HTMLElement | null>(null)
+const pageMotionOffset = ref(0)
+const pageMotionSettling = ref(false)
+const pageMotionTransition = ref(false)
+const pageAdjacentText = ref('')
+const pageAdjacentSide = ref<'prev' | 'next' | null>(null)
+const pageDragActive = ref(false)
+const carouselWidth = ref(0)
 const recordingBossKey = ref(false)
 const sheetDragOffset = ref(0)
 const sheetDragging = ref(false)
@@ -51,6 +58,7 @@ const sheetDragging = ref(false)
 let wheelLock = false
 let chromeHideTimer: number | undefined
 let scrollSaveTimer: number | undefined
+let pageMotionResetTimer: number | undefined
 let sheetDragStartY = 0
 let sheetDragStartOffset = 0
 let viewportPointerDown = false
@@ -58,6 +66,14 @@ let viewportDragActive = false
 let viewportDragMoved = false
 let viewportDragStartY = 0
 let viewportDragStartScrollTop = 0
+let pageDragPointerId: number | null = null
+let pageDragStartX = 0
+let pageDragStartY = 0
+let pageDragCommitted = false
+let pageDragLastX = 0
+let pageDragLastTime = 0
+let pageDragVelocity = 0
+let carouselResizeObserver: ResizeObserver | undefined
 let ttsAdvancingChapter = false
 let ttsAdvancingPage = false
 let stopTtsImpl = () => {}
@@ -92,8 +108,9 @@ const {
   readableChapters,
   currentChapter,
   isPageMode,
-  charsPerPage,
+  pageLayoutMetrics,
   globalPageIndex,
+  bookPages,
   currentPageText,
   scrollChapterParagraphs,
   scrollBlocks,
@@ -186,10 +203,189 @@ watch(ttsActive, (active) => {
   resetAutoTurn()
 }, { immediate: true })
 
-watch(globalPageIndex, (next, prev) => {
-  if (!isPageMode.value) return
-  if (next > prev) pageTurnDirection.value = 'forward'
-  else if (next < prev) pageTurnDirection.value = 'backward'
+watch(globalPageIndex, () => {
+  if (pageDragActive.value || pageMotionSettling.value) return
+  resetPageMotion(false)
+})
+
+const PAGE_TURN_DURATION_MS = 340
+const PAGE_SWIPE_COMMIT_RATIO = 0.22
+const PAGE_SWIPE_VELOCITY_THRESHOLD = 0.55
+
+function updateCarouselWidth() {
+  carouselWidth.value = pageCarouselRef.value?.clientWidth
+    ?? pageViewportRef.value?.clientWidth
+    ?? 0
+}
+
+function splitPageParagraphs(text: string): string[] {
+  const normalized = text.trim()
+  if (!normalized) return ['']
+  return normalized.split('\n\n').filter(Boolean)
+}
+
+function rubberBandOffset(raw: number, width: number): number {
+  const abs = Math.abs(raw)
+  const max = width * 0.22
+  return Math.sign(raw) * max * (1 - 1 / (abs / width + 1))
+}
+
+function resetPageMotion(animate = false) {
+  if (pageMotionResetTimer) window.clearTimeout(pageMotionResetTimer)
+  pageMotionResetTimer = undefined
+  pageMotionTransition.value = animate
+  pageMotionOffset.value = 0
+  pageMotionSettling.value = false
+  pageAdjacentText.value = ''
+  pageAdjacentSide.value = null
+  pageDragActive.value = false
+  if (animate) {
+    pageMotionResetTimer = window.setTimeout(() => {
+      pageMotionTransition.value = false
+    }, PAGE_TURN_DURATION_MS)
+  } else {
+    pageMotionTransition.value = false
+  }
+}
+
+function clearPageMotion() {
+  if (pageMotionResetTimer) window.clearTimeout(pageMotionResetTimer)
+  pageMotionResetTimer = undefined
+  pageMotionTransition.value = false
+  pageMotionOffset.value = 0
+  pageMotionSettling.value = false
+  pageAdjacentText.value = ''
+  pageAdjacentSide.value = null
+  pageDragActive.value = false
+  pageDragPointerId = null
+  pageDragCommitted = false
+}
+
+function setAdjacentPreview(side: 'prev' | 'next') {
+  const targetIndex = side === 'next'
+    ? globalPageIndex.value + 1
+    : globalPageIndex.value - 1
+  const target = bookPages.value[targetIndex]
+  if (!target) {
+    pageAdjacentText.value = ''
+    pageAdjacentSide.value = null
+    return
+  }
+  pageAdjacentSide.value = side
+  pageAdjacentText.value = target.text
+}
+
+function applyPageDragOffset(rawOffset: number) {
+  const width = carouselWidth.value
+  if (width <= 0) {
+    pageMotionOffset.value = 0
+    pageAdjacentText.value = ''
+    pageAdjacentSide.value = null
+    return
+  }
+
+  if (rawOffset < 0) {
+    if (canNextPage.value) {
+      setAdjacentPreview('next')
+      pageMotionOffset.value = Math.max(rawOffset, -width)
+      return
+    }
+    pageAdjacentText.value = ''
+    pageAdjacentSide.value = null
+    pageMotionOffset.value = rubberBandOffset(rawOffset, width)
+    return
+  }
+
+  if (rawOffset > 0) {
+    if (canPrevPage.value) {
+      setAdjacentPreview('prev')
+      pageMotionOffset.value = Math.min(rawOffset, width)
+      return
+    }
+    pageAdjacentText.value = ''
+    pageAdjacentSide.value = null
+    pageMotionOffset.value = rubberBandOffset(rawOffset, width)
+    return
+  }
+
+  pageMotionOffset.value = 0
+  pageAdjacentText.value = ''
+  pageAdjacentSide.value = null
+}
+
+function finishPageMotion(direction: 'forward' | 'backward', navigate: () => void) {
+  const width = carouselWidth.value
+  if (width <= 0 || !settings.value.pageTurnAnimation) {
+    clearPageMotion()
+    navigate()
+    return
+  }
+
+  pageMotionSettling.value = true
+  pageMotionTransition.value = true
+  pageMotionOffset.value = direction === 'forward' ? -width : width
+
+  if (pageMotionResetTimer) window.clearTimeout(pageMotionResetTimer)
+  pageMotionResetTimer = window.setTimeout(() => {
+    navigate()
+    resetPageMotion(false)
+  }, PAGE_TURN_DURATION_MS)
+}
+
+function settlePageDrag() {
+  const width = carouselWidth.value
+  const offset = pageMotionOffset.value
+
+  if (width <= 0) {
+    resetPageMotion(false)
+    return
+  }
+
+  const commitNext = offset < 0
+    && canNextPage.value
+    && (Math.abs(offset) > width * PAGE_SWIPE_COMMIT_RATIO || pageDragVelocity < -PAGE_SWIPE_VELOCITY_THRESHOLD)
+  const commitPrev = offset > 0
+    && canPrevPage.value
+    && (offset > width * PAGE_SWIPE_COMMIT_RATIO || pageDragVelocity > PAGE_SWIPE_VELOCITY_THRESHOLD)
+
+  if (commitNext) {
+    finishPageMotion('forward', nextPage)
+    return
+  }
+  if (commitPrev) {
+    finishPageMotion('backward', prevPage)
+    return
+  }
+
+  pageMotionSettling.value = true
+  pageMotionTransition.value = true
+  pageMotionOffset.value = 0
+  pageAdjacentText.value = ''
+  pageAdjacentSide.value = null
+
+  if (pageMotionResetTimer) window.clearTimeout(pageMotionResetTimer)
+  pageMotionResetTimer = window.setTimeout(() => {
+    resetPageMotion(false)
+  }, PAGE_TURN_DURATION_MS)
+}
+
+const currentPageStyle = computed(() => ({
+  transform: `translate3d(${pageMotionOffset.value}px, 0, 0)`,
+  transition: pageMotionTransition.value ? `transform ${PAGE_TURN_DURATION_MS}ms cubic-bezier(0.22, 1, 0.36, 1)` : 'none',
+}))
+
+const adjacentPageStyle = computed(() => {
+  const width = carouselWidth.value
+  const offset = pageMotionOffset.value
+  if (!pageAdjacentSide.value || width <= 0) {
+    return { transform: 'translate3d(0, 0, 0)', transition: 'none' }
+  }
+
+  const base = pageAdjacentSide.value === 'next' ? width + offset : -width + offset
+  return {
+    transform: `translate3d(${base}px, 0, 0)`,
+    transition: pageMotionTransition.value ? `transform ${PAGE_TURN_DURATION_MS}ms cubic-bezier(0.22, 1, 0.36, 1)` : 'none',
+  }
 })
 
 const scrollDisplaySegments = computed(() => {
@@ -208,7 +404,7 @@ const ttsChapterLayout = computed(() => {
   if (!chapter?.content) {
     return { segments: [] as string[], pageBySegment: [] as number[] }
   }
-  const layout = buildTtsChapterLayout(chapter.content, charsPerPage.value)
+  const layout = buildTtsChapterLayout(chapter.content, pageLayoutMetrics.value)
   return { segments: layout.segments, pageBySegment: layout.pageBySegment }
 })
 
@@ -261,7 +457,7 @@ function resolveTtsStartIndex(): number {
   const viewport = pageViewportRef.value
   return resolveStartSegmentIndex({
     chapterText,
-    charsPerPage: charsPerPage.value,
+    paginationInput: pageLayoutMetrics.value,
     isPageMode: isPageMode.value,
     pageIndex: pageIndex.value,
     scrollTop: viewport?.scrollTop ?? 0,
@@ -339,17 +535,22 @@ function openChapterPicker() {
 function jumpToChapter(index: number) {
   pauseAutoScroll()
   showChapterPicker.value = false
+  clearPageMotion()
   void scrollToChapter(index)
 }
 
 function turnPrevPage() {
-  if (!canPrevPage.value) return
-  prevPage()
+  if (!canPrevPage.value || pageMotionSettling.value || pageDragActive.value) return
+  updateCarouselWidth()
+  setAdjacentPreview('prev')
+  finishPageMotion('backward', prevPage)
 }
 
 function turnNextPage() {
-  if (!canNextPage.value) return
-  nextPage()
+  if (!canNextPage.value || pageMotionSettling.value || pageDragActive.value) return
+  updateCarouselWidth()
+  setAdjacentPreview('next')
+  finishPageMotion('forward', nextPage)
 }
 
 function resolvePageTapAction(event: MouseEvent): 'prev' | 'next' | null {
@@ -392,11 +593,13 @@ function onViewportClick(event: MouseEvent) {
 
 function goPrevChapter() {
   pauseAutoScroll()
+  clearPageMotion()
   prevChapter()
 }
 
 function goNextChapter() {
   pauseAutoScroll()
+  clearPageMotion()
   nextChapter()
 }
 
@@ -404,7 +607,23 @@ function onViewportPointerDown(event: PointerEvent) {
   viewportPointerDown = false
   viewportDragMoved = false
 
-  if (event.button !== 0 || showSettings.value || isPageMode.value) return
+  if (event.button !== 0 || showSettings.value) return
+
+  if (isPageMode.value) {
+    if (pageMotionSettling.value) return
+    pageDragPointerId = event.pointerId
+    pageDragStartX = event.clientX
+    pageDragStartY = event.clientY
+    pageDragLastX = event.clientX
+    pageDragLastTime = performance.now()
+    pageDragVelocity = 0
+    pageDragCommitted = false
+    pageMotionTransition.value = false
+    viewportPointerDown = true
+    updateCarouselWidth()
+    pageViewportRef.value?.setPointerCapture(event.pointerId)
+    return
+  }
 
   pauseAutoScroll()
   const el = pageViewportRef.value
@@ -418,6 +637,35 @@ function onViewportPointerDown(event: PointerEvent) {
 }
 
 function onViewportPointerMove(event: PointerEvent) {
+  if (isPageMode.value && pageDragPointerId === event.pointerId) {
+    const deltaX = event.clientX - pageDragStartX
+    const deltaY = event.clientY - pageDragStartY
+
+    if (!pageDragCommitted) {
+      if (Math.abs(deltaX) < 6 && Math.abs(deltaY) < 6) return
+      if (Math.abs(deltaY) > Math.abs(deltaX)) {
+        pageDragPointerId = null
+        pageViewportRef.value?.releasePointerCapture(event.pointerId)
+        viewportPointerDown = false
+        return
+      }
+      pageDragCommitted = true
+      pageDragActive.value = true
+      viewportDragMoved = true
+    }
+
+    const now = performance.now()
+    const dt = now - pageDragLastTime
+    if (dt > 0) {
+      pageDragVelocity = (event.clientX - pageDragLastX) / dt
+    }
+    pageDragLastX = event.clientX
+    pageDragLastTime = now
+
+    applyPageDragOffset(deltaX)
+    return
+  }
+
   if (!viewportDragActive) return
   const el = pageViewportRef.value
   if (!el) return
@@ -430,6 +678,21 @@ function onViewportPointerMove(event: PointerEvent) {
 }
 
 function onViewportPointerUp(event: PointerEvent) {
+  if (isPageMode.value && pageDragPointerId === event.pointerId) {
+    pageViewportRef.value?.releasePointerCapture(event.pointerId)
+    pageDragPointerId = null
+
+    if (pageDragCommitted) {
+      settlePageDrag()
+    } else {
+      viewportPointerDown = false
+    }
+
+    pageDragCommitted = false
+    pageDragActive.value = false
+    return
+  }
+
   if (!viewportDragActive) return
   viewportDragActive = false
   const el = pageViewportRef.value
@@ -438,6 +701,20 @@ function onViewportPointerUp(event: PointerEvent) {
 }
 
 function onViewportPointerCancel(event: PointerEvent) {
+  if (isPageMode.value && pageDragPointerId === event.pointerId) {
+    pageViewportRef.value?.releasePointerCapture(event.pointerId)
+    pageDragPointerId = null
+    pageDragCommitted = false
+    pageDragActive.value = false
+    if (pageMotionOffset.value !== 0) {
+      settlePageDrag()
+    } else {
+      resetPageMotion(false)
+      viewportPointerDown = false
+    }
+    return
+  }
+
   if (!viewportDragActive) return
   viewportDragActive = false
   const el = pageViewportRef.value
@@ -623,6 +900,27 @@ onMounted(() => {
   window.addEventListener('keydown', onKeydown, true)
 })
 
+watch(pageCarouselRef, (el, _, onCleanup) => {
+  carouselResizeObserver?.disconnect()
+  carouselResizeObserver = undefined
+  if (!el) return
+  updateCarouselWidth()
+  carouselResizeObserver = new ResizeObserver(() => updateCarouselWidth())
+  carouselResizeObserver.observe(el)
+  onCleanup(() => {
+    carouselResizeObserver?.disconnect()
+    carouselResizeObserver = undefined
+  })
+})
+
+watch(isPageMode, (pageMode) => {
+  if (pageMode) {
+    nextTick(() => updateCarouselWidth())
+    return
+  }
+  clearPageMotion()
+})
+
 watch(pageViewportRef, (el, _, onCleanup) => {
   if (!el) return
   el.addEventListener('wheel', onWheel, { passive: false })
@@ -631,6 +929,9 @@ watch(pageViewportRef, (el, _, onCleanup) => {
 
 onUnmounted(() => {
   resetSheetDrag()
+  clearPageMotion()
+  carouselResizeObserver?.disconnect()
+  carouselResizeObserver = undefined
   window.removeEventListener('keydown', onKeydown, true)
   disposeAutoTurn()
   if (scrollSaveTimer) window.clearTimeout(scrollSaveTimer)
@@ -708,6 +1009,7 @@ onUnmounted(() => {
           :class="{
             'reader-page-viewport--scroll': !isPageMode,
             'reader-page-viewport--paged': isPageMode,
+            'is-dragging': isPageMode && pageDragActive,
           }"
           :style="readerStyle"
           @click="onViewportClick"
@@ -717,32 +1019,47 @@ onUnmounted(() => {
           @pointercancel="onViewportPointerCancel"
           @scroll="onScroll"
         >
-          <article
+          <div
             v-if="isPageMode"
-            :key="globalPageIndex"
-            class="reader-page reader-page--paged"
-            :class="{
-              'reader-page--turn-forward': settings.pageTurnAnimation && pageTurnDirection === 'forward',
-              'reader-page--turn-backward': settings.pageTurnAnimation && pageTurnDirection === 'backward',
-            }"
+            ref="pageCarouselRef"
+            class="reader-page-carousel"
+            :class="{ 'is-dragging': pageDragActive }"
           >
-            <template v-if="ttsActive && pageTtsEntries.length">
-              <p
-                v-for="entry in pageTtsEntries"
-                :key="`${chapterIndex}-${pageIndex}-${entry.globalIndex}`"
-                :ref="(el) => setSegmentRef(entry.globalIndex, el as Element | null)"
-                :class="{
-                  'reader-segment--active': ttsCurrentSegmentIndex === entry.globalIndex,
-                  'reader-segment--loading': ttsLoading && ttsCurrentSegmentIndex === entry.globalIndex,
-                }"
-              >
-                {{ entry.text }}
+            <article
+              v-if="pageAdjacentText && pageAdjacentSide"
+              class="reader-page reader-page--paged reader-page--adjacent"
+              :class="pageAdjacentSide === 'next' ? 'reader-page--adjacent-next' : 'reader-page--adjacent-prev'"
+              :style="adjacentPageStyle"
+              aria-hidden="true"
+            >
+              <p v-for="(paragraph, idx) in splitPageParagraphs(pageAdjacentText)" :key="`adj-${idx}`">
+                {{ paragraph }}
               </p>
-            </template>
-            <template v-else>
-              <p v-for="(paragraph, idx) in currentPageText.split('\n\n')" :key="idx">{{ paragraph }}</p>
-            </template>
-          </article>
+            </article>
+            <article
+              class="reader-page reader-page--paged reader-page--current"
+              :style="currentPageStyle"
+            >
+              <template v-if="ttsActive && pageTtsEntries.length">
+                <p
+                  v-for="entry in pageTtsEntries"
+                  :key="`${chapterIndex}-${pageIndex}-${entry.globalIndex}`"
+                  :ref="(el) => setSegmentRef(entry.globalIndex, el as Element | null)"
+                  :class="{
+                    'reader-segment--active': ttsCurrentSegmentIndex === entry.globalIndex,
+                    'reader-segment--loading': ttsLoading && ttsCurrentSegmentIndex === entry.globalIndex,
+                  }"
+                >
+                  {{ entry.text }}
+                </p>
+              </template>
+              <template v-else>
+                <p v-for="(paragraph, idx) in splitPageParagraphs(currentPageText)" :key="`cur-${idx}`">
+                  {{ paragraph }}
+                </p>
+              </template>
+            </article>
+          </div>
           <article v-else class="reader-page reader-page--scroll">
             <template v-if="ttsActive">
               <p
@@ -805,11 +1122,11 @@ onUnmounted(() => {
         <button
           type="button"
           class="reader-nav-btn"
-          :disabled="isPageMode ? !canPrevPage : !canPrevChapter"
-          @click.stop="isPageMode ? turnPrevPage() : goPrevChapter()"
+          :disabled="!canPrevChapter"
+          @click.stop="goPrevChapter()"
         >
           <ChevronLeft :size="18" />
-          {{ isPageMode ? '上一页' : '上一章' }}
+          上一章
         </button>
         <button type="button" class="reader-progress" @click.stop="openChapterPicker">
           <List :size="14" />
@@ -818,10 +1135,10 @@ onUnmounted(() => {
         <button
           type="button"
           class="reader-nav-btn"
-          :disabled="isPageMode ? !canNextPage : !canNextChapter"
-          @click.stop="isPageMode ? turnNextPage() : goNextChapter()"
+          :disabled="!canNextChapter"
+          @click.stop="goNextChapter()"
         >
-          {{ isPageMode ? '下一页' : '下一章' }}
+          下一章
           <ChevronRight :size="18" />
         </button>
       </footer>

@@ -75,7 +75,7 @@ function handleClose() {
     auto-min-width="sm"
     panel-class="image-draw-dialog__panel"
     :title="title"
-    subtitle="AI 已根据作品信息生成提示词草稿，你可以修改后再提交。"
+    subtitle="AI 已根据作品信息生成提示词草稿；立绘仅保留外貌与服饰描述，封面/氛围图会按对应构图框架生成。你可以修改后再提交。"
     :show-close="!submitting"
     aria-label="AI 绘制"
     foot-class="novel-modal__foot--form"

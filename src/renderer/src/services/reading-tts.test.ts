@@ -49,7 +49,7 @@ describe('resolveStartSegmentIndex', () => {
     const expected = layout.pageBySegment.findIndex((page) => page === pageIndex)
     const index = resolveStartSegmentIndex({
       chapterText,
-      charsPerPage,
+      paginationInput: charsPerPage,
       isPageMode: true,
       pageIndex,
       scrollTop: 0,
@@ -62,7 +62,7 @@ describe('resolveStartSegmentIndex', () => {
   it('uses scroll ratio in scroll mode', () => {
     const index = resolveStartSegmentIndex({
       chapterText,
-      charsPerPage: 40,
+      paginationInput: 40,
       isPageMode: false,
       pageIndex: 0,
       scrollTop: 50,

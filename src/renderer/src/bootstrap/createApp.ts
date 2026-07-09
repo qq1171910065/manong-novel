@@ -7,6 +7,7 @@ import UiProvider from '../ui/UiProvider.vue'
 import { route, navigate } from '../router'
 import { isPortalPath } from '../pages/settings/portal-routes'
 import { refreshSessionFromStorage, ensureGatewayKey, getAppKeyName, getPortalSession } from '../services'
+import { isDemoScreenshotSession } from '@shared/demo-screenshot'
 import {
   completeAuthSession,
   resolveAuthPhase,
@@ -18,7 +19,6 @@ import { configureRuntime } from '../composables/runtime-config'
 import { setupAppShortcuts } from './setupAppShortcuts'
 import type { FeatureRegistry, RouteName } from '../types/registry'
 import type { LoginCapabilities, ShellLayout, ShellStyle } from '@shared/types'
-import type { ExampleModuleId } from '../composables/runtime-config'
 
 export interface MntoolsRendererConfig {
   appName: string
@@ -30,7 +30,6 @@ export interface MntoolsRendererConfig {
   registry: FeatureRegistry
   pageLoaders: Partial<Record<RouteName, () => Promise<Component>>>
   homeComponent?: Component
-  exampleModules?: ExampleModuleId[]
   appId?: string
   description?: string
   features?: Partial<import('../composables/runtime-config').AppFeatures>
@@ -43,7 +42,6 @@ export function createMntoolsApp(config: MntoolsRendererConfig) {
     displayName: config.appName,
     description: config.description ?? '',
     shellLayout: config.shellLayout ?? 'sidebar',
-    exampleModules: config.exampleModules,
     features: config.features,
   })
 
@@ -89,9 +87,11 @@ export function createMntoolsApp(config: MntoolsRendererConfig) {
         if (route.value.name === 'login') navigate(defaultHomePath)
         if (isReadingPath(route.value.path)) return
         await loadPage(resolvePageLoaderName(route.value.path))
-        void ensureGatewayKey(getAppKeyName()).catch((error) =>
-          console.warn('[app-key] ensure failed', error)
-        )
+        if (!isDemoScreenshotSession(getPortalSession())) {
+          void ensureGatewayKey(getAppKeyName()).catch((error) =>
+            console.warn('[app-key] ensure failed', error)
+          )
+        }
         if (!teardownShortcuts) teardownShortcuts = setupAppShortcuts()
       }
 
@@ -109,6 +109,7 @@ export function createMntoolsApp(config: MntoolsRendererConfig) {
         const authPhase = await resolveAuthPhase()
         const session = getPortalSession()
         const hasSession = Boolean(session?.token)
+        const demoScreenshot = isDemoScreenshotSession(session)
 
         if (authPhase === 'login' && hasSession && session) {
           await completeAuthSession(session, defaultHomePath)
@@ -121,13 +122,15 @@ export function createMntoolsApp(config: MntoolsRendererConfig) {
           return
         }
 
-        const refresh = await refreshSessionFromStorage()
-        if (refresh === 'invalid') {
-          const { handleAuthFailure } = await import('../services/auth-session')
-          await handleAuthFailure()
-          phase.value = 'login'
-          navigate('/login')
-          return
+        if (!demoScreenshot) {
+          const refresh = await refreshSessionFromStorage()
+          if (refresh === 'invalid') {
+            const { handleAuthFailure } = await import('../services/auth-session')
+            await handleAuthFailure()
+            phase.value = 'login'
+            navigate('/login')
+            return
+          }
         }
 
         if (authPhase === 'reading') {
@@ -140,6 +143,10 @@ export function createMntoolsApp(config: MntoolsRendererConfig) {
         }
 
         phase.value = 'main'
+        if (demoScreenshot) {
+          ;(window as Window & { __MNOVEL_NAVIGATE__?: (path: string) => void }).__MNOVEL_NAVIGATE__ =
+            navigate
+        }
         await enterMainShell()
       })
 

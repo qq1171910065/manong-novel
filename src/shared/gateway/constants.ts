@@ -3,6 +3,9 @@ export const DEFAULT_SYSTEM_ROLE_MODEL_ID = DEFAULT_CHAT_MODEL_ID
 export const MIMO_TTS_MODEL_ID = 'mimo-v2.5-tts'
 export const DEFAULT_IMAGE_MODEL_ID = 'gpt-image-2-c'
 
+/** 文生图 HTTP 超时（毫秒）；部分模型排队+生成可能超过 10 分钟 */
+export const IMAGE_GENERATION_TIMEOUT_MS = 1_200_000
+
 export interface GatewayGenerationParams {
   temperature?: number
   top_p?: number

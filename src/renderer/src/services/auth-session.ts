@@ -6,6 +6,7 @@ import {
 } from './gateway-api'
 import { authApi, hydrateAuthFromSession, userInfoRef } from './auth'
 import { getPortalSession, setPortalSession, type PortalSession } from './portal-api'
+import { isDemoScreenshotSession } from '@shared/demo-screenshot'
 
 /** 将 renderer session 同步到主进程 electron-store（Desktop 持久化登录态） */
 export async function syncSessionToMainStore(session?: PortalSession | null): Promise<void> {
@@ -45,6 +46,11 @@ export async function syncRendererAuthFromMain(): Promise<boolean> {
 
   if (!session?.token) return false
 
+  if (isDemoScreenshotSession(session)) {
+    hydrateAuthFromSession(session)
+    return true
+  }
+
   if (!userInfoRef.value?.username) {
     try {
       await runWithSuppressedAuthFailure(() => authApi.fetchProfile())
@@ -66,6 +72,7 @@ export async function resolveAuthPhase(): Promise<'login' | 'main' | 'reading'> 
 
 /** 登出：Web 回登录页；Desktop 关闭主窗口并打开登录小窗 */
 export async function performAuthLogout(): Promise<void> {
+  if (isDemoScreenshotSession(getPortalSession())) return
   await syncSessionToMainStore(null)
   if (isWebRuntime()) {
     navigate('/login')
@@ -96,6 +103,7 @@ export function isAuthFailureRedirectSuppressed(): boolean {
 
 /** 接口鉴权失败：清理本地状态并回到登录小窗 */
 export async function handleAuthFailure(): Promise<void> {
+  if (isDemoScreenshotSession(getPortalSession())) return
   if (authFailureHandling) return
   authFailureHandling = true
   try {

@@ -20,17 +20,18 @@ export function resolveProjectChatModelOptions(
 }
 
 export function resolveProjectImageModelOptions(
-  _project?: ProjectModelPrefs | null
+  project?: ProjectModelPrefs | null
 ): ResolveModelOptions | undefined {
-  return undefined
+  const explicit = project?.image_model_id?.trim()
+  return explicit ? { explicit } : undefined
 }
 
 export async function resolveProjectChatModelId(project?: ProjectModelPrefs | null): Promise<string> {
   return resolveChatModelId(resolveProjectChatModelOptions(project))
 }
 
-export async function resolveProjectImageModelId(_project?: ProjectModelPrefs | null): Promise<string> {
-  return resolveImageModelId()
+export async function resolveProjectImageModelId(project?: ProjectModelPrefs | null): Promise<string> {
+  return resolveImageModelId(resolveProjectImageModelOptions(project))
 }
 
 /** 将内存中的模型偏好合并到已加载的项目（用于对话/生成时优先使用最新选择） */

@@ -1,4 +1,3 @@
-import type { ExampleModuleId } from '@renderer/composables/runtime-config'
 import type { LoginCapabilities, ShellLayout, ShellStyle } from '@shared/types'
 
 export const appConfig = {
@@ -9,10 +8,7 @@ export const appConfig = {
   shellLayout: 'compact' as ShellLayout,
   shellStyle: 'grouped' as ShellStyle,
   defaultHomePath: '/home',
-  skipStarterInit: true,
-  exampleModules: [] as ExampleModuleId[],
   features: {
-    showcase: false,
     platform: true,
     tray: true,
     autoUpdate: false,

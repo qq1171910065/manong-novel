@@ -34,7 +34,7 @@ export function useBlueprintGeneration() {
 
   function setProgress(value: number) {
     useExternalProgress.value = true
-    progress.value = Math.max(0, Math.min(99, value))
+    progress.value = Math.max(0, Math.min(99, Math.round(value)))
   }
 
   function clearTimers() {
@@ -56,10 +56,10 @@ export function useBlueprintGeneration() {
       elapsed += 0.1
       const normalizedTime = elapsed / maxSeconds
       if (normalizedTime < 0.7) {
-        progress.value = Math.min(80, (normalizedTime / 0.7) * 80)
+        progress.value = Math.min(80, Math.round((normalizedTime / 0.7) * 80))
       } else {
         const remainingProgress = (normalizedTime - 0.7) / 0.3
-        progress.value = Math.min(95, 80 + remainingProgress * 15)
+        progress.value = Math.min(95, Math.round(80 + remainingProgress * 15))
       }
     }, 100)
   }
@@ -68,7 +68,7 @@ export function useBlueprintGeneration() {
   function startLongTaskProgressAnimation() {
     progressTimer = setInterval(() => {
       if (useExternalProgress.value) return
-      if (progress.value < 92) progress.value += 0.15
+      if (progress.value < 92) progress.value = Math.min(92, progress.value + 1)
     }, 2000)
   }
 

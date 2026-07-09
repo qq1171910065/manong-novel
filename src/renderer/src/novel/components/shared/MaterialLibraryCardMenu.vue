@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { Copy, Eye, Feather, Heart, MoreVertical, Pencil, Trash2 } from 'lucide-vue-next'
+import { Copy, Download, Eye, Feather, Heart, MoreVertical, Pencil, Trash2 } from 'lucide-vue-next'
 
 withDefaults(
   defineProps<{
@@ -10,6 +10,7 @@ withDefaults(
     showEdit?: boolean
     showCreate?: boolean
     showRead?: boolean
+    showExport?: boolean
     showDuplicate?: boolean
     showDelete?: boolean
   }>(),
@@ -20,6 +21,7 @@ withDefaults(
     showEdit: true,
     showCreate: false,
     showRead: false,
+    showExport: false,
     showDuplicate: false,
     showDelete: true,
   }
@@ -30,6 +32,7 @@ const emit = defineEmits<{
   edit: []
   create: []
   read: []
+  export: []
   duplicate: []
   favorite: []
   delete: []
@@ -80,6 +83,11 @@ function onRead() {
 function onDuplicate() {
   closeMenu()
   emit('duplicate')
+}
+
+function onExport() {
+  closeMenu()
+  emit('export')
 }
 
 function onPreview() {
@@ -181,6 +189,16 @@ onBeforeUnmount(() => {
         >
           <Copy :size="15" />
           <span>复制为我的</span>
+        </button>
+        <button
+          v-if="showExport"
+          type="button"
+          class="material-library-card-menu__item"
+          role="menuitem"
+          @click="onExport"
+        >
+          <Download :size="15" />
+          <span>导出</span>
         </button>
         <button
           v-if="showPreview"

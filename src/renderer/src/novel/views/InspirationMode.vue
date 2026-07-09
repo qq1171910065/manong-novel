@@ -5,7 +5,7 @@
     :class="
       embedded
         ? 'h-full min-h-0 flex-col overflow-hidden'
-        : conversationStarted && !showBlueprintConfirmation && !showBlueprint
+        : conversationStarted && !showBlueprintConfirmation && !showBlueprint && !showGeneratingOverlay
           ? 'page page--viewport-lock page--center h-full min-h-0 overflow-hidden'
           : 'page page--flow page--center min-h-full'
     "
@@ -33,7 +33,7 @@
 
       <!-- 灵感模式交互界面 -->
       <div
-        v-else-if="!showBlueprintConfirmation && !showBlueprint && !showSectionPolishConfirmation"
+        v-else-if="!showBlueprintConfirmation && !showBlueprint && !showSectionPolishConfirmation && !showGeneratingOverlay"
         class="inspiration-chat-layout fade-in"
         :class="{ 'inspiration-chat-layout--polish': isPolishMode }"
       >
@@ -190,6 +190,18 @@
         </div>
       </div>
 
+      <!-- 蓝图生成中 -->
+      <div
+        v-if="showGeneratingOverlay"
+        :class="embedded ? '' : 'h-full min-h-0 overflow-y-auto'"
+      >
+        <BlueprintGeneratingPanel
+          :progress="blueprintGen.progress.value"
+          :loading-text="blueprintProgressMessage || blueprintGen.loadingText.value"
+          @cancel="cancelBlueprintGeneration"
+        />
+      </div>
+
       <!-- 蓝图确认界面 -->
       <div
         v-if="showBlueprintConfirmation"
@@ -231,13 +243,6 @@
         />
       </div>
     </div>
-
-    <BlueprintGeneratingOverlay
-      :show="showGeneratingOverlay"
-      :progress="blueprintGen.progress.value"
-      :loading-text="blueprintProgressMessage || blueprintGen.loadingText.value"
-      @cancel="cancelBlueprintGeneration"
-    />
   </div>
 </template>
 
@@ -267,7 +272,7 @@ import ConversationInput from '@renderer/novel/components/ConversationInput.vue'
 import BlueprintConfirmation from '@renderer/novel/components/BlueprintConfirmation.vue'
 import SectionPolishConfirmation from '@renderer/novel/components/SectionPolishConfirmation.vue'
 import BlueprintDisplay from '@renderer/novel/components/BlueprintDisplay.vue'
-import BlueprintGeneratingOverlay from '@renderer/novel/components/BlueprintGeneratingOverlay.vue'
+import BlueprintGeneratingPanel from '@renderer/novel/components/BlueprintGeneratingPanel.vue'
 import ConceptChecklistPanel from '@renderer/novel/components/ConceptChecklistPanel.vue'
 import InspirationLoading from '@renderer/novel/components/InspirationLoading.vue'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
@@ -1283,6 +1288,7 @@ const handleStartBlueprintGeneration = async () => {
   } catch (error) {
     if (isAbortError(error)) {
       globalAlert.showSuccess('已取消蓝图生成', '已取消')
+      showBlueprintConfirmation.value = true
       return
     }
     console.error('生成蓝图失败:', error)
@@ -1344,6 +1350,18 @@ const handleConfirmBlueprint = async () => {
 
 const modalChrome = computed((): InspirationModalChrome => {
   if (!props.embedded) return DEFAULT_INSPIRATION_MODAL_CHROME
+
+  if (showGeneratingOverlay.value) {
+    return {
+      ariaLabel: '正在生成蓝图',
+      title: '正在生成蓝图',
+      subtitle: blueprintProgressMessage.value || blueprintGen.loadingText.value,
+      modalSize: 'lg',
+      panelClass: 'novel-modal__panel--lg',
+      footerKind: null,
+      showShellHeader: true,
+    }
+  }
 
   if (showBlueprint.value) {
     const title = completedBlueprint.value?.title?.trim() || '蓝图预览'

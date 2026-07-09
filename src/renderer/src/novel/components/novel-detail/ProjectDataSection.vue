@@ -8,7 +8,7 @@ import {
   estimateProjectStorage,
   formatBytes,
 } from '@renderer/services/novel/project-data'
-import { formatDateTime } from '@renderer/novel/utils/date'
+import { formatDateTimeCompact } from '@renderer/novel/utils/date'
 import { confirm } from '@renderer/composables/useAppDialog'
 import { useRouter } from '@renderer/novel/composables/useNovelRouter'
 import { useNovelStore } from '@renderer/stores/novel'
@@ -37,7 +37,7 @@ const summaryCards = computed(() => {
       { label: '占用空间', value: '—', hint: '本地 JSON 估算' },
       { label: '章节', value: '—', hint: '大纲与正文' },
       { label: '对话记录', value: '—', hint: '灵感与设定修改' },
-      { label: '最后更新', value: '—', hint: '项目保存时间' },
+      { label: '最后更新', value: '—', hint: '项目保存时间', compact: true },
     ]
   }
   return [
@@ -59,8 +59,9 @@ const summaryCards = computed(() => {
     },
     {
       label: '最后更新',
-      value: project.updated_at ? formatDateTime(project.updated_at) : '—',
+      value: project.updated_at ? formatDateTimeCompact(project.updated_at) : '—',
       hint: '项目保存时间',
+      compact: true,
     },
   ]
 })
@@ -161,7 +162,10 @@ async function deleteProject() {
             v-for="card in summaryCards"
             :key="card.label"
             class="nd-stat-card"
-            :class="{ 'nd-stat-card--accent': card.accent }"
+            :class="{
+              'nd-stat-card--accent': card.accent,
+              'nd-stat-card--compact': card.compact,
+            }"
           >
             <span class="nd-stat-card__label">{{ card.label }}</span>
             <strong class="nd-stat-card__value">{{ card.value }}</strong>

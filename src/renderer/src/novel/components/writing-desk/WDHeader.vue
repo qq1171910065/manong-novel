@@ -61,14 +61,13 @@
 
 <script setup lang="ts">
 import { useRouter } from '@renderer/novel/composables/useNovelRouter'
-import { useAuthStore } from '@renderer/stores/platform-auth-compat'
+import { performAuthLogout } from '@renderer/services/auth-session'
 import type { NovelProject } from '@renderer/services/novel/api'
 
 const router = useRouter()
-const authStore = useAuthStore()
 
 const handleLogout = () => {
-  authStore.logout()
+  void performAuthLogout()
   router.push('/login')
 }
 

@@ -4,7 +4,6 @@ export type RouteName =
   | 'settings'
   | 'home'
   | 'bookshelf'
-  | 'workspace'
   | 'inspiration'
   | 'novel-detail'
   | 'writing-desk'

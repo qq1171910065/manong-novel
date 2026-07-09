@@ -4,7 +4,8 @@ import {
   buildBookPages,
   estimateCharsPerPage,
   fromGlobalPageIndex,
-  paginateChapterText,
+  paginateChapter,
+  resolvePageLayoutMetrics,
   readingProgressService,
   toGlobalPageIndex,
   type ReadingSettings,
@@ -43,8 +44,11 @@ export interface UseReadingNavigationOptions {
 export function useReadingNavigation(options: UseReadingNavigationOptions) {
   const chapterIndex = ref(0)
   const pageIndex = ref(0)
+  const viewportLayoutTick = ref(0)
 
   const SCROLL_EDGE_THRESHOLD = 6
+
+  let viewportResizeObserver: ResizeObserver | undefined
 
   let autoTurnTimer: number | undefined
   let autoScrollRaf: number | undefined
@@ -86,19 +90,29 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
   const currentChapter = computed(() => readableChapters.value[chapterIndex.value])
   const isPageMode = computed(() => options.settings.value.interactionMode === 'page')
 
-  const charsPerPage = computed(() => {
-    const el = options.pageViewportRef.value
-    const width = el?.clientWidth ?? 420
-    const height = el?.clientHeight ?? 560
-    return estimateCharsPerPage(
-      options.settings.value.fontSize,
-      options.settings.value.lineHeight,
-      width,
-      height
+  const pageLayoutMetrics = computed(() => {
+    viewportLayoutTick.value
+    return resolvePageLayoutMetrics(
+      options.pageViewportRef.value,
+      {
+        fontSize: options.settings.value.fontSize,
+        lineHeight: options.settings.value.lineHeight,
+      },
+      { listening: options.ttsActive.value }
     )
   })
 
-  const bookPages = computed(() => buildBookPages(readableChapters.value, charsPerPage.value))
+  const charsPerPage = computed(() => {
+    const metrics = pageLayoutMetrics.value
+    return estimateCharsPerPage(
+      metrics.fontSize,
+      metrics.lineHeight,
+      metrics.contentWidth,
+      metrics.contentHeight
+    )
+  })
+
+  const bookPages = computed(() => buildBookPages(readableChapters.value, pageLayoutMetrics.value))
 
   const globalPageIndex = computed(() =>
     toGlobalPageIndex(bookPages.value, chapterIndex.value, pageIndex.value)
@@ -107,7 +121,7 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
   const pages = computed(() => {
     const chapter = currentChapter.value
     if (!chapter) return ['暂无章节内容']
-    return paginateChapterText(chapter.content, charsPerPage.value)
+    return paginateChapter(chapter.content, pageLayoutMetrics.value)
   })
 
   const currentPageText = computed(() => {
@@ -537,8 +551,10 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
     () => [
       options.settings.value.fontSize,
       options.settings.value.lineHeight,
-      charsPerPage.value,
+      pageLayoutMetrics.value.contentWidth,
+      pageLayoutMetrics.value.contentHeight,
       options.settings.value.interactionMode,
+      options.ttsActive.value,
     ],
     () => {
       if (!isPageMode.value) return
@@ -557,6 +573,22 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
     stopAutoScroll()
   }
 
+  watch(options.pageViewportRef, (el, _, onCleanup) => {
+    viewportResizeObserver?.disconnect()
+    viewportResizeObserver = undefined
+    if (!el) return
+
+    viewportLayoutTick.value += 1
+    viewportResizeObserver = new ResizeObserver(() => {
+      viewportLayoutTick.value += 1
+    })
+    viewportResizeObserver.observe(el)
+    onCleanup(() => {
+      viewportResizeObserver?.disconnect()
+      viewportResizeObserver = undefined
+    })
+  })
+
   return {
     chapterIndex,
     pageIndex,
@@ -564,6 +596,7 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
     currentChapter,
     isPageMode,
     charsPerPage,
+    pageLayoutMetrics,
     bookPages,
     globalPageIndex,
     pages,

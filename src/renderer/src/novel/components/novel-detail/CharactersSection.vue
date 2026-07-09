@@ -80,7 +80,7 @@
                 :label="`${selectedCharacter.name || '角色'}立绘`"
                 placeholder="立绘"
                 :editable="editable"
-                :generating="portraitGeneratingIndex === selectedIndex"
+                :generating="isPortraitGeneratingAt(selectedIndex)"
                 :default-prompt="characterPrompt(selectedCharacter)"
                 :project-model="projectModel"
                 @update:model-value="(value) => emitPortraitUpdate(selectedIndex, value)"
@@ -213,6 +213,7 @@ const props = defineProps<{
     style?: string | null
   } | null
   portraitGeneratingIndex?: number | null
+  isPortraitGenerating?: (index: number) => boolean
   projectModel?: { chat_model_id?: string; image_model_id?: string }
 }>()
 
@@ -221,6 +222,9 @@ const emit = defineEmits<{
   (e: 'portrait-generate', payload: { index: number; prompt: string }): void
   (e: 'asset-saved', section: 'characters'): void
 }>()
+
+const isPortraitGeneratingAt = (index: number) =>
+  props.isPortraitGenerating?.(index) ?? props.portraitGeneratingIndex === index
 
 const characters = computed(() => props.data?.characters || [])
 const selectedIndex = ref(0)

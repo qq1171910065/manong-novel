@@ -270,7 +270,10 @@ const isGeneratingOutline = computed(() => {
 })
 
 // 计算属性
-const project = computed(() => novelStore.currentProject)
+const project = computed(() => {
+  const current = novelStore.currentProject
+  return current?.id === resolvedProjectId.value ? current : null
+})
 
 const selectedChapter = computed(() => {
   if (!project.value || selectedChapterNumber.value === null) return null
@@ -1052,8 +1055,13 @@ onMounted(() => {
 
 watch(
   () => resolvedProjectId.value,
-  (projectId) => {
-    if (!projectId) return
+  async (projectId, prevId) => {
+    if (!projectId || projectId === prevId) return
+    selectedChapterNumber.value = null
+    chapterGenerationResult.value = null
+    selectedVersionIndex.value = 0
+    await loadProject()
+    await novelStore.reconcileStaleChapterTasks(projectId)
     restoreActiveChapterSelection()
   }
 )

@@ -1,7 +1,7 @@
 import { computed, readonly, ref } from 'vue'
 
 const currentPath = ref(
-  normalizePath(resolveLegacyEditPath(window.location.hash.replace('#', '') || '/home'))
+  normalizePath(window.location.hash.replace('#', '') || '/home')
 )
 
 function normalizePath(path: string): string {
@@ -13,16 +13,6 @@ function normalizePath(path: string): string {
 function pathWithoutQuery(path: string): string {
   const q = path.indexOf('?')
   return q >= 0 ? path.slice(0, q) : path
-}
-
-function resolveLegacyEditPath(path: string): string {
-  const pathname = pathWithoutQuery(normalizePath(path))
-  if (pathname === '/character-edit/new') return '/characters?create=1'
-  const charEdit = pathname.match(/^\/character-edit\/(.+)$/)
-  if (charEdit?.[1]) return `/character-detail/${charEdit[1]}`
-  const modeEdit = pathname.match(/^\/game-mode-edit\/(.+)$/)
-  if (modeEdit?.[1]) return `/game-mode-detail/${modeEdit[1]}`
-  return path
 }
 
 function parseRoute(path: string) {
@@ -37,7 +27,7 @@ function parseRoute(path: string) {
 export const route = computed(() => parseRoute(currentPath.value))
 
 export function navigate(path: string): void {
-  const next = normalizePath(resolveLegacyEditPath(path))
+  const next = normalizePath(path)
   if (currentPath.value === next) return
   currentPath.value = next
   window.location.hash = next
@@ -56,14 +46,7 @@ export function getCurrentPath(): string {
 }
 
 window.addEventListener('hashchange', () => {
-  const raw = normalizePath(window.location.hash.replace('#', '') || '/home')
-  const resolved = normalizePath(resolveLegacyEditPath(raw))
-  if (resolved !== raw) {
-    currentPath.value = resolved
-    window.location.hash = resolved
-    return
-  }
-  currentPath.value = raw
+  currentPath.value = normalizePath(window.location.hash.replace('#', '') || '/home')
 })
 
 export const router = {

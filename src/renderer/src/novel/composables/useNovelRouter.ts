@@ -18,7 +18,7 @@ const router = {
       navigate(to)
       return
     }
-    const path = to.path || (to.name === 'admin' ? '/admin' : '/home')
+    const path = to.path || '/home'
     const query = to.query ? `?${new URLSearchParams(to.query).toString()}` : ''
     navigate(`${path}${query}`)
   },

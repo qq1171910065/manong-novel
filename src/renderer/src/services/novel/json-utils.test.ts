@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseBlueprintFromLlm, parseChapterOutlineFromLlm } from './json-utils'
+import { parseBlueprintFromLlm, parseChapterOutlineFromLlm, pickContentOnlyPayload } from './json-utils'
 
 describe('parseChapterOutlineFromLlm', () => {
   it('解析嵌套 chapter_outline 对象', () => {
@@ -20,6 +20,17 @@ describe('parseChapterOutlineFromLlm', () => {
     const outline = parseChapterOutlineFromLlm(raw)
     expect(outline).toHaveLength(1)
     expect(outline?.[0]).toMatchObject({ chapter_number: 2 })
+  })
+})
+
+describe('pickContentOnlyPayload', () => {
+  it('优先使用 content 字段', () => {
+    expect(pickContentOnlyPayload('第一章正文', '思考过程')).toBe('第一章正文')
+  })
+
+  it('content 为空时从 reasoning 提取正文', () => {
+    const reasoning = '这是推理模型的章节正文，主角走进雨夜，霓虹在积水里碎成一条条冷光。'
+    expect(pickContentOnlyPayload('', reasoning)).toContain('雨夜')
   })
 })
 

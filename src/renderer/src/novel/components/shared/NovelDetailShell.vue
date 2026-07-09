@@ -3,9 +3,8 @@
   <div class="page portal-page portal-page--viewport-lock detail-page">
     <div class="portal-page__body">
       <div class="profile-center-layout">
-        <aside class="profile-tab-bar" role="tablist" :aria-label="isAdmin ? '内容视图' : '作品导航'">
+        <aside class="profile-tab-bar" role="tablist" aria-label="作品导航">
           <button
-            v-if="!isAdmin"
             type="button"
             class="detail-sidebar-create"
             :class="{ 'is-auto-writing': isCurrentProjectAutoWriteRunning }"
@@ -140,7 +139,6 @@
 
     <!-- Blueprint Edit Modal -->
     <BlueprintEditModal
-      v-if="!isAdmin"
       :show="isModalOpen"
       :title="modalTitle"
       :content="modalContent"
@@ -154,7 +152,7 @@
     />
 
     <NovelModalShell
-      :show="isAddChapterModalOpen && !isAdmin"
+      :show="isAddChapterModalOpen"
       variant="form"
       auto-min-width="md"
       title="新增章节大纲"
@@ -238,6 +236,12 @@ import InspirationModal from '@renderer/novel/components/InspirationModal.vue'
 import BlueprintGeneratingOverlay from '@renderer/novel/components/BlueprintGeneratingOverlay.vue'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
 import { generateCoverImage, generateCharacterPortrait } from '@renderer/services/image-service'
+import {
+  coverUiKey,
+  enqueueImageGenerationJob,
+  isImageUiKeyRunning,
+  portraitUiKey,
+} from '@renderer/services/image-generation-task-service'
 import { ensureLocalImageDataUrl } from '@renderer/services/image-storage'
 import {
   useBlueprintGeneration,
@@ -289,10 +293,6 @@ import {
 import { isTxtImportLocked, isTxtImportPending } from '@shared/novel/import-status'
 import type { ImportParseProgress } from '@renderer/services/novel/api'
 
-interface Props {
-  isAdmin?: boolean
-}
-
 type SectionKey = AllSectionType
 
 const WORLD_VIEW_SECTIONS: WorldViewSectionType[] = [
@@ -309,14 +309,10 @@ function resolvePolishableSection(section: SectionKey) {
   return isWorldViewSection(section) ? 'world_setting' : section
 }
 
-const props = withDefaults(defineProps<Props>(), {
-  isAdmin: false
-})
-
 const route = useRoute()
 const novelStore = useNovelStore()
 
-const projectId = route.params.id as string
+const projectId = computed(() => String(route.params.id || ''))
 
 interface NavSection {
   key: SectionKey
@@ -348,8 +344,8 @@ const blueprintSections: NavSection[] = [
   { key: 'world_factions', label: '主要阵营', description: '势力划分与对立关系', icon: Shield },
   { key: 'characters', label: '主要角色', description: '人物性格与目标', icon: Users },
   { key: 'relationships', label: '人物关系', description: '角色之间的联系', icon: Network },
-  { key: 'chapter_outline', label: '章节大纲', description: props.isAdmin ? '故事章节规划' : '故事结构规划', icon: List },
-  { key: 'chapters', label: '章节内容', description: props.isAdmin ? '生成章节与正文' : '生成状态与摘要', icon: BookOpen },
+  { key: 'chapter_outline', label: '章节大纲', description: '故事结构规划', icon: List },
+  { key: 'chapters', label: '章节内容', description: '生成状态与摘要', icon: BookOpen },
 ]
 
 const analysisSections: NavSection[] = [
@@ -373,7 +369,7 @@ const navGroups = computed<NavGroup[]>(() => {
   const mode = projectWritingMode.value
   const groups: NavGroup[] = [
     {
-      label: props.isAdmin ? '内容视图' : '创作蓝图',
+      label: '创作蓝图',
       items: filterSectionsForMode(blueprintSections, mode),
     },
     {
@@ -381,15 +377,13 @@ const navGroups = computed<NavGroup[]>(() => {
       items: filterSectionsForMode(analysisSections, mode),
     },
   ]
-  if (!props.isAdmin) {
-    const insightItems = filterSectionsForMode(insightSections, mode)
-    if (insightItems.length) {
-      groups.push({ label: '项目记录', items: insightItems })
-    }
-    const dataItems = filterSectionsForMode(dataSections, mode)
-    if (dataItems.length) {
-      groups.push({ label: '数据管理', items: dataItems })
-    }
+  const insightItems = filterSectionsForMode(insightSections, mode)
+  if (insightItems.length) {
+    groups.push({ label: '项目记录', items: insightItems })
+  }
+  const dataItems = filterSectionsForMode(dataSections, mode)
+  if (dataItems.length) {
+    groups.push({ label: '数据管理', items: dataItems })
   }
   return groups.filter((group) => group.items.length > 0)
 })
@@ -490,12 +484,10 @@ const generationOverlay = computed(() =>
   showImportParsing.value ? importParseGen : blueprintGen
 )
 const showBlueprintGenerating = computed(() => {
-  if (props.isAdmin) return false
-  return blueprintGen.isGenerating.value || isBlueprintGenerating(projectId)
+  return blueprintGen.isGenerating.value || isBlueprintGenerating(projectId.value)
 })
 const showImportParsing = computed(() => {
-  if (props.isAdmin) return false
-  return importParseGen.isGenerating.value || isImportParsing(projectId)
+  return importParseGen.isGenerating.value || isImportParsing(projectId.value)
 })
 const generationOverlayDescription = computed(() =>
   showImportParsing.value
@@ -503,7 +495,9 @@ const generationOverlayDescription = computed(() =>
     : 'AI 正在为您精心打造独特的故事蓝图，请稍候…'
 )
 
-const generationOverlayProgress = computed(() => generationOverlay.value.progress.value)
+const generationOverlayProgress = computed(() =>
+  Math.round(generationOverlay.value.progress.value)
+)
 
 const generationOverlayText = computed(() => {
   if (showImportParsing.value) return importParseMessage.value
@@ -516,8 +510,8 @@ const showGenerationOverlay = computed(
     !showInspirationModal.value
 )
 
-const isCurrentProjectAutoWriteRunning = computed(() => autoWrite.isProjectActive(projectId))
-const isCurrentProjectAutoWritePaused = computed(() => autoWrite.isProjectPaused(projectId))
+const isCurrentProjectAutoWriteRunning = computed(() => autoWrite.isProjectActive(projectId.value))
+const isCurrentProjectAutoWritePaused = computed(() => autoWrite.isProjectPaused(projectId.value))
 const isWritingDeskLocked = computed(
   () => isCurrentProjectAutoWriteRunning.value && !isCurrentProjectAutoWritePaused.value
 )
@@ -539,10 +533,11 @@ function resolveImportParseProgressPercent(progress: ImportParseProgress): numbe
       return 5
   }
 }
-const coverGenerating = ref(false)
-const portraitGeneratingIndex = ref<number | null>(null)
+const coverGenerating = computed(() => isImageUiKeyRunning(coverUiKey(projectId.value)))
+const isPortraitGenerating = (index: number) =>
+  isImageUiKeyRunning(portraitUiKey(projectId.value, index))
 
-const novel = computed(() => !props.isAdmin ? novelStore.currentProject as NovelProject | null : null)
+const novel = computed(() => novelStore.currentProject as NovelProject | null)
 
 const isImportPending = computed(() => isTxtImportPending(novel.value))
 const isContentLocked = computed(() => isTxtImportLocked(novel.value))
@@ -564,7 +559,7 @@ const primaryActionHint = computed(() => {
 
 const isBlueprintSetupPending = computed(() => {
   const project = novel.value
-  if (!project || props.isAdmin) return false
+  if (!project) return false
   return needsInspirationConversation(project)
 })
 
@@ -577,8 +572,8 @@ const isPrimaryActionBusy = computed(
 
 const projectWritingMode = computed(() => {
   const overviewMode = sectionData.overview?.writing_mode as import('@shared/novel/types').WritingMode | undefined
-  const summaryMode = novelStore.projects.find((item) => item.id === projectId)?.writing_mode
-  const novelMode = novel.value?.id === projectId ? novel.value.writing_mode : undefined
+  const summaryMode = novelStore.projects.find((item) => item.id === projectId.value)?.writing_mode
+  const novelMode = novel.value?.id === projectId.value ? novel.value.writing_mode : undefined
   return resolveWritingMode({
     writing_mode: novelMode ?? overviewMode ?? summaryMode,
   })
@@ -589,30 +584,30 @@ function isSectionAvailable(section: SectionKey): boolean {
 }
 
 const canPolishActiveSection = computed(() => {
-  if (props.isAdmin || isContentLocked.value) return false
+  if (isContentLocked.value) return false
   const section = resolvePolishableSection(activeSection.value)
   return isPolishableSection(section as PolishableSectionKey)
 })
 
 const canOpenAiAssistant = computed(() => {
-  if (props.isAdmin || isContentLocked.value) return false
+  if (isContentLocked.value) return false
   const project = novel.value
   if (!project) return false
   return !needsInspirationConversation(project)
 })
 
 const canOpenInspirationChat = computed(() => {
-  if (props.isAdmin || isContentLocked.value) return false
+  if (isContentLocked.value) return false
   const project = novel.value
   if (!project || isTxtImportPending(project)) return false
   if (needsInspirationConversation(project)) return false
   return (project.conversation_history?.length ?? 0) > 0
 })
 
-const aiAssistantBusy = computed(() => isAiAssistantBusy(projectId))
+const aiAssistantBusy = computed(() => isAiAssistantBusy(projectId.value))
 
 const showAddButton = computed(() => {
-  if (props.isAdmin || isContentLocked.value || showBlueprintSetupEmpty.value) return false
+  if (isContentLocked.value || showBlueprintSetupEmpty.value) return false
   const ws = sectionData.world_setting?.world_setting as { core_rules?: string; key_locations?: unknown[]; factions?: unknown[] } | undefined
   switch (activeSection.value) {
     case 'chapter_outline':
@@ -726,9 +721,9 @@ const componentContainerClass = computed(() => {
 
 // 懒加载完整项目（仅在需要编辑时）
 const ensureProjectLoaded = async () => {
-  if (props.isAdmin || !projectId) return
-  if (novel.value?.id === projectId) return
-  await novelStore.loadProject(projectId, true)
+  if (!projectId.value) return
+  if (novel.value?.id === projectId.value) return
+  await novelStore.loadProject(projectId.value, true)
 }
 
 const switchSection = (section: SectionKey) => {
@@ -748,9 +743,9 @@ const loadInsightSection = (section: 'activity_log' | 'stats' | 'pipeline' | 'pi
   sectionError[section] = null
   try {
     if (section === 'activity_log') {
-      activityEntries.value = activityLogService.listByProject(projectId, 50)
+      activityEntries.value = activityLogService.listByProject(projectId.value, 50)
     } else if (section === 'stats') {
-      projectStats.value = projectStatsService.get(projectId)
+      projectStats.value = projectStatsService.get(projectId.value)
       if (!sectionData.chapters) {
         void loadSection('chapters')
       }
@@ -763,7 +758,7 @@ const loadInsightSection = (section: 'activity_log' | 'stats' | 'pipeline' | 'pi
 }
 
 const loadSection = async (section: SectionKey, force = false) => {
-  if (!projectId) return
+  if (!projectId.value) return
 
   const insightSections: SectionKey[] = ['activity_log', 'stats', 'pipeline', 'pipeline_log', 'prompt_templates']
   if (insightSections.includes(section)) {
@@ -789,7 +784,7 @@ const loadSection = async (section: SectionKey, force = false) => {
   sectionLoading[section] = true
   sectionError[section] = null
   try {
-    const response: NovelSectionResponse = await NovelAPI.getSection(projectId, apiSection)
+    const response: NovelSectionResponse = await NovelAPI.getSection(projectId.value, apiSection)
     sectionData[dataKey] = response.data
     if (section === 'overview') {
       const data = response.data as { title?: string; updated_at?: string }
@@ -839,11 +834,11 @@ const goToWritingDesk = async () => {
           }),
         { totalTimeoutMs: LONG_TASK_NO_TOTAL_TIMEOUT }
       )
-      await novelStore.loadProject(projectId, true)
+      await novelStore.loadProject(projectId.value, true)
       refreshDetailSections()
       void loadSection('chapters', true)
       activityLogService.logBlueprintGenerate(
-        projectId,
+        projectId.value,
         overviewMeta.title || project.title || '未命名作品'
       )
       globalAlert.showSuccess(
@@ -879,7 +874,7 @@ const goToWritingDesk = async () => {
 }
 
 const openBlueprintSetup = () => {
-  if (props.isAdmin || isPrimaryActionBusy.value) return
+  if (isPrimaryActionBusy.value) return
   inspirationModalMode.value = 'inspiration'
   polishContext.value = null
   showInspirationModal.value = true
@@ -892,8 +887,8 @@ const pauseAutoWritePipeline = () => {
 
 const runAutoWritePipeline = async () => {
   const title = novel.value?.title || overviewMeta.title || '未命名作品'
-  const result = await autoWrite.run(projectId, title)
-  await novelStore.loadProject(projectId, true)
+  const result = await autoWrite.run(projectId.value, title)
+  await novelStore.loadProject(projectId.value, true)
   void loadSection('chapters', true)
   if (result === 'completed') {
     globalAlert.showSuccess('全部章节已由 AI 生成并确认', '创作完成')
@@ -906,8 +901,8 @@ const runAutoWritePipeline = async () => {
 
 const resumeAutoWritePipeline = async () => {
   const title = novel.value?.title || overviewMeta.title || '未命名作品'
-  const result = await autoWrite.run(projectId, title)
-  await novelStore.loadProject(projectId, true)
+  const result = await autoWrite.run(projectId.value, title)
+  await novelStore.loadProject(projectId.value, true)
   void loadSection('chapters', true)
   if (result === 'completed') {
     globalAlert.showSuccess('全部章节已由 AI 生成并确认', '创作完成')
@@ -996,7 +991,6 @@ const syncSectionDataFromBlueprint = (blueprint: import('@shared/novel/types').B
 }
 
 const handleSectionPolishApplied = async (payload: SectionPolishApplyPayload) => {
-  if (props.isAdmin) return
   await ensureProjectLoaded()
   const project = novel.value
   if (!project) {
@@ -1015,14 +1009,14 @@ const handleSectionPolishApplied = async (payload: SectionPolishApplyPayload) =>
     const syncedProject = await NovelAPI.markSectionPolishApplied(project.id)
     novelStore.setCurrentProject(syncedProject)
     syncSectionDataFromBlueprint(syncedProject.blueprint)
-    projectStatsService.recordEdit(projectId)
+    projectStatsService.recordEdit(projectId.value)
     const affectedSections =
       payload.affectedSections.length > 0
         ? payload.affectedSections
         : resolveAffectedSectionsFromUpdates(patch, [payload.entrySection])
     const affectedLabels = formatAffectedSectionLabels(affectedSections)
     activityLogService.logBlueprintEdit(
-      projectId,
+      projectId.value,
       overviewMeta.title || project.title || '未命名作品',
       payload.replaceEntireBlueprint
         ? '全书框架（重新过灵感）'
@@ -1057,7 +1051,7 @@ const closeInspiration = () => {
 
 const onBlueprintSaved = () => {
   activityLogService.logBlueprintGenerate(
-    projectId,
+    projectId.value,
     overviewMeta.title || novel.value?.title || '未命名作品'
   )
   activeSection.value = 'overview'
@@ -1130,9 +1124,9 @@ const projectModelPrefs = computed(() => ({
 
 const componentProps = computed(() => {
   const data = sectionData[activeSection.value]
-  const editable = !props.isAdmin && !isContentLocked.value
+  const editable = !isContentLocked.value
   const libraryContext = {
-    projectId,
+    projectId: projectId.value,
     projectTitle: overviewMeta.title || novel.value?.title || '',
   }
 
@@ -1144,7 +1138,7 @@ const componentProps = computed(() => {
         importPending: isImportPending.value,
         importedChapterCount: importedChapterCount.value,
         coverGenerating: coverGenerating.value,
-        projectId,
+        projectId: projectId.value,
         projectTitle: overviewMeta.title || novel.value?.title || '',
         projectModel: projectModelPrefs.value,
         writingMode: projectWritingMode.value,
@@ -1162,7 +1156,7 @@ const componentProps = computed(() => {
               ? 'locations'
               : 'factions',
         editable,
-        projectId,
+        projectId: projectId.value,
         projectTitle: overviewMeta.title || '',
         projectModel: projectModelPrefs.value,
       }
@@ -1171,7 +1165,7 @@ const componentProps = computed(() => {
         data: data || null,
         panel: 'rules',
         editable,
-        projectId,
+        projectId: projectId.value,
         projectTitle: overviewMeta.title || '',
         projectModel: projectModelPrefs.value,
       }
@@ -1180,8 +1174,8 @@ const componentProps = computed(() => {
         data: data || null,
         editable,
         novelMeta: sectionData.overview || null,
-        portraitGeneratingIndex: portraitGeneratingIndex.value,
-        projectId,
+        isPortraitGenerating,
+        projectId: projectId.value,
         projectTitle: overviewMeta.title || '',
         projectModel: projectModelPrefs.value,
         relationships: sectionData.relationships?.relationships ?? [],
@@ -1208,19 +1202,18 @@ const componentProps = computed(() => {
           sectionData.chapter_outline?.chapter_outline ||
           novel.value?.blueprint?.chapter_outline ||
           [],
-        isAdmin: props.isAdmin,
-        projectId,
+        projectId: projectId.value,
       }
     case 'activity_log':
       return { entries: activityEntries.value }
     case 'pipeline':
       return {
-        projectId,
+        projectId: projectId.value,
         chatModelId: projectModelPrefs.value.chat_model_id,
         writingMode: projectWritingMode.value,
       }
     case 'pipeline_log':
-      return { projectId }
+      return { projectId: projectId.value }
     case 'prompt_templates':
       return {}
     case 'stats':
@@ -1231,8 +1224,8 @@ const componentProps = computed(() => {
       }
     case 'data':
       return {
-        projectId,
-        project: novel.value?.id === projectId ? novel.value : null,
+        projectId: projectId.value,
+        project: novel.value?.id === projectId.value ? novel.value : null,
       }
     default:
       return {}
@@ -1240,7 +1233,6 @@ const componentProps = computed(() => {
 })
 
 const handleSectionEdit = (payload: { field: string; title: string; value: any }) => {
-  if (props.isAdmin) return
   modalField.value = payload.field
   modalTitle.value = payload.title
   modalContent.value = payload.value
@@ -1249,7 +1241,7 @@ const handleSectionEdit = (payload: { field: string; title: string; value: any }
 
 const persistCover = async (coverUrl: string | null): Promise<string | null> => {
   const normalized = coverUrl ? await ensureLocalImageDataUrl(coverUrl) : null
-  const updatedProject = await NovelAPI.updateProjectCover(projectId, normalized)
+  const updatedProject = await NovelAPI.updateProjectCover(projectId.value, normalized)
   novelStore.setCurrentProject(updatedProject)
   if (sectionData.overview) {
     sectionData.overview = { ...sectionData.overview, cover_url: normalized ?? undefined }
@@ -1259,9 +1251,8 @@ const persistCover = async (coverUrl: string | null): Promise<string | null> => 
 }
 
 const handleModelsUpdate = async (payload: { chat_model_id?: string | null }) => {
-  if (props.isAdmin) return
   try {
-    const updatedProject = await NovelAPI.updateProjectModels(projectId, payload)
+    const updatedProject = await NovelAPI.updateProjectModels(projectId.value, payload)
     novelStore.setCurrentProject(updatedProject)
     if (sectionData.overview) {
       sectionData.overview = { ...sectionData.overview, ...payload }
@@ -1274,12 +1265,11 @@ const handleModelsUpdate = async (payload: { chat_model_id?: string | null }) =>
 }
 
 const handleCoverUpdate = async (coverUrl: string | null) => {
-  if (props.isAdmin) return
   try {
     const normalized = await persistCover(coverUrl)
-    projectStatsService.recordEdit(projectId)
+    projectStatsService.recordEdit(projectId.value)
     activityLogService.logCoverUpdate(
-      projectId,
+      projectId.value,
       overviewMeta.title || novel.value?.title || '未命名作品',
       false
     )
@@ -1290,36 +1280,34 @@ const handleCoverUpdate = async (coverUrl: string | null) => {
   }
 }
 
-const handleCoverGenerate = async (prompt: string) => {
-  if (props.isAdmin || coverGenerating.value) return
+const handleCoverGenerate = (prompt: string) => {
+  if (coverGenerating.value) return
   const overview = sectionData.overview || {}
-  coverGenerating.value = true
-  try {
-    const coverUrl = await generateCoverImage(
-      {
-        title: overview.title || overviewMeta.title,
-        genre: overview.genre,
-        style: overview.style,
-        tone: overview.tone,
-        synopsis: overview.one_sentence_summary || overview.full_synopsis,
-      },
-      prompt,
-      projectModelPrefs.value
-    )
-    await persistCover(coverUrl)
-    projectStatsService.recordImageGeneration(projectId)
-    activityLogService.logCoverUpdate(
-      projectId,
-      overviewMeta.title || novel.value?.title || '未命名作品',
-      true
-    )
-    globalAlert.showSuccess('AI 封面绘制完成，已保存到本地', '绘制成功')
-  } catch (error) {
-    console.error('生成封面失败:', error)
-    globalAlert.showError(error instanceof Error ? error.message : '生成封面失败', 'AI 绘制失败')
-  } finally {
-    coverGenerating.value = false
-  }
+  const title = overviewMeta.title || novel.value?.title || '未命名作品'
+  enqueueImageGenerationJob({
+    taskProjectId: projectId.value,
+    projectTitle: title,
+    subject: '书籍封面',
+    uiKey: coverUiKey(projectId.value),
+    generate: () =>
+      generateCoverImage(
+        {
+          title: overview.title || overviewMeta.title,
+          genre: overview.genre,
+          style: overview.style,
+          tone: overview.tone,
+          synopsis: overview.one_sentence_summary || overview.full_synopsis,
+        },
+        prompt,
+        projectModelPrefs.value
+      ),
+    onSuccess: async (coverUrl) => {
+      await persistCover(coverUrl)
+      projectStatsService.recordImageGeneration(projectId.value)
+      activityLogService.logCoverUpdate(projectId.value, title, true)
+    },
+    successMessage: 'AI 封面绘制完成，已保存到本地',
+  })
 }
 
 const persistCharacterPortrait = async (
@@ -1327,7 +1315,7 @@ const persistCharacterPortrait = async (
   portraitUrl: string | null
 ): Promise<string | null> => {
   const normalized = portraitUrl ? await ensureLocalImageDataUrl(portraitUrl) : null
-  const updatedProject = await NovelAPI.updateCharacterPortrait(projectId, index, normalized)
+  const updatedProject = await NovelAPI.updateCharacterPortrait(projectId.value, index, normalized)
   novelStore.setCurrentProject(updatedProject)
   const characters = sectionData.characters?.characters
   if (Array.isArray(characters) && characters[index]) {
@@ -1340,14 +1328,13 @@ const persistCharacterPortrait = async (
 }
 
 const handlePortraitUpdate = async (payload: { index: number; value: string | null }) => {
-  if (props.isAdmin) return
   const characters = sectionData.characters?.characters || []
   const character = characters[payload.index]
   try {
     const normalized = await persistCharacterPortrait(payload.index, payload.value)
-    projectStatsService.recordEdit(projectId)
+    projectStatsService.recordEdit(projectId.value)
     activityLogService.logPortraitUpdate(
-      projectId,
+      projectId.value,
       overviewMeta.title || novel.value?.title || '未命名作品',
       character?.name || '角色',
       false
@@ -1359,35 +1346,32 @@ const handlePortraitUpdate = async (payload: { index: number; value: string | nu
   }
 }
 
-const handlePortraitGenerate = async (payload: { index: number; prompt: string }) => {
-  if (props.isAdmin || portraitGeneratingIndex.value !== null) return
+const handlePortraitGenerate = (payload: { index: number; prompt: string }) => {
   const characters = sectionData.characters?.characters || []
   const character = characters[payload.index]
   if (!character) return
   const overview = sectionData.overview || {}
-  portraitGeneratingIndex.value = payload.index
-  try {
-    const portraitUrl = await generateCharacterPortrait(
-      character,
-      { genre: overview.genre, style: overview.style },
-      payload.prompt,
-      projectModelPrefs.value
-    )
-    await persistCharacterPortrait(payload.index, portraitUrl)
-    projectStatsService.recordImageGeneration(projectId)
-    activityLogService.logPortraitUpdate(
-      projectId,
-      overviewMeta.title || novel.value?.title || '未命名作品',
-      character.name || '角色',
-      true
-    )
-    globalAlert.showSuccess('AI 立绘绘制完成，已保存到本地', '绘制成功')
-  } catch (error) {
-    console.error('生成角色立绘失败:', error)
-    globalAlert.showError(error instanceof Error ? error.message : '生成角色立绘失败', 'AI 绘制失败')
-  } finally {
-    portraitGeneratingIndex.value = null
-  }
+  const title = overviewMeta.title || novel.value?.title || '未命名作品'
+  const name = character.name || '角色'
+  enqueueImageGenerationJob({
+    taskProjectId: projectId.value,
+    projectTitle: title,
+    subject: `角色·${name}`,
+    uiKey: portraitUiKey(projectId.value, payload.index),
+    generate: () =>
+      generateCharacterPortrait(
+        character,
+        { genre: overview.genre, style: overview.style },
+        payload.prompt,
+        projectModelPrefs.value
+      ),
+    onSuccess: async (portraitUrl) => {
+      await persistCharacterPortrait(payload.index, portraitUrl)
+      projectStatsService.recordImageGeneration(projectId.value)
+      activityLogService.logPortraitUpdate(projectId.value, title, name, true)
+    },
+    successMessage: 'AI 立绘绘制完成，已保存到本地',
+  })
 }
 
 const resolveSectionKey = (field: string): SectionKey => {
@@ -1421,7 +1405,6 @@ const resolveBlueprintFieldLabel = (field: string): string => {
 }
 
 const handleSave = async (data: { field: string; content: any }) => {
-  if (props.isAdmin) return
   await ensureProjectLoaded()
   const project = novel.value
   if (!project) return
@@ -1442,9 +1425,9 @@ const handleSave = async (data: { field: string; content: any }) => {
   try {
     const updatedProject = await NovelAPI.updateBlueprint(project.id, payload)
     novelStore.setCurrentProject(updatedProject)
-    projectStatsService.recordEdit(projectId)
+    projectStatsService.recordEdit(projectId.value)
     activityLogService.logBlueprintEdit(
-      projectId,
+      projectId.value,
       overviewMeta.title || project.title || '未命名作品',
       resolveBlueprintFieldLabel(field)
     )
@@ -1462,7 +1445,6 @@ const handleSave = async (data: { field: string; content: any }) => {
 }
 
 const startAddChapter = async () => {
-  if (props.isAdmin) return
   await ensureProjectLoaded()
   const outline = sectionData.chapter_outline?.chapter_outline || novel.value?.blueprint?.chapter_outline || []
   const nextNumber = outline.length > 0 ? Math.max(...outline.map((item: any) => item.chapter_number)) + 1 : 1
@@ -1480,7 +1462,6 @@ const cancelNewChapter = () => {
 }
 
 const saveNewChapter = async () => {
-  if (props.isAdmin) return
   await ensureProjectLoaded()
   const project = novel.value
   if (!project) return
@@ -1500,9 +1481,9 @@ const saveNewChapter = async () => {
   try {
     const updatedProject = await NovelAPI.updateBlueprint(project.id, { chapter_outline: newOutline })
     novelStore.setCurrentProject(updatedProject)
-    projectStatsService.recordEdit(projectId)
+    projectStatsService.recordEdit(projectId.value)
     activityLogService.logBlueprintEdit(
-      projectId,
+      projectId.value,
       overviewMeta.title || project.title || '未命名作品',
       '章节大纲'
     )
@@ -1513,32 +1494,59 @@ const saveNewChapter = async () => {
   }
 }
 
+const resetDetailCaches = () => {
+  for (const key of Object.keys(sectionData)) {
+    delete sectionData[key as SectionKey]
+  }
+  for (const key of Object.keys(sectionLoading)) {
+    sectionLoading[key as SectionKey] = false
+  }
+  for (const key of Object.keys(sectionError)) {
+    sectionError[key as SectionKey] = null
+  }
+  projectStats.value = null
+  activityEntries.value = []
+  overviewMeta.title = '加载中...'
+  overviewMeta.updated_at = null
+}
+
+const bootstrapDetailProject = async (id: string) => {
+  if (!id) return
+  closeInspiration()
+  showWritingDeskModal.value = false
+  polishContext.value = null
+  resetDetailCaches()
+  projectStatsService.recordOpen(id)
+  await novelStore.loadProject(id, true)
+  await loadSection('overview', true)
+  if (!isSectionAvailable(activeSection.value)) {
+    activeSection.value = 'overview'
+  }
+  activityLogService.logProjectOpened(
+    id,
+    overviewMeta.title !== '加载中...' ? overviewMeta.title : '未命名作品'
+  )
+  if (isSectionAvailable('world_rules')) {
+    loadSection('world_rules')
+  }
+}
+
+watch(
+  () => route.params.id,
+  (nextId, prevId) => {
+    const id = String(nextId || '')
+    const prev = String(prevId || '')
+    if (!id || id === prev) return
+    void bootstrapDetailProject(id)
+  }
+)
+
 onMounted(async () => {
   if (typeof document !== 'undefined') {
     originalBodyOverflow.value = document.body.style.overflow
     document.body.style.overflow = 'hidden'
   }
-
-  if (!props.isAdmin) {
-    projectStatsService.recordOpen(projectId)
-    await novelStore.loadProject(projectId, true)
-  }
-
-  await loadSection('overview', true)
-
-  if (!props.isAdmin) {
-    if (!isSectionAvailable(activeSection.value)) {
-      activeSection.value = 'overview'
-    }
-    activityLogService.logProjectOpened(
-      projectId,
-      overviewMeta.title !== '加载中...' ? overviewMeta.title : '未命名作品'
-    )
-  }
-
-  if (isSectionAvailable('world_rules')) {
-    loadSection('world_rules')
-  }
+  await bootstrapDetailProject(projectId.value)
 })
 
 onBeforeUnmount(() => {

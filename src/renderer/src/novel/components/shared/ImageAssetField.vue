@@ -2,11 +2,14 @@
 
 import { computed, ref } from 'vue'
 
-import { ImagePlus, Sparkles, Trash2, Upload } from 'lucide-vue-next'
+import { ImagePlus, Eye, Sparkles, Trash2, Upload } from 'lucide-vue-next'
 
 import { persistUploadedImage } from '@renderer/services/image-service'
 
+import { globalAlert } from '@renderer/novel/composables/useAlert'
+
 import ImageDrawPromptDialog from './ImageDrawPromptDialog.vue'
+import ImageLightbox from './ImageLightbox.vue'
 
 
 
@@ -70,13 +73,17 @@ const fileInputRef = ref<HTMLInputElement | null>(null)
 
 const promptDialogOpen = ref(false)
 
+const previewOpen = ref(false)
+
 const hovered = ref(false)
 
 
 
 const dialogTitle = computed(() => (props.variant === 'cover' ? 'AI 绘制封面' : 'AI 绘制立绘'))
 
-const showOverlay = computed(() => props.editable && (hovered.value || props.generating) && !promptDialogOpen.value)
+const showOverlay = computed(
+  () => props.editable && (hovered.value || props.generating) && !promptDialogOpen.value && !previewOpen.value
+)
 
 
 
@@ -107,9 +114,7 @@ async function onFileSelected(event: Event) {
     emit('update:modelValue', dataUrl)
 
   } catch (err) {
-
-    alert(err instanceof Error ? err.message : '上传失败')
-
+    globalAlert.showError(err instanceof Error ? err.message : '上传失败', '上传失败')
   }
 
 }
@@ -143,6 +148,24 @@ function removeImage() {
   emit('update:modelValue', null)
 
   emit('remove')
+
+}
+
+
+
+function openPreview() {
+
+  if (!props.modelValue || props.generating) return
+
+  previewOpen.value = true
+
+}
+
+
+
+function closePreview() {
+
+  previewOpen.value = false
 
 }
 
@@ -192,36 +215,49 @@ function removeImage() {
 
           <div v-else class="image-asset-field__overlay-actions">
 
-            <button
-              type="button"
-              class="image-asset-field__overlay-btn"
-              title="上传图片"
-              aria-label="上传图片"
-              @click.stop="openFilePicker"
-            >
-              <Upload :size="16" />
-            </button>
+            <template v-if="modelValue">
+              <button
+                type="button"
+                class="image-asset-field__overlay-btn"
+                title="预览图片"
+                aria-label="预览图片"
+                @click.stop="openPreview"
+              >
+                <Eye :size="16" />
+              </button>
 
-            <button
-              type="button"
-              class="image-asset-field__overlay-btn"
-              title="AI 绘制"
-              aria-label="AI 绘制"
-              @click.stop="openGenerateDialog"
-            >
-              <Sparkles :size="16" />
-            </button>
+              <button
+                type="button"
+                class="image-asset-field__overlay-btn image-asset-field__overlay-btn--danger"
+                title="移除图片"
+                aria-label="移除图片"
+                @click.stop="removeImage"
+              >
+                <Trash2 :size="16" />
+              </button>
+            </template>
 
-            <button
-              v-if="modelValue"
-              type="button"
-              class="image-asset-field__overlay-btn image-asset-field__overlay-btn--danger"
-              title="移除图片"
-              aria-label="移除图片"
-              @click.stop="removeImage"
-            >
-              <Trash2 :size="16" />
-            </button>
+            <template v-else>
+              <button
+                type="button"
+                class="image-asset-field__overlay-btn"
+                title="上传图片"
+                aria-label="上传图片"
+                @click.stop="openFilePicker"
+              >
+                <Upload :size="16" />
+              </button>
+
+              <button
+                type="button"
+                class="image-asset-field__overlay-btn"
+                title="AI 绘制"
+                aria-label="AI 绘制"
+                @click.stop="openGenerateDialog"
+              >
+                <Sparkles :size="16" />
+              </button>
+            </template>
 
           </div>
 
@@ -249,6 +285,15 @@ function removeImage() {
 
       @submit="submitGenerate"
 
+    />
+
+
+
+    <ImageLightbox
+      :show="previewOpen"
+      :src="modelValue"
+      :alt="label"
+      @close="closePreview"
     />
 
 

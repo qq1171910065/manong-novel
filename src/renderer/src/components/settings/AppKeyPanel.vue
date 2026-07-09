@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, h, ref } from 'vue'
+import { computed, h, ref, watch } from 'vue'
 import { Copy, Key } from 'lucide-vue-next'
 import type { DataTableColumns } from '../../ui'
-import type { PortalUserKey } from '@renderer/services'
+import { portalApi, type PortalUserKey } from '@renderer/services'
+import { setStoredGatewayKey } from '@renderer/services/gateway-api'
 import ProfileSectionLayout from './ProfileSectionLayout.vue'
 import PortalDataTable from './PortalDataTable.vue'
-import { NButton, NTag, NSpace, useMessage } from '../../ui'
+import { NButton, NTag, useMessage } from '../../ui'
 
 const props = defineProps<{
   appKeyName: string
@@ -23,7 +24,8 @@ const emit = defineEmits<{
 }>()
 
 const message = useMessage()
-const revealKeyId = ref<number | null>(null)
+const copyingKeyId = ref<number | null>(null)
+const revealedKeys = ref<Record<number, string>>({})
 
 const displayPlain = computed(() => props.newKeyPlain || props.keyPlain)
 
@@ -47,7 +49,74 @@ function maskKey(key: string) {
 }
 
 function isAppKey(row: PortalUserKey) {
-  return row.name === props.appKeyName || (props.appKey?.id === row.id)
+  return row.name === props.appKeyName || props.appKey?.id === row.id
+}
+
+function resolveRowKeyPlain(row: PortalUserKey): string {
+  const cached = revealedKeys.value[row.id]
+  if (cached) return cached
+
+  if (props.newKeyPlain && row.keyPrefix) {
+    const prefix = row.keyPrefix.replace(/\.+$/, '').replace(/…/g, '')
+    if (prefix && props.newKeyPlain.startsWith(prefix.slice(0, 10))) {
+      return props.newKeyPlain
+    }
+  }
+  if (isAppKey(row) && props.keyPlain) return props.keyPlain
+  return ''
+}
+
+function rememberRevealedKey(row: PortalUserKey, plain: string) {
+  if (!plain) return
+  revealedKeys.value = { ...revealedKeys.value, [row.id]: plain }
+  if (isAppKey(row)) setStoredGatewayKey(plain)
+}
+
+watch(
+  () => props.newKeyPlain,
+  (plain) => {
+    if (!plain) return
+    const matched = props.keys.find((row) => {
+      const prefix = row.keyPrefix.replace(/\.+$/, '').replace(/…/g, '')
+      return prefix && plain.startsWith(prefix.slice(0, 10))
+    })
+    if (matched) rememberRevealedKey(matched, plain)
+  }
+)
+
+watch(
+  () => props.keys,
+  (rows) => {
+    if (props.keyPlain) {
+      const appRow = rows.find((row) => isAppKey(row))
+      if (appRow) rememberRevealedKey(appRow, props.keyPlain)
+    }
+    void preloadRevealedKeys(rows)
+  },
+  { immediate: true }
+)
+
+function displayKey(row: PortalUserKey): string {
+  const plain = resolveRowKeyPlain(row)
+  if (plain) return maskKey(plain)
+  if (copyingKeyId.value === row.id) return '获取中…'
+  return '••••••••••••••••'
+}
+
+async function preloadRevealedKeys(rows: PortalUserKey[]) {
+  const pending = rows.filter((row) => !resolveRowKeyPlain(row))
+  if (!pending.length) return
+
+  await Promise.all(
+    pending.map(async (row) => {
+      try {
+        const plain = await portalApi.revealKey(row.id)
+        rememberRevealedKey(row, plain)
+      } catch {
+        // ignore single key failure
+      }
+    })
+  )
 }
 
 function keyStatusType(status: string) {
@@ -72,22 +141,35 @@ async function copyPlainKey() {
   emit('copyKey')
 }
 
+async function copyRowKey(row: PortalUserKey) {
+  copyingKeyId.value = row.id
+  try {
+    let plain = resolveRowKeyPlain(row)
+    if (!plain) {
+      plain = await portalApi.revealKey(row.id)
+      rememberRevealedKey(row, plain)
+    }
+    await navigator.clipboard.writeText(plain)
+    message.success('已复制 API Key')
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '复制失败')
+  } finally {
+    copyingKeyId.value = null
+  }
+}
+
 const columns = computed<DataTableColumns<PortalUserKey>>(() => [
   {
     title: '名称',
     key: 'name',
     ellipsis: { tooltip: true },
-    render: (row) =>
-      h('span', { class: 'app-key-name-cell' }, [
-        row.name,
-        row.isDefault ? h(NTag, { size: 'small', bordered: false, style: 'margin-left:6px' }, () => '默认') : null,
-        isAppKey(row) ? h(NTag, { size: 'small', type: 'info', bordered: false, style: 'margin-left:6px' }, () => '本软件') : null,
-      ]),
+    render: (row) => row.name || '—',
   },
   {
-    title: 'Key 前缀',
-    key: 'keyPrefix',
-    render: (row) => h('code', { class: 'code-inline' }, row.keyPrefix || '—'),
+    title: 'Key',
+    key: 'key',
+    ellipsis: { tooltip: true },
+    render: (row) => displayKey(row),
   },
   {
     title: '状态',
@@ -105,36 +187,18 @@ const columns = computed<DataTableColumns<PortalUserKey>>(() => [
     render: (row) => formatDateTime(row.createTime),
   },
   {
-    title: '密钥',
-    key: 'secret',
-    width: 220,
-    render: (row) => {
-      if (!isAppKey(row) || !displayPlain.value) {
-        return h('span', { class: 'text-muted' }, '—')
-      }
-      const revealed = revealKeyId.value === row.id
-      return h('div', { class: 'app-key-secret-cell' }, [
-        h('code', { class: 'app-key-secret-cell__value' }, revealed ? displayPlain.value : maskKey(displayPlain.value)),
-        h(
-          NSpace,
-          { size: 4, justify: 'end' },
-          () => [
-            h(
-              NButton,
-              {
-                size: 'tiny',
-                quaternary: true,
-                onClick: () => {
-                  revealKeyId.value = revealed ? null : row.id
-                },
-              },
-              () => (revealed ? '隐藏' : '显示')
-            ),
-            h(NButton, { size: 'tiny', quaternary: true, onClick: () => void copyPlainKey() }, () => '复制'),
-          ]
-        ),
-      ])
-    },
+    title: '操作',
+    key: 'actions',
+    width: 72,
+    render: (row) =>
+      h(
+        'span',
+        {
+          class: ['app-key-action', { 'is-loading': copyingKeyId.value === row.id }],
+          onClick: () => void copyRowKey(row),
+        },
+        copyingKeyId.value === row.id ? '复制中…' : '复制'
+      ),
   },
 ])
 </script>
@@ -144,34 +208,36 @@ const columns = computed<DataTableColumns<PortalUserKey>>(() => [
     <template #actions>
       <NButton v-if="!appKey" type="primary" size="small" :loading="creating" @click="emit('create')">
         <template #icon><Key :size="15" /></template>
-        创建本软件 Key
+        创建 Key
       </NButton>
     </template>
 
-    <div v-if="newKeyPlain" class="profile-key-reveal profile-key-reveal--new">
-      <div class="profile-key-reveal__label">新创建的 Key（请立即保存）</div>
-      <div class="profile-key-reveal__row">
-        <code class="code-inline profile-key-code">{{ newKeyPlain }}</code>
-        <NButton size="small" quaternary @click="copyPlainKey">
-          <template #icon><Copy :size="14" /></template>
-          复制
-        </NButton>
+    <div class="app-key-panel__body">
+      <div v-if="newKeyPlain" class="profile-key-reveal profile-key-reveal--new">
+        <div class="profile-key-reveal__label">新创建的 Key（请立即保存）</div>
+        <div class="profile-key-reveal__row">
+          <span class="profile-key-code">{{ newKeyPlain }}</span>
+          <NButton size="small" quaternary @click="copyPlainKey">
+            <template #icon><Copy :size="14" /></template>
+            复制
+          </NButton>
+        </div>
       </div>
-    </div>
 
-    <div class="app-key-panel__table profile-list-region">
-      <PortalDataTable
-        v-if="keys.length || loading"
-        flex-height
-        :columns="columns"
-        :data="keys"
-        :loading="loading"
-        :pagination="keys.length > 20 ? { pageSize: 20 } : false"
-      />
-      <div v-else class="profile-empty profile-empty--compact">
-        <Key :size="28" />
-        <p>暂无 API Key</p>
-        <span>点击右上角为本软件创建专用 Key</span>
+      <div class="app-key-panel__table">
+        <PortalDataTable
+          v-if="keys.length || loading"
+          flex-height
+          :columns="columns"
+          :data="keys"
+          :loading="loading"
+          :pagination="{ pageSize: 50 }"
+        />
+        <div v-else class="profile-empty profile-empty--compact">
+          <Key :size="28" />
+          <p>暂无 API Key</p>
+          <span>点击右上角创建 Key</span>
+        </div>
       </div>
     </div>
   </ProfileSectionLayout>
@@ -195,6 +261,14 @@ const columns = computed<DataTableColumns<PortalUserKey>>(() => [
   flex-direction: column;
 }
 
+.app-key-panel__body {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .app-key-panel__table {
   flex: 1 1 0;
   min-height: 0;
@@ -209,30 +283,45 @@ const columns = computed<DataTableColumns<PortalUserKey>>(() => [
   flex-direction: column;
 }
 
-.app-key-secret-cell {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 4px;
-  max-width: 100%;
+.app-key-panel__table :deep(.n-data-table) {
+  flex: 1 1 0;
+  min-height: 0;
 }
 
-.app-key-secret-cell__value {
-  display: block;
-  max-width: 200px;
-  font-size: 11px;
-  word-break: break-all;
-  text-align: right;
+.app-key-panel__table :deep(.n-data-table-th) {
+  padding: 12px 16px;
+  font-size: 13px;
 }
 
-.app-key-secret-cell__actions {
-  display: flex;
-  gap: 2px;
+.app-key-panel__table :deep(.n-data-table-td) {
+  padding: 14px 16px;
+  font-size: 14px;
+  line-height: 1.6;
+  vertical-align: middle;
+}
+
+.app-key-panel__table :deep(.n-data-table-tr) {
+  height: auto;
+}
+
+.app-key-action {
+  color: var(--color-accent, #1f7a67);
+  cursor: pointer;
+  user-select: none;
+}
+
+.app-key-action:hover {
+  text-decoration: underline;
+}
+
+.app-key-action.is-loading {
+  opacity: 0.6;
+  cursor: wait;
+  pointer-events: none;
 }
 
 .profile-key-reveal {
   flex: 0 0 auto;
-  margin-bottom: 4px;
   padding: 14px;
   border-radius: 14px;
   border: 1px solid color-mix(in srgb, var(--color-warning) 35%, var(--line));
@@ -257,5 +346,6 @@ const columns = computed<DataTableColumns<PortalUserKey>>(() => [
   flex: 1;
   min-width: 0;
   word-break: break-all;
+  line-height: 1.6;
 }
 </style>

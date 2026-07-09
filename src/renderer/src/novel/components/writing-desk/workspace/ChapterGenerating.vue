@@ -30,10 +30,10 @@
         <div class="chapter-generating-panel__progress-track">
           <div
             class="chapter-generating-panel__progress-fill"
-            :style="{ width: `${displayProgress}%` }"
+            :style="{ width: `${displayProgressLabel}%` }"
           />
         </div>
-        <span class="chapter-generating-panel__progress-label">{{ displayProgress }}%</span>
+        <span class="chapter-generating-panel__progress-label">{{ displayProgressLabel }}%</span>
       </div>
     </div>
   </div>
@@ -87,6 +87,8 @@ const scrollParagraphs = computed(() => {
 })
 
 const hasScrollContent = computed(() => scrollParagraphs.value.length > 0)
+
+const displayProgressLabel = computed(() => Math.round(displayProgress.value))
 
 const primaryMessage = computed(() => {
   if (liveProgress.value?.message) return liveProgress.value.message

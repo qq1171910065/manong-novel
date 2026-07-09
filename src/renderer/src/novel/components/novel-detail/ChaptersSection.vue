@@ -146,7 +146,6 @@ interface ChapterDetail extends ChapterItem {
 const props = defineProps<{
   chapters: ChapterItem[]
   outline?: ChapterOutlineItem[]
-  isAdmin?: boolean
   projectId?: string
 }>()
 

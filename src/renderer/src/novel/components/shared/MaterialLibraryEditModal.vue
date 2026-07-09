@@ -31,6 +31,12 @@ import {
 } from '@renderer/services/novel/material-library-prefs'
 import { activityLogService } from '@renderer/services/activity-log-service'
 import { buildCharacterPortraitDraft, generateCharacterPortrait, generateStyleCoverImage } from '@renderer/services/image-service'
+import {
+  enqueueImageGenerationJob,
+  isImageUiKeyRunning,
+  materialCoverUiKey,
+  materialPortraitUiKey,
+} from '@renderer/services/image-generation-task-service'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
 
 const props = defineProps<{
@@ -51,12 +57,20 @@ const isNew = ref(false)
 const readonlyMode = ref(false)
 const saving = ref(false)
 const enriching = ref(false)
-const portraitLoading = ref(false)
-const coverLoading = ref(false)
+const portraitLoading = computed(() =>
+  isImageUiKeyRunning(materialPortraitUiKey(materialScopeId.value))
+)
+const coverLoading = computed(() =>
+  isImageUiKeyRunning(materialCoverUiKey(materialScopeId.value))
+)
 const focusedField = ref<MaterialFocusField | null>(null)
 const autoEnrichOnSave = ref(isMaterialAutoEnrichOnSave())
 const sourceItem = ref<MaterialItem | null>(null)
 const aiBusy = ref(false)
+
+const materialScopeId = computed(() => editingId.value || 'draft')
+const materialTaskProjectId = computed(() => `material:${materialScopeId.value}`)
+const materialTitle = computed(() => draft.value.title?.trim() || '素材')
 
 const config = computed(() => getMaterialLibraryConfig(props.type))
 const isStyleChatLayout = computed(() => props.type === 'styles')
@@ -125,8 +139,6 @@ function resetState() {
   focusedField.value = null
   saving.value = false
   enriching.value = false
-  portraitLoading.value = false
-  coverLoading.value = false
 }
 
 function loadEditor() {
@@ -285,61 +297,68 @@ function applyAiDraft(next: MaterialDraft) {
   draft.value = next
 }
 
-async function generateStyleCover() {
-  if (readonlyMode.value) return
+function generateStyleCover() {
+  if (readonlyMode.value || coverLoading.value) return
 
-  coverLoading.value = true
-  try {
-    draft.value.coverUrl = await generateStyleCoverImage({
-      title: draft.value.title,
-      summary: draft.value.summary,
-      genre: draft.value.genre,
-      style: draft.value.style,
-      tone: draft.value.tone,
-      writingHints: draft.value.writingHints,
-      tags: draft.value.tags,
-    })
-    globalAlert.showSuccess('文风配图已生成', '生成成功')
-  } catch (error) {
-    globalAlert.showError(error instanceof Error ? error.message : '生成失败', 'AI 生图')
-  } finally {
-    coverLoading.value = false
-  }
+  enqueueImageGenerationJob({
+    taskProjectId: materialTaskProjectId.value,
+    projectTitle: materialTitle.value,
+    subject: '文风配图',
+    uiKey: materialCoverUiKey(materialScopeId.value),
+    generate: () =>
+      generateStyleCoverImage({
+        title: draft.value.title,
+        summary: draft.value.summary,
+        genre: draft.value.genre,
+        style: draft.value.style,
+        tone: draft.value.tone,
+        writingHints: draft.value.writingHints,
+        tags: draft.value.tags,
+      }),
+    onSuccess: async (coverUrl) => {
+      draft.value.coverUrl = coverUrl
+    },
+    successMessage: '文风配图已生成',
+  })
 }
 
-async function generatePortrait() {
-  if (readonlyMode.value) return
+function generatePortrait() {
+  if (readonlyMode.value || portraitLoading.value) return
   const name = draft.value.character.name?.trim() || draft.value.title.trim()
   if (!name) {
     globalAlert.showError('请先填写角色姓名', '无法生成头像')
     return
   }
 
-  portraitLoading.value = true
-  try {
-    const portraitDraft = buildCharacterPortraitDraft(draft.value.character, {
-      title: draft.value.title,
-      summary: draft.value.summary,
-      tags: draft.value.tags,
-      genre: draft.value.genre || undefined,
-      style: draft.value.style || undefined,
-    })
-    draft.value.character.portrait_url = await generateCharacterPortrait(
-      draft.value.character,
-      {
-        genre: draft.value.genre || undefined,
-        style: draft.value.style || undefined,
-      },
-      undefined,
-      undefined,
-      { portraitDraft }
-    )
-    globalAlert.showSuccess('头像已生成', '生成成功')
-  } catch (error) {
-    globalAlert.showError(error instanceof Error ? error.message : '生成失败', '头像生成')
-  } finally {
-    portraitLoading.value = false
-  }
+  const portraitDraft = buildCharacterPortraitDraft(draft.value.character, {
+    title: draft.value.title,
+    summary: draft.value.summary,
+    tags: draft.value.tags,
+    genre: draft.value.genre || undefined,
+    style: draft.value.style || undefined,
+  })
+
+  enqueueImageGenerationJob({
+    taskProjectId: materialTaskProjectId.value,
+    projectTitle: materialTitle.value,
+    subject: `角色·${name}`,
+    uiKey: materialPortraitUiKey(materialScopeId.value),
+    generate: () =>
+      generateCharacterPortrait(
+        draft.value.character,
+        {
+          genre: draft.value.genre || undefined,
+          style: draft.value.style || undefined,
+        },
+        undefined,
+        undefined,
+        { portraitDraft }
+      ),
+    onSuccess: async (portraitUrl) => {
+      draft.value.character.portrait_url = portraitUrl
+    },
+    successMessage: '头像已生成',
+  })
 }
 
 function onAutoEnrichChange(event: Event) {

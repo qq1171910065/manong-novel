@@ -1,5 +1,8 @@
 /** 对齐原项目 backend/app/utils/json_utils.py 的 JSON 提取与修复逻辑 */
 
+import { stripAuthoringMetaCommentary } from '@shared/novel/chapter-content-guard'
+import { countChapterChars } from '@shared/novel/chapter-length-plan'
+
 export function removeThinkTags(rawText: string): string {
   if (!rawText) return rawText
   return rawText
@@ -317,6 +320,16 @@ export function pickBestLlmPayload(content: string, reasoning: string): string {
   return think
 }
 
-export function pickContentOnlyPayload(content: string): string {
-  return content.trim()
+export function pickContentOnlyPayload(content: string, reasoning?: string): string {
+  const body = content.trim()
+  if (body) return body
+
+  const think = reasoning?.trim()
+  if (!think) return ''
+
+  // 推理模型有时只往 reasoning/thinking 字段输出；尝试提取可用正文
+  const cleaned = stripAuthoringMetaCommentary(think)
+  if (!cleaned || /^[{[]/.test(cleaned)) return ''
+  if (countChapterChars(cleaned) >= 20) return cleaned
+  return ''
 }

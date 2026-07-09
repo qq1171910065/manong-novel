@@ -31,6 +31,15 @@
             <ArenaSelect v-model="sortBy" :options="sortOptions" aria-label="排序方式" />
           </div>
           <div class="toolbar-actions">
+            <button
+              type="button"
+              class="novel-btn novel-btn--ghost"
+              :disabled="isImporting"
+              @click="importItem"
+            >
+              <Upload :size="16" />
+              {{ isImporting ? '导入中...' : '导入' }}
+            </button>
             <button type="button" class="novel-btn novel-btn--primary" @click="openCreate">
               <Plus :size="16" />
               {{ config.createLabel }}
@@ -59,11 +68,13 @@
               <template #actions>
                 <MaterialLibraryCardMenu
                   show-favorite
+                  show-export
                   :favorited="isFavorite(item.id)"
                   :show-delete="!isMaterialBuiltIn(item)"
                   :show-duplicate="isMaterialBuiltIn(item)"
                   @preview="openPreview(item)"
                   @edit="openEdit(item)"
+                  @export="exportItem(item)"
                   @duplicate="duplicateItem(item)"
                   @favorite="toggleFavorite(item.id)"
                   @delete="confirmRemoveItem(item)"
@@ -95,7 +106,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { PenLine, Plus, Search, SlidersHorizontal, Users } from 'lucide-vue-next'
+import { PenLine, Plus, Search, SlidersHorizontal, Upload, Users } from 'lucide-vue-next'
 import NovelPageShell from '@renderer/components/novel/NovelPageShell.vue'
 import ArenaSelect from '@renderer/components/common/ArenaSelect.vue'
 import MaterialLibraryCard from '@renderer/novel/components/shared/MaterialLibraryCard.vue'
@@ -126,6 +137,10 @@ import {
   getMaterialCardMeta,
   getMaterialImageUrl,
 } from '@renderer/services/novel/material-library-utils'
+import {
+  exportMaterialItem,
+  importMaterialFromFile,
+} from '@renderer/services/novel/material-library-portable'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
 
 const query = ref('')
@@ -135,6 +150,7 @@ const previewItem = ref<MaterialItem | null>(null)
 const prefsVersion = ref(0)
 const items = ref<MaterialItem[]>([])
 const editTarget = ref<{ type: MaterialLibraryType; itemId: string } | null>(null)
+const isImporting = ref(false)
 
 const showEditModal = computed(() => editTarget.value !== null)
 const editType = computed(() => editTarget.value?.type ?? 'characters')
@@ -220,6 +236,32 @@ function toggleFavorite(id: string) {
 function openCreate() {
   if (!libraryType.value) return
   editTarget.value = { type: libraryType.value, itemId: 'new' }
+}
+
+async function importItem() {
+  if (!libraryType.value || isImporting.value) return
+  isImporting.value = true
+  try {
+    const item = await importMaterialFromFile(libraryType.value)
+    if (!item) return
+    globalAlert.showSuccess(`已导入「${item.title}」`, '导入成功')
+    reloadItems()
+    editTarget.value = { type: item.type as MaterialLibraryType, itemId: item.id }
+  } catch (error) {
+    globalAlert.showError(error instanceof Error ? error.message : '导入失败', '导入失败')
+  } finally {
+    isImporting.value = false
+  }
+}
+
+async function exportItem(item: MaterialItem) {
+  try {
+    const saved = await exportMaterialItem(item)
+    if (!saved) return
+    globalAlert.showSuccess(`「${item.title}」已导出`, '导出成功')
+  } catch (error) {
+    globalAlert.showError(error instanceof Error ? error.message : '导出失败', '导出失败')
+  }
 }
 
 function openEdit(item: MaterialItem) {
