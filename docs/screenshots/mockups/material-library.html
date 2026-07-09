@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <link rel="stylesheet" href="_shared.css" />
+  <style>
+    .page { display: grid; grid-template-columns: 220px 1fr; height: 100%; }
+    .filters { padding: 18px 14px; background: rgba(255,255,255,0.55); border-right: 1px solid rgba(31,122,103,0.12); }
+    .filter-item { padding: 10px 12px; border-radius: 12px; margin-bottom: 6px; font-size: 13px; color: #60766f; }
+    .filter-item.active { background: rgba(31,122,103,0.12); color: #0f4b44; font-weight: 600; }
+    .content { padding: 22px 26px; }
+    .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 16px; }
+    .item { padding: 14px; min-height: 150px; }
+    .thumb { height: 72px; border-radius: 12px; background: linear-gradient(135deg,#1f7a67,#5aa08f); margin-bottom: 10px; }
+    .item h4 { font-size: 14px; margin-bottom: 6px; }
+    .item p { font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">MN</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>书架</div>
+      <div class="nav-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>角色</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>文风</div>
+    </aside>
+    <main class="main page">
+      <aside class="filters">
+        <div class="filter-item active">全部角色</div>
+        <div class="filter-item">主角模板</div>
+        <div class="filter-item">反派模板</div>
+        <div class="filter-item">群像配角</div>
+      </aside>
+      <section class="content">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div><div class="pill">MATERIAL LIBRARY</div><h2 class="title" style="font-size:22px;margin-top:8px">角色库</h2></div>
+          <button class="btn btn-primary">新建角色</button>
+        </div>
+        <div class="grid">
+          <div class="card item"><div class="thumb"></div><h4>冷峻剑客</h4><p class="muted">寡言、克制、背负旧伤</p></div>
+          <div class="card item"><div class="thumb" style="background:linear-gradient(135deg,#967e4b,#c5a059)"></div><h4>市井说书人</h4><p class="muted">幽默、洞察人心</p></div>
+          <div class="card item"><div class="thumb" style="background:linear-gradient(135deg,#4b6a96,#7ea0c8)"></div><h4>少年天才</h4><p class="muted">傲气、成长型主角</p></div>
+          <div class="card item"><div class="thumb" style="background:linear-gradient(135deg,#7a4b96,#b07ec8)"></div><h4>神秘女医</h4><p class="muted">温柔、隐藏身份</p></div>
+          <div class="card item"><div class="thumb" style="background:linear-gradient(135deg,#2d6a4f,#52b788)"></div><h4>边陲少年</h4><p class="muted">坚韧、敏锐直觉</p></div>
+          <div class="card item"><div class="thumb" style="background:linear-gradient(135deg,#8d6e63,#bcaaa4)"></div><h4>朝堂权臣</h4><p class="muted">沉稳、布局深远</p></div>
+          <div class="card item"><div class="thumb" style="background:linear-gradient(135deg,#546e7a,#90a4ae)"></div><h4>流浪术士</h4><p class="muted">神秘、亦正亦邪</p></div>
+          <div class="card item"><div class="thumb" style="background:linear-gradient(135deg,#c62828,#ef5350)"></div><h4>复仇者</h4><p class="muted">偏执、悲剧驱动</p></div>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

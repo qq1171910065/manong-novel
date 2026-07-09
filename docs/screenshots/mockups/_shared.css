@@ -1,0 +1,102 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Segoe UI', 'Microsoft YaHei', 'Noto Sans SC', system-ui, sans-serif;
+  background: #dfe9e3;
+  color: #142f2f;
+}
+.app {
+  width: 1280px;
+  height: 800px;
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  background: linear-gradient(135deg, #eef4f0 0%, #d6e5db 45%, #e8efe9 100%);
+  overflow: hidden;
+  border-radius: 12px;
+  box-shadow: 0 24px 60px rgba(15, 75, 68, 0.18);
+}
+.sidebar {
+  background: rgba(255, 255, 255, 0.72);
+  border-right: 1px solid rgba(31, 122, 103, 0.14);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 18px 10px;
+  gap: 8px;
+}
+.brand {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: linear-gradient(145deg, #1f7a67, #0f4b44);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 14px;
+  margin-bottom: 10px;
+}
+.nav-item {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  color: #60766f;
+  font-size: 11px;
+  gap: 2px;
+}
+.nav-item.active {
+  background: rgba(31, 122, 103, 0.14);
+  color: #0f4b44;
+  box-shadow: inset 0 0 0 1px rgba(31, 122, 103, 0.18);
+}
+.nav-item svg { width: 20px; height: 20px; }
+.main { min-width: 0; height: 100%; overflow: hidden; position: relative; }
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.72);
+  border: 1px solid rgba(31,122,103,0.14);
+  color: #0f4b44;
+  font-size: 12px;
+}
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: 12px;
+  border: none;
+  font-size: 13px;
+  font-weight: 600;
+}
+.btn-primary {
+  background: linear-gradient(145deg, #1f7a67, #0f4b44);
+  color: #fff;
+  box-shadow: 0 10px 24px rgba(31, 122, 103, 0.28);
+}
+.btn-ghost {
+  background: rgba(255,255,255,0.72);
+  color: #0f4b44;
+  border: 1px solid rgba(31,122,103,0.16);
+}
+.card {
+  background: rgba(255,255,255,0.82);
+  border: 1px solid rgba(31,122,103,0.12);
+  border-radius: 18px;
+  box-shadow: 0 12px 30px rgba(31, 122, 103, 0.08);
+}
+.tag {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(31,122,103,0.1);
+  color: #0f4b44;
+  font-size: 11px;
+}
+.muted { color: #60766f; }
+.title { font-size: 28px; font-weight: 700; line-height: 1.2; color: #0f4b44; }
+.subtitle { font-size: 14px; color: #60766f; line-height: 1.6; }

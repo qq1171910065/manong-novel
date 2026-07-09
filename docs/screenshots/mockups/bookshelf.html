@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <link rel="stylesheet" href="_shared.css" />
+  <style>
+    .page { display: grid; grid-template-columns: 240px 1fr; height: 100%; }
+    .filters { padding: 20px 16px; background: rgba(255,255,255,0.55); border-right: 1px solid rgba(31,122,103,0.12); }
+    .search { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 12px; background: #fff; border: 1px solid rgba(31,122,103,0.12); margin-bottom: 16px; color: #8a9a94; font-size: 13px; }
+    .filter-item { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-radius: 12px; margin-bottom: 6px; font-size: 13px; color: #60766f; }
+    .filter-item.active { background: rgba(31,122,103,0.12); color: #0f4b44; font-weight: 600; }
+    .content { padding: 22px 26px; display: flex; flex-direction: column; gap: 18px; }
+    .toolbar { display: flex; justify-content: space-between; align-items: center; }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    .project { padding: 16px; min-height: 210px; display: flex; flex-direction: column; gap: 10px; }
+    .project .cover { height: 92px; border-radius: 14px; }
+    .project h4 { font-size: 16px; color: #142f2f; }
+    .meta { display: flex; gap: 8px; flex-wrap: wrap; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">MN</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10.5 12 4l9 6.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>首页</div>
+      <div class="nav-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>书架</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>角色</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>文风</div>
+    </aside>
+    <main class="main page">
+      <aside class="filters">
+        <div class="search">搜索作品...</div>
+        <div class="filter-item active"><span>全部作品</span><span>6</span></div>
+        <div class="filter-item"><span>写作中</span><span>3</span></div>
+        <div class="filter-item"><span>大纲阶段</span><span>2</span></div>
+        <div class="filter-item"><span>已完结</span><span>1</span></div>
+      </aside>
+      <section class="content">
+        <div class="toolbar">
+          <div class="pill">排序：最近更新</div>
+          <div style="display:flex;gap:10px"><button class="btn btn-ghost">导入</button><button class="btn btn-primary">新建作品</button></div>
+        </div>
+        <div class="grid">
+          <div class="card project"><div class="cover"></div><h4>青玉长歌</h4><div class="meta"><span class="tag">玄幻</span><span class="muted">28 章</span></div></div>
+          <div class="card project"><div class="cover" style="background:linear-gradient(135deg,#967e4b,#c5a059)"></div><h4>雾港档案</h4><div class="meta"><span class="tag">悬疑</span><span class="muted">12 章</span></div></div>
+          <div class="card project"><div class="cover" style="background:linear-gradient(135deg,#4b6a96,#7ea0c8)"></div><h4>星尘旅人</h4><div class="meta"><span class="tag">科幻</span><span class="muted">8 章</span></div></div>
+          <div class="card project"><div class="cover" style="background:linear-gradient(135deg,#7a4b96,#b07ec8)"></div><h4>旧城笔记</h4><div class="meta"><span class="tag">都市</span><span class="muted">5 章</span></div></div>
+          <div class="card project"><div class="cover" style="background:linear-gradient(135deg,#2d6a4f,#52b788)"></div><h4>山海谣</h4><div class="meta"><span class="tag">奇幻</span><span class="muted">16 章</span></div></div>
+          <div class="card project"><div class="cover" style="background:linear-gradient(135deg,#8d6e63,#bcaaa4)"></div><h4>纸上长安</h4><div class="meta"><span class="tag">历史</span><span class="muted">完结</span></div></div>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

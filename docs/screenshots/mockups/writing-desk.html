@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <link rel="stylesheet" href="_shared.css" />
+  <style>
+    .page { display: grid; grid-template-columns: 260px 1fr; height: 100%; }
+    .chapters { padding: 18px 14px; background: rgba(255,255,255,0.55); border-right: 1px solid rgba(31,122,103,0.12); }
+    .chapter-item { padding: 10px 12px; border-radius: 12px; margin-bottom: 6px; font-size: 13px; color: #60766f; }
+    .chapter-item.active { background: rgba(31,122,103,0.12); color: #0f4b44; font-weight: 600; }
+    .editor { padding: 22px 28px; display: flex; flex-direction: column; gap: 16px; }
+    .editor-head { display: flex; justify-content: space-between; align-items: center; }
+    .content-box { flex: 1; padding: 24px 28px; font-size: 15px; line-height: 2; color: #142f2f; }
+    .content-box p { margin-bottom: 14px; }
+    .footer { display: flex; justify-content: space-between; align-items: center; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">MN</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>书架</div>
+      <div class="nav-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>写作台</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>阅读</div>
+    </aside>
+    <main class="main page">
+      <aside class="chapters">
+        <div class="pill" style="margin-bottom:12px">青玉长歌</div>
+        <div class="chapter-item">第 12 章 · 旧庙</div>
+        <div class="chapter-item">第 13 章 · 灵息</div>
+        <div class="chapter-item active">第 14 章 · 雨夜</div>
+        <div class="chapter-item">第 15 章 · 未生成</div>
+        <div class="chapter-item">第 16 章 · 未生成</div>
+      </aside>
+      <section class="editor">
+        <div class="editor-head">
+          <div>
+            <h2 class="title" style="font-size:22px">第 14 章 · 雨夜</h2>
+            <p class="subtitle">版本 v3 · 2846 字 · 生成完成</p>
+          </div>
+          <div style="display:flex;gap:10px">
+            <button class="btn btn-ghost">润色</button>
+            <button class="btn btn-ghost">版本</button>
+            <button class="btn btn-primary">重新生成</button>
+          </div>
+        </div>
+        <div class="card content-box">
+          <p>雨从屋檐连成线，砸在青石板上，像无数细针扎向夜色。沈砚背着破布包袱，踩着泥泞往山外逃，身后庙宇的钟声已被雷声吞没。</p>
+          <p>他回头望了一眼，只见灵灯在风雨里忽明忽暗，像某种正在熄灭的誓言。怀里的玉佩发烫，仿佛在提醒他：灵脉枯竭的真相，远比他想象的更近。</p>
+          <p>林深之处，一道身影撑着油纸伞静静等候。那是他从小一起长大的师兄，也是日后最危险的宿敌。</p>
+        </div>
+        <div class="footer">
+          <span class="muted">AI 写作台 · 已自动校验角色与伏笔一致性</span>
+          <button class="btn btn-ghost">打开阅读窗口</button>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

@@ -8,7 +8,52 @@
 
 > Keywords: AI novel writing, fiction author tool, chapter generator, story outline, writing desk, LLM, Electron desktop app, 小说写作, AI 写小说, 网文创作
 
-[English](#english) · [下载](#下载) · [快速开始](#快速开始) · [开发](#开发) · [发布](#发布)
+[English](#english) · [界面预览](#界面预览) · [下载](#下载) · [快速开始](#快速开始) · [开发](#开发) · [发布](#发布)
+
+---
+
+## 界面预览
+
+<p align="center">
+  <img src="docs/screenshots/home.png" alt="Manong Novel 首页" width="920" />
+</p>
+
+<p align="center"><em>首页 — 作品概览、继续写作入口与最近动态</em></p>
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/screenshots/bookshelf.png" alt="书架" width="440" /><br />
+      <sub><b>书架</b> — 项目管理与导入导出</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/screenshots/inspiration.png" alt="灵感模式" width="440" /><br />
+      <sub><b>灵感模式</b> — 对话式立项与概念清单</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/screenshots/writing-desk.png" alt="写作台" width="440" /><br />
+      <sub><b>写作台</b> — AI 章节生成、润色与版本管理</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/screenshots/blueprint.png" alt="项目蓝图" width="440" /><br />
+      <sub><b>项目蓝图</b> — 世界观、角色、关系与章节大纲</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/screenshots/material-library.png" alt="素材库" width="440" /><br />
+      <sub><b>素材库</b> — 角色库与文风库复用</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/screenshots/reading-window.png" alt="阅读窗口" width="440" /><br />
+      <sub><b>阅读窗口</b> — 沉浸式阅读与章节导航</sub>
+    </td>
+  </tr>
+</table>
+
+> 以上为示例界面图集，展示 Manong Novel 的主要功能页面。如需重新生成：`node scripts/capture-screenshots.mjs`
 
 ---
 

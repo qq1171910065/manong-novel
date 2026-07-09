@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', 'Microsoft YaHei', 'Noto Sans SC', system-ui, sans-serif;
+      background: #1a2420;
+      color: #e8efe9;
+    }
+    .window {
+      width: 1280px; height: 800px; border-radius: 12px; overflow: hidden;
+      background: linear-gradient(180deg, #24302b 0%, #1a2420 100%);
+      box-shadow: 0 24px 60px rgba(0,0,0,0.35);
+      display: grid; grid-template-rows: 56px 1fr 64px;
+    }
+    .top { display: flex; align-items: center; justify-content: space-between; padding: 0 24px; background: rgba(255,255,255,0.04); border-bottom: 1px solid rgba(255,255,255,0.06); }
+    .title { font-size: 15px; color: #d7e5de; }
+    .content { padding: 42px 120px; font-size: 18px; line-height: 2.1; color: #e8efe9; }
+    .content p { margin-bottom: 18px; text-indent: 2em; }
+    .bottom { display: flex; align-items: center; justify-content: space-between; padding: 0 24px; background: rgba(255,255,255,0.04); border-top: 1px solid rgba(255,255,255,0.06); font-size: 13px; color: #9eb5aa; }
+    .pill { padding: 6px 12px; border-radius: 999px; background: rgba(31,122,103,0.22); color: #9fd9c8; }
+    .btn { padding: 8px 14px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.06); color: #d7e5de; }
+  </style>
+</head>
+<body>
+  <div class="window">
+    <header class="top">
+      <div class="title">青玉长歌 · 第 14 章 雨夜</div>
+      <div class="pill">阅读模式</div>
+    </header>
+    <main class="content">
+      <p>雨从屋檐连成线，砸在青石板上，像无数细针扎向夜色。沈砚背着破布包袱，踩着泥泞往山外逃，身后庙宇的钟声已被雷声吞没。</p>
+      <p>他回头望了一眼，只见灵灯在风雨里忽明忽暗，像某种正在熄灭的誓言。怀里的玉佩发烫，仿佛在提醒他：灵脉枯竭的真相，远比他想象的更近。</p>
+      <p>林深之处，一道身影撑着油纸伞静静等候。那是他从小一起长大的师兄，也是日后最危险的宿敌。</p>
+    </main>
+    <footer class="bottom">
+      <span>第 14 / 28 章</span>
+      <div style="display:flex;gap:10px"><button class="btn">上一章</button><button class="btn">朗读</button><button class="btn">下一章</button></div>
+    </footer>
+  </div>
+</body>
+</html>

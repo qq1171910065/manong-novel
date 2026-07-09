@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <link rel="stylesheet" href="_shared.css" />
+  <style>
+    .page { padding: 22px 26px; display: flex; flex-direction: column; gap: 16px; height: 100%; }
+    .tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+    .tab { padding: 8px 14px; border-radius: 999px; font-size: 13px; color: #60766f; background: rgba(255,255,255,0.55); }
+    .tab.active { background: rgba(31,122,103,0.14); color: #0f4b44; font-weight: 600; }
+    .grid { display: grid; grid-template-columns: 1.1fr 1fr 1fr; gap: 16px; flex: 1; }
+    .block { padding: 18px; display: flex; flex-direction: column; gap: 12px; }
+    .block h3 { font-size: 15px; color: #0f4b44; }
+    .char { display: flex; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid rgba(31,122,103,0.08); font-size: 13px; }
+    .avatar { width: 40px; height: 40px; border-radius: 12px; background: linear-gradient(135deg,#1f7a67,#5aa08f); }
+    .outline { font-size: 13px; line-height: 1.8; color: #142f2f; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">MN</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>书架</div>
+      <div class="nav-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 2 7l10 5 10-5-10-5Z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>蓝图</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>角色</div>
+    </aside>
+    <main class="main page">
+      <div>
+        <div class="pill">PROJECT BLUEPRINT</div>
+        <h2 class="title" style="font-size:24px;margin-top:10px">青玉长歌 · 项目蓝图</h2>
+      </div>
+      <div class="tabs">
+        <div class="tab active">概览</div>
+        <div class="tab">世界观</div>
+        <div class="tab">角色</div>
+        <div class="tab">关系</div>
+        <div class="tab">章节大纲</div>
+        <div class="tab">伏笔追踪</div>
+      </div>
+      <div class="grid">
+        <div class="card block">
+          <h3>故事概览</h3>
+          <p class="outline">边陲少年沈砚在灵脉枯竭的乱世中崛起，踏上寻找灵息真相的旅程。核心主题：成长、背叛与重建秩序。</p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap"><span class="tag">东方玄幻</span><span class="tag">三幕结构</span><span class="tag">28 章规划</span></div>
+        </div>
+        <div class="card block">
+          <h3>主要角色</h3>
+          <div class="char"><div class="avatar"></div><div><strong>沈砚</strong><div class="muted">主角 · 灵息感知</div></div></div>
+          <div class="char"><div class="avatar" style="background:linear-gradient(135deg,#967e4b,#c5a059)"></div><div><strong>顾寒山</strong><div class="muted">引路人 · 前宗门长老</div></div></div>
+          <div class="char"><div class="avatar" style="background:linear-gradient(135deg,#4b6a96,#7ea0c8)"></div><div><strong>陆青崖</strong><div class="muted">宿敌 · 理念决裂</div></div></div>
+        </div>
+        <div class="card block">
+          <h3>章节大纲</h3>
+          <p class="outline"><strong>第一幕</strong>：边陲小镇 · 灵脉异变 · 雨夜逃亡<br><strong>第二幕</strong>：宗门试炼 · 灵息真相 · 师徒决裂<br><strong>第三幕</strong>：灵脉重启 · 最终对决 · 新秩序</p>
+        </div>
+      </div>
+    </main>
+  </div>
+</body>
+</html>
