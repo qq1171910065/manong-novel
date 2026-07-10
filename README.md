@@ -1,148 +1,82 @@
+<div align="center">
+
 # Manong Novel
+
+**面向小说作者的 AI 写作桌面客户端**
+
+从灵感立项、蓝图规划到章节生成与沉浸式阅读，覆盖完整创作链路。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/qq1171910065/manong-novel)](https://github.com/qq1171910065/manong-novel/releases/latest)
-[![CI](https://github.com/qq1171910065/manong-novel/actions/workflows/ci.yml/badge.svg)](https://github.com/qq1171910065/manong-novel/actions/workflows/ci.yml)
 
-**Manong Novel** 是一款面向小说作者的 AI 写作桌面客户端。基于 Electron + Vue 3 构建，支持从灵感构思、大纲蓝图到章节生成的完整创作流程，并可接入自有的 Platform 后端与 AI 网关。
+[English](#english) · [界面预览](docs/preview.md) · [下载](#下载) · [功能特性](#功能特性) · [快速开始](#快速开始) · [开发文档](docs/development.md)
 
-> Keywords: AI novel writing, fiction author tool, chapter generator, story outline, writing desk, LLM, Electron desktop app, 小说写作, AI 写小说, 网文创作
-
-[English](#english) · [界面预览](#界面预览) · [下载](#下载) · [快速开始](#快速开始) · [开发](#开发) · [发布](#发布)
+</div>
 
 ---
 
 ## 界面预览
 
 <p align="center">
-  <img src="docs/screenshots/home.png" alt="Manong Novel 首页" width="920" />
+  <a href="docs/preview.md">
+    <img src="docs/screenshots/home.png" alt="Manong Novel 首页" width="920" />
+  </a>
 </p>
-
-<p align="center"><em>首页 — 作品概览、继续写作入口与最近动态</em></p>
-
-<table>
-  <tr>
-    <td width="50%" align="center">
-      <img src="docs/screenshots/bookshelf.png" alt="书架" width="440" /><br />
-      <sub><b>书架</b> — 项目管理与导入导出</sub>
-    </td>
-    <td width="50%" align="center">
-      <img src="docs/screenshots/inspiration.png" alt="灵感模式" width="440" /><br />
-      <sub><b>灵感模式</b> — 对话式立项与概念清单</sub>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" align="center">
-      <img src="docs/screenshots/writing-desk.png" alt="写作台" width="440" /><br />
-      <sub><b>写作台</b> — AI 章节生成、润色与版本管理</sub>
-    </td>
-    <td width="50%" align="center">
-      <img src="docs/screenshots/blueprint.png" alt="项目蓝图" width="440" /><br />
-      <sub><b>项目蓝图</b> — 世界观、角色、关系与章节大纲</sub>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" align="center">
-      <img src="docs/screenshots/material-library.png" alt="素材库" width="440" /><br />
-      <sub><b>素材库</b> — 角色库与文风库复用</sub>
-    </td>
-    <td width="50%" align="center">
-      <img src="docs/screenshots/reading-window.png" alt="阅读窗口" width="440" /><br />
-      <sub><b>阅读窗口</b> — 沉浸式阅读与章节导航</sub>
-    </td>
-  </tr>
-</table>
-
-> 以上为应用真实界面截图，展示 Manong Novel 的主要功能页面。重新生成：`pnpm capture:screenshots`（通过 Electron `webContents.capturePage()` 截取）
+<p align="center"><sub>首页 — 作品概览、继续写作入口与最近动态 · <a href="docs/preview.md">查看全部界面预览 →</a></sub></p>
 
 ---
 
 ## 下载
 
-| 平台 | 链接 |
+前往 [GitHub Releases](https://github.com/qq1171910065/manong-novel/releases/latest) 下载对应平台的安装包：
+
+| 平台 | 文件 |
 |------|------|
-| **最新 Release** | https://github.com/qq1171910065/manong-novel/releases/latest |
-| **v0.1.3（Windows）** | [manong-novel-0.1.3-setup.exe](https://github.com/qq1171910065/manong-novel/releases/download/v0.1.3/manong-novel-0.1.3-setup.exe) |
-| **v0.1.3（macOS）** | [manong-novel-0.1.3.dmg](https://github.com/qq1171910065/manong-novel/releases/download/v0.1.3/manong-novel-0.1.3.dmg) |
-| **全部版本** | https://github.com/qq1171910065/manong-novel/releases |
-
-> Windows / macOS 安装包由 GitHub Actions 在推送 `v*` tag 时自动构建。
+| **Windows** | `manong-novel-*-setup.exe` |
+| **macOS** | `manong-novel-*.dmg` |
 
 ---
 
-## 功能
+## 功能特性
 
-- **书架与项目管理** — 创建、导入、导出小说项目
-- **灵感模式** — 对话式构思，生成概念与创作方向
-- **蓝图系统** — 世界观、角色、关系、章节大纲的结构化管理
-- **写作台** — AI 辅助章节生成、润色、版本切换
-- **素材库** — 角色库、文风库，可复用于多个项目
-- **阅读窗口** — 独立阅读模式，支持章节导航与 TTS
-- **AI 网关** — 通过 Platform 后端配置模型与 API 密钥
+| 模块 | 说明 |
+|------|------|
+| **书架** | 创建、导入、导出小说项目，统一管理创作资产 |
+| **灵感模式** | 对话式构思，生成概念清单与创作方向 |
+| **项目蓝图** | 结构化维护世界观、角色、关系网与章节大纲 |
+| **写作台** | AI 辅助章节生成、润色、多版本切换与流式输出 |
+| **素材库** | 角色库、文风库，可在多个项目间复用 |
+| **阅读窗口** | 独立阅读模式，支持章节导航与 TTS 朗读 |
+| **模型设置** | 在应用内选择 AI 模型并配置 API 密钥 |
+| **账户** | 登录后可查看用量与充值 |
 
----
+### 创作流程
 
-## 环境要求
-
-- **Node.js** 18+
-- **pnpm** 9+
-- **Platform 后端**（登录与 AI 网关，可在应用设置中配置 URL）
+```mermaid
+flowchart LR
+  A[灵感模式] --> B[项目蓝图]
+  B --> C[写作台]
+  C --> D[阅读窗口]
+  E[素材库] -.-> B
+  E -.-> C
+```
 
 ---
 
 ## 快速开始
 
-```bash
-git clone https://github.com/qq1171910065/manong-novel.git
-cd manong-novel
-pnpm install
-pnpm dev
-```
+### 安装
 
-首次启动：
+1. 从 [Releases](https://github.com/qq1171910065/manong-novel/releases/latest) 下载安装包
+2. **Windows**：运行 `.exe` 安装程序，按提示完成安装
+3. **macOS**：打开 `.dmg`，将应用拖入「应用程序」文件夹
 
-1. 在登录页完成 Platform 账户登录
-2. 进入「书架」创建或打开项目
-3. 在「设置 → 模型 / 密钥」中配置 AI 网关
+### 首次使用
 
-可选环境变量见 [`.env.example`](.env.example)。
-
----
-
-## 开发
-
-```bash
-pnpm dev          # 启动 Electron 开发模式
-pnpm typecheck    # TypeScript 类型检查
-pnpm test         # 运行单元测试
-pnpm build        # 构建渲染层与主进程
-pnpm build:win    # 打包 Windows 安装包（本地）
-```
-
-项目结构：
-
-```
-src/main/       主进程（窗口、IPC、托盘）
-src/preload/    预加载桥接
-src/renderer/   Vue 3 渲染层
-src/shared/     跨进程共享逻辑与 Prompt
-```
-
-更多约定见 [AGENTS.md](AGENTS.md)。
-
----
-
-## 发布
-
-GitHub Release 由 tag 推送自动触发：
-
-```bash
-# 更新 package.json 中的 version 后
-git tag v0.1.1
-pnpm publish:github
-```
-
-CI 会在 push 到 `master` 时运行 typecheck / test / build；推送 `v*` tag 时构建 Windows 安装包并发布到 [Releases](https://github.com/qq1171910065/manong-novel/releases)。
+1. 启动应用，在登录页完成账户登录
+2. 进入 **书架**，创建或打开一个项目
+3. 在 **设置 → 模型 / 密钥** 中选择 AI 模型并完成配置
+4. 从 **灵感模式** 或 **项目蓝图** 开始构思，再进入 **写作台** 生成章节
 
 ---
 
@@ -150,7 +84,7 @@ CI 会在 push 到 `master` 时运行 typecheck / test / build；推送 `v*` tag
 
 | 平台 | 地址 |
 |------|------|
-| GitHub（开源） | https://github.com/qq1171910065/manong-novel |
+| GitHub（主仓库） | https://github.com/qq1171910065/manong-novel |
 | Gitee（镜像） | https://gitee.com/czmanong/novel |
 
 ---
@@ -166,13 +100,39 @@ CI 会在 push 到 `master` 时运行 typecheck / test / build；推送 `v*` tag
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) © Manong Novel Contributors
 
 ---
 
 ## English
 
-**Manong Novel** is an AI-powered desktop writing client for novelists, built with Electron and Vue 3. It covers the full workflow from inspiration and blueprint planning to chapter generation, with optional integration to your own Platform backend and AI gateway.
+<details>
+<summary><b>Manong Novel — AI-powered desktop writing client for novelists</b></summary>
 
-- **Download:** [Latest Release](https://github.com/qq1171910065/manong-novel/releases/latest)
-- **Docs:** see sections above (Quick Start, Development, Releases)
+<br />
+
+**Manong Novel** is an open-source desktop app for fiction authors. It supports the full creative workflow — from inspiration and blueprint planning to AI-assisted chapter generation and immersive reading.
+
+### Highlights
+
+- **Bookshelf** — Create, import, and export novel projects
+- **Inspiration Mode** — Conversational ideation with concept lists
+- **Blueprint** — World-building, characters, relationships, and chapter outlines
+- **Writing Desk** — AI chapter generation, polishing, and version management
+- **Material Library** — Reusable character and style libraries across projects
+- **Reading Window** — Immersive reading with chapter navigation and TTS
+
+### Getting Started
+
+1. Download the installer from [Latest Release](https://github.com/qq1171910065/manong-novel/releases/latest)
+2. Install and launch the app, then sign in
+3. Open **Bookshelf** to create or open a project
+4. Configure your AI model under **Settings → Models / Keys**
+
+**Screenshots:** [Full UI preview](docs/preview.md)
+
+**Development:** [Developer docs](docs/development.md)
+
+**License:** [MIT](LICENSE)
+
+</details>

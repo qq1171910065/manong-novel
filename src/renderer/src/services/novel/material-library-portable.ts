@@ -1,4 +1,4 @@
-import {
+﻿import {
   parseJsonFile,
   saveJsonFile,
 } from '@renderer/utils/portable-file'
@@ -8,7 +8,7 @@ import {
   type MaterialLibraryType,
 } from './material-library-service'
 
-export const MATERIAL_PORTABLE_FORMAT = 'arena-material' as const
+export const MATERIAL_PORTABLE_FORMAT = 'novel-material' as const
 export const MATERIAL_PORTABLE_VERSION = 1
 
 export interface MaterialPortableFile {
@@ -29,7 +29,7 @@ function sanitizeFileName(name: string): string {
 }
 
 function extensionForType(type: MaterialLibraryType): string {
-  return type === 'characters' ? 'arena-character.json' : 'arena-style.json'
+  return type === 'characters' ? 'novel-character.json' : 'novel-style.json'
 }
 
 function filterNameForType(type: MaterialLibraryType): string {

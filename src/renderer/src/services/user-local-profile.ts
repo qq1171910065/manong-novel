@@ -1,7 +1,7 @@
-import { shallowRef } from 'vue'
+﻿import { shallowRef } from 'vue'
 import type { UserInfo } from './auth'
 
-const STORAGE_KEY = 'arena-user-local-profile-v1'
+const STORAGE_KEY = 'novel-user-local-profile-v1'
 
 export interface UserLocalProfile {
   displayName?: string

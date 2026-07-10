@@ -48,7 +48,7 @@ function confirm() {
 <template>
   <NovelModalShell
     :show="show"
-    size="sm"
+    size="md"
     panel-class="novel-modal__panel--model-picker"
     :title="title"
     :subtitle="note"
@@ -61,14 +61,12 @@ function confirm() {
       :loading="loading"
       :empty-hint="emptyHint"
       compact
+      fill
       @update:model-value="emit('update:modelValue', $event)"
     />
 
     <template #footer>
       <slot name="footer-extra" />
-      <button type="button" class="novel-btn novel-btn--ghost md-ripple" @click="close">
-        取消
-      </button>
       <button
         type="button"
         class="novel-btn novel-btn--primary md-ripple"

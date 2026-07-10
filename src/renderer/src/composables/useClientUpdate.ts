@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+﻿import { ref } from 'vue'
 import { useMessage } from '../ui'
 import { isPortalLoggedIn, clientReleaseApi, type ClientReleaseLatest } from '@renderer/services'
 
@@ -11,7 +11,7 @@ function suggestedInstallerName(version: string, downloadUrl: string): string {
   } catch {
     /* ignore */
   }
-  return `arena-${version}-setup.exe`
+  return `novel-${version}-setup.exe`
 }
 
 export function useClientUpdate() {

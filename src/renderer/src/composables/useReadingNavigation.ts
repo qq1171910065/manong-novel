@@ -61,6 +61,8 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
   let chapterChangeFromScroll = false
   let chapterChangeFromNav = false
   let chapterChangeFromRestore = false
+  let suppressScrollSync = false
+  let scrollBlocksRevision = 0
 
   const project = computed(() => options.novelStore.currentProject)
 
@@ -463,8 +465,27 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
     void scrollToChapter(target, behavior)
   }
 
+  async function preserveScrollPosition(task: () => void | Promise<void>) {
+    if (isPageMode.value) {
+      await task()
+      return
+    }
+
+    const el = options.pageViewportRef.value
+    const savedScrollTop = el?.scrollTop ?? 0
+    suppressScrollSync = true
+    try {
+      await task()
+      await nextTick()
+      if (el) el.scrollTop = savedScrollTop
+      await nextTick()
+    } finally {
+      suppressScrollSync = false
+    }
+  }
+
   function syncChapterFromScroll() {
-    if (isPageMode.value || chapterChangeFromNav) return
+    if (isPageMode.value || chapterChangeFromNav || suppressScrollSync) return
 
     const el = options.pageViewportRef.value
     if (!el) return
@@ -525,9 +546,11 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
   watch(chapterIndex, async () => {
     const skipScrollReset = shouldSkipScrollReset()
 
-    const chapter = readableChapters.value[chapterIndex.value]
-    if (chapter) await ensureChapterLoaded(chapter)
-    await prefetchAdjacentChapters()
+    await preserveScrollPosition(async () => {
+      const chapter = readableChapters.value[chapterIndex.value]
+      if (chapter) await ensureChapterLoaded(chapter)
+      await prefetchAdjacentChapters()
+    })
 
     if (skipScrollReset) {
       if (options.ttsActive.value && !options.isTtsAdvancingChapter()) {
@@ -546,6 +569,29 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
       options.stopTts()
     }
   })
+
+  watch(
+    scrollBlocks,
+    async () => {
+      scrollBlocksRevision += 1
+      const revision = scrollBlocksRevision
+      if (isPageMode.value || suppressScrollSync || chapterChangeFromNav) return
+
+      const el = options.pageViewportRef.value
+      if (!el) return
+
+      const savedScrollTop = el.scrollTop
+      await nextTick()
+      if (revision !== scrollBlocksRevision) return
+      if (Math.abs(el.scrollTop - savedScrollTop) <= 2) return
+
+      suppressScrollSync = true
+      el.scrollTop = savedScrollTop
+      await nextTick()
+      suppressScrollSync = false
+    },
+    { flush: 'post' }
+  )
 
   watch(
     () => [

@@ -64,13 +64,38 @@ const focusHint = computed(() =>
 )
 
 const chatSubtitle = computed(() =>
-  props.type === 'styles' ? '与文思一起打磨文风预设' : '与文思一起完善物料设定'
+  props.type === 'styles'
+    ? '与文思一起打磨文风预设'
+    : props.type === 'characters'
+      ? '与文思一起完善角色设定'
+      : '与文思一起完善物料设定'
+)
+
+const chatPanelTitle = computed(() =>
+  props.type === 'styles' ? '文风对话' : props.type === 'characters' ? '角色对话' : '物料对话'
+)
+
+const chatInputPlaceholder = computed(() =>
+  props.type === 'styles'
+    ? '说说你的文风灵感…'
+    : props.type === 'characters'
+      ? '说说你想创建的角色…'
+      : '说说你想怎么改…'
 )
 
 const bubbleVariant = computed(() => (isChatVariant.value ? 'chat' : 'polish'))
 
 const STYLE_WELCOME =
   '你好！告诉我你想要的文风、题材或叙述口吻，我会帮你整理到左侧设定面板。'
+
+const CHARACTER_WELCOME =
+  '你好！告诉我你想创建什么样的角色，比如身份、性格或背景，我会帮你整理到左侧设定面板。'
+
+const welcomeMessage = computed(() => {
+  if (props.type === 'styles') return STYLE_WELCOME
+  if (props.type === 'characters') return CHARACTER_WELCOME
+  return ''
+})
 
 watch(
   () => props.show,
@@ -85,9 +110,10 @@ watch(
       isChatVariant.value &&
       props.embeddedModal &&
       !props.readonly &&
-      chatHistory.value.length === 0
+      chatHistory.value.length === 0 &&
+      welcomeMessage.value
     ) {
-      chatHistory.value.push({ role: 'ai', content: STYLE_WELCOME })
+      chatHistory.value.push({ role: 'ai', content: welcomeMessage.value })
     }
   },
   { immediate: true }
@@ -219,7 +245,7 @@ async function askFieldSuggestion() {
     class="novel-chat-panel material-ai-chat-panel"
     :class="{ 'novel-chat-panel--embedded': embeddedModal }"
     :style="{ '--accent': accent }"
-    aria-label="文风对话"
+    :aria-label="chatPanelTitle"
   >
     <div
       v-if="!embeddedModal"
@@ -230,7 +256,7 @@ async function askFieldSuggestion() {
           <MessageCircle :size="16" />
         </div>
         <div class="novel-chat-panel__title-text">
-          <h2 class="novel-chat-panel__title">文风对话</h2>
+          <h2 class="novel-chat-panel__title">{{ chatPanelTitle }}</h2>
           <p class="novel-chat-panel__subtitle">{{ chatSubtitle }}</p>
         </div>
       </div>
@@ -260,7 +286,7 @@ async function askFieldSuggestion() {
       <slot name="pre-input" />
       <ConversationInput
         v-if="!readonly"
-        :ui-control="{ type: 'text_input', placeholder: '说说你的文风灵感…' }"
+        :ui-control="{ type: 'text_input', placeholder: chatInputPlaceholder }"
         :loading="loading"
         variant="chat"
         @submit="onSubmit"

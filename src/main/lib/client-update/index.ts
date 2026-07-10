@@ -1,4 +1,4 @@
-import { app, ipcMain, net, shell } from 'electron'
+﻿import { app, ipcMain, net, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { appendFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { closeSync, createWriteStream, mkdirSync, openSync, readSync, statSync } from 'node:fs'
@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
-const CLIENT_UPDATE_TEMP_PREFIX = 'arena-client-update'
+const CLIENT_UPDATE_TEMP_PREFIX = 'novel-client-update'
 const DOWNLOAD_TIMEOUT_MS = 30 * 60 * 1000
 const MAX_INSTALLER_BYTES = 1024 * 1024 * 1024
 const MIN_INSTALLER_BYTES = 64 * 1024

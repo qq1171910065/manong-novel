@@ -1,7 +1,7 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { AlertTriangle } from 'lucide-vue-next'
-import ArenaDialogShell from '@renderer/components/common/ArenaDialogShell.vue'
+import NovelDialogShell from '@renderer/components/common/NovelDialogShell.vue'
 import { FACTORY_RESET_PHRASE } from '@renderer/services/data-management-service'
 
 const props = defineProps<{
@@ -32,7 +32,7 @@ function submit() {
 </script>
 
 <template>
-  <ArenaDialogShell
+  <NovelDialogShell
     :model-value="open"
     title="删除数据"
     variant="form"
@@ -73,17 +73,17 @@ function submit() {
     </label>
 
     <template #footer-actions>
-      <button type="button" class="arena-dialog__btn" :disabled="busy" @click="emit('close')">取消</button>
+      <button type="button" class="novel-dialog__btn" :disabled="busy" @click="emit('close')">取消</button>
       <button
         type="button"
-        class="arena-dialog__btn arena-dialog__btn--danger"
+        class="novel-dialog__btn novel-dialog__btn--danger"
         :disabled="!canConfirm || busy"
         @click="submit"
       >
         {{ busy ? '正在删除...' : '确认删除并退出登录' }}
       </button>
     </template>
-  </ArenaDialogShell>
+  </NovelDialogShell>
 </template>
 
 <style scoped>

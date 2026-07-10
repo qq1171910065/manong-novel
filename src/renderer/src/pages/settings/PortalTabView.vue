@@ -1,7 +1,7 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { inject } from 'vue'
 import AppKeyPanel from '@renderer/components/settings/AppKeyPanel.vue'
-import ArenaSettingsShell from '@renderer/components/settings/ArenaSettingsShell.vue'
+import NovelSettingsShell from '@renderer/components/settings/NovelSettingsShell.vue'
 import AudioSettingsPanel from '@renderer/components/settings/AudioSettingsPanel.vue'
 import BugReportPanel from '@renderer/components/settings/BugReportPanel.vue'
 import DataSettingsPanel from '@renderer/components/settings/DataSettingsPanel.vue'
@@ -151,7 +151,7 @@ const {
       <ModelStreamPanel v-else-if="tab === 'model-stream'" />
     </ModelServiceShell>
 
-    <ArenaSettingsShell
+    <NovelSettingsShell
       v-else-if="isSettingsTab(tab)"
       :title="settingsTabMeta[tab].title"
       :desc="settingsTabMeta[tab].desc"
@@ -176,7 +176,7 @@ const {
         v-else-if="tab === 'settings-data'"
         @error="(msg) => msg && shell.message.error(msg)"
       />
-    </ArenaSettingsShell>
+    </NovelSettingsShell>
 
     <UsagePanel
       v-else-if="tab === 'usage'"

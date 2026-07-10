@@ -1,4 +1,4 @@
-<!-- AIMETA P=物料库_创作物料管理|R=筛选侧栏_卡片列表|NR=不含项目内蓝图|E=route:/library/*|X=ui|A=物料库|D=vue|S=dom|RD=./README.ai -->
+﻿<!-- AIMETA P=物料库_创作物料管理|R=筛选侧栏_卡片列表|NR=不含项目内蓝图|E=route:/library/*|X=ui|A=物料库|D=vue|S=dom|RD=./README.ai -->
 <template>
   <NovelPageShell class="material-library-page" flow-scroll>
     <div class="material-library-layout list-flow-layout">
@@ -28,7 +28,7 @@
         <header class="material-library-toolbar list-flow-layout__toolbar">
           <div class="toolbar-filters">
             <SlidersHorizontal :size="16" />
-            <ArenaSelect v-model="sortBy" :options="sortOptions" aria-label="排序方式" />
+            <NovelSelect v-model="sortBy" :options="sortOptions" aria-label="排序方式" />
           </div>
           <div class="toolbar-actions">
             <button
@@ -108,7 +108,7 @@
 import { computed, ref, watch } from 'vue'
 import { PenLine, Plus, Search, SlidersHorizontal, Upload, Users } from 'lucide-vue-next'
 import NovelPageShell from '@renderer/components/novel/NovelPageShell.vue'
-import ArenaSelect from '@renderer/components/common/ArenaSelect.vue'
+import NovelSelect from '@renderer/components/common/NovelSelect.vue'
 import MaterialLibraryCard from '@renderer/novel/components/shared/MaterialLibraryCard.vue'
 import MaterialPreviewDialog from '@renderer/novel/components/shared/MaterialPreviewDialog.vue'
 import MaterialLibraryEditModal from '@renderer/novel/components/shared/MaterialLibraryEditModal.vue'

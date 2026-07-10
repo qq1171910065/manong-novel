@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { useDeveloperWechatModal } from '../../composables/useDeveloperWechatModal'
 import { appSupportAssets } from '../../data/app-support-assets'
@@ -128,7 +128,7 @@ onUnmounted(() => {
 
 <template>
   <div
-    class="arena-sleepy-cat-wrap"
+    class="novel-sleepy-cat-wrap"
     :class="{
       'is-stage': placement === 'stage',
       'is-nudge': catNudge,
@@ -138,7 +138,7 @@ onUnmounted(() => {
   >
     <p
       v-show="catBubbleShown"
-      class="speech arena-cat-speech"
+      class="speech novel-cat-speech"
       :class="{ 'is-typing': catBubbleTyping }"
       aria-live="polite"
       role="button"
@@ -151,18 +151,18 @@ onUnmounted(() => {
     </p>
     <button
       type="button"
-      class="arena-sleepy-cat-btn"
+      class="novel-sleepy-cat-btn"
       aria-label="添加开发者微信"
       @click="openWechat"
     >
-      <span class="arena-sleepy-cat-glow" aria-hidden="true" />
-      <img v-if="appSupportAssets.sleepyCat" class="arena-sleepy-cat" :src="appSupportAssets.sleepyCat" alt="" />
+      <span class="novel-sleepy-cat-glow" aria-hidden="true" />
+      <img v-if="appSupportAssets.sleepyCat" class="novel-sleepy-cat" :src="appSupportAssets.sleepyCat" alt="" />
     </button>
   </div>
 </template>
 
 <style scoped>
-.arena-sleepy-cat-wrap {
+.novel-sleepy-cat-wrap {
   position: absolute;
   right: 22px;
   bottom: 0;
@@ -171,7 +171,7 @@ onUnmounted(() => {
   z-index: 12;
 }
 
-.arena-sleepy-cat-wrap.is-stage {
+.novel-sleepy-cat-wrap.is-stage {
   right: 14px;
   bottom: 38px;
   width: 178px;
@@ -179,7 +179,7 @@ onUnmounted(() => {
   z-index: 5;
 }
 
-.arena-cat-speech {
+.novel-cat-speech {
   top: -18px;
   right: 52px;
   left: auto;
@@ -217,7 +217,7 @@ onUnmounted(() => {
   animation: bubble-stack-attention 1.8s ease-in-out infinite;
 }
 
-.speech.arena-cat-speech {
+.speech.novel-cat-speech {
   width: max-content;
   min-width: 72px;
   max-width: 228px;
@@ -226,7 +226,7 @@ onUnmounted(() => {
   word-break: break-word;
 }
 
-.speech.arena-cat-speech::after {
+.speech.novel-cat-speech::after {
   content: '';
   position: absolute;
   top: auto;
@@ -243,7 +243,7 @@ onUnmounted(() => {
   border-top: none;
 }
 
-.speech.arena-cat-speech:hover {
+.speech.novel-cat-speech:hover {
   color: #5a6298;
   background: rgba(255, 255, 255, 0.94);
 }
@@ -259,7 +259,7 @@ onUnmounted(() => {
   animation: caretBlink 0.9s steps(2, end) infinite;
 }
 
-.arena-sleepy-cat-btn {
+.novel-sleepy-cat-btn {
   position: relative;
   width: 100%;
   height: 100%;
@@ -267,18 +267,18 @@ onUnmounted(() => {
   border: 0;
   background: transparent;
   cursor: pointer;
-  animation: arena-sleepy-cat-idle 2.6s ease-in-out infinite;
+  animation: novel-sleepy-cat-idle 2.6s ease-in-out infinite;
   transform-origin: center bottom;
   transition:
     filter 0.18s ease,
     transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.arena-sleepy-cat-wrap.is-nudge .arena-sleepy-cat-btn {
-  animation: arena-sleepy-cat-nudge 0.52s cubic-bezier(0.34, 1.45, 0.64, 1);
+.novel-sleepy-cat-wrap.is-nudge .novel-sleepy-cat-btn {
+  animation: novel-sleepy-cat-nudge 0.52s cubic-bezier(0.34, 1.45, 0.64, 1);
 }
 
-.arena-sleepy-cat-glow {
+.novel-sleepy-cat-glow {
   position: absolute;
   inset: 8% 10% 0;
   border-radius: 999px;
@@ -292,28 +292,28 @@ onUnmounted(() => {
   pointer-events: none;
 }
 
-.arena-sleepy-cat-btn:hover {
-  animation: arena-sleepy-cat-wiggle 0.42s ease-in-out infinite;
+.novel-sleepy-cat-btn:hover {
+  animation: novel-sleepy-cat-wiggle 0.42s ease-in-out infinite;
   filter: drop-shadow(0 18px 24px color-mix(in srgb, var(--brand) 28%, transparent));
 }
 
-.arena-sleepy-cat-btn:hover .arena-sleepy-cat-glow {
+.novel-sleepy-cat-btn:hover .novel-sleepy-cat-glow {
   opacity: 0.95;
   animation: cat-glow-pulse 0.9s ease-in-out infinite;
 }
 
-.arena-sleepy-cat-btn:active {
+.novel-sleepy-cat-btn:active {
   animation: none;
   transform: translateY(2px) scale(0.96);
 }
 
-.arena-sleepy-cat-btn:focus-visible {
+.novel-sleepy-cat-btn:focus-visible {
   outline: 3px solid rgba(99, 91, 255, 0.34);
   outline-offset: 4px;
   border-radius: 18px;
 }
 
-.arena-sleepy-cat {
+.novel-sleepy-cat {
   position: relative;
   z-index: 1;
   display: block;
@@ -326,7 +326,7 @@ onUnmounted(() => {
   transition: filter 0.18s ease;
 }
 
-.arena-sleepy-cat-btn:hover .arena-sleepy-cat {
+.novel-sleepy-cat-btn:hover .novel-sleepy-cat {
   filter: drop-shadow(0 16px 22px color-mix(in srgb, var(--brand) 24%, transparent));
 }
 
@@ -342,7 +342,7 @@ onUnmounted(() => {
   }
 }
 
-@keyframes arena-sleepy-cat-idle {
+@keyframes novel-sleepy-cat-idle {
   0%,
   100% {
     transform: translateY(0) rotate(0deg) scale(1);
@@ -355,7 +355,7 @@ onUnmounted(() => {
   }
 }
 
-@keyframes arena-sleepy-cat-nudge {
+@keyframes novel-sleepy-cat-nudge {
   0% {
     transform: translateY(0) rotate(0deg) scale(1);
   }
@@ -370,7 +370,7 @@ onUnmounted(() => {
   }
 }
 
-@keyframes arena-sleepy-cat-wiggle {
+@keyframes novel-sleepy-cat-wiggle {
   0%,
   100% {
     transform: translateY(-3px) rotate(-1.6deg) scale(1.03);

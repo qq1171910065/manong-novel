@@ -177,6 +177,7 @@ import { useNovelStore } from '@renderer/stores/novel'
 import type { ChapterGenerationResponse } from '@renderer/services/novel/api'
 import { NovelAPI } from '@renderer/services/novel/api'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
+import { confirm } from '@renderer/composables/useAppDialog'
 import * as writing from '@renderer/services/novel/writing-service'
 import { novelClient } from '@renderer/services/novel/client'
 import {
@@ -676,8 +677,15 @@ const deleteChapter = async (chapterNumbers: number | number[]) => {
     ? `您确定要删除选中的 ${numbersToDelete.length} 个章节吗？这个操作无法撤销。`
     : `您确定要删除第 ${numbersToDelete[0]} 章吗？这个操作无法撤销。`
 
-  if (window.confirm(confirmationMessage)) {
-    try {
+  const accepted = await confirm({
+    title: '确认删除章节',
+    message: confirmationMessage,
+    confirmText: '确认删除',
+    tone: 'danger',
+  })
+  if (!accepted) return
+
+  try {
       await novelStore.deleteChapter(numbersToDelete)
       globalAlert.showSuccess('章节已删除', '操作成功')
       // If the currently selected chapter was deleted, unselect it
@@ -688,7 +696,6 @@ const deleteChapter = async (chapterNumbers: number | number[]) => {
       console.error('删除章节失败:', error)
       globalAlert.showError(`删除章节失败: ${error instanceof Error ? error.message : '未知错误'}`, '删除失败')
     }
-  }
 }
 
 function listSubsequentWrittenChapters(chapterNumber: number): number[] {

@@ -28,7 +28,7 @@
         <header class="material-library-toolbar list-flow-layout__toolbar">
           <div class="toolbar-filters">
             <SlidersHorizontal :size="16" />
-            <ArenaSelect v-model="sortBy" :options="sortOptions" aria-label="排序方式" />
+            <NovelSelect v-model="sortBy" :options="sortOptions" aria-label="排序方式" />
           </div>
           <div class="toolbar-actions">
             <button type="button" class="novel-btn novel-btn--ghost" :disabled="isImporting" @click="showImportModal = true">
@@ -93,31 +93,6 @@
       @close="showImportModal = false"
       @import="handleImport"
     />
-
-    <div v-if="showDeleteDialog" class="novel-dialog-overlay" @click.self="cancelDelete">
-      <div class="novel-dialog" role="dialog">
-        <div class="novel-dialog__head">
-          <div class="novel-dialog__icon is-error">
-            <Trash2 :size="20" />
-          </div>
-          <div>
-            <h3 class="novel-dialog__title">确认删除</h3>
-            <p class="text-muted" style="margin: 4px 0 0">此操作无法撤销</p>
-          </div>
-        </div>
-        <div class="novel-dialog__body">
-          <p style="margin: 0">
-            确定要删除「<strong>{{ projectToDelete?.title }}</strong>」吗？所有相关数据将被永久删除。
-          </p>
-        </div>
-        <div class="novel-dialog__actions">
-          <button type="button" class="novel-btn novel-btn--text" @click="cancelDelete">取消</button>
-          <button type="button" class="novel-btn novel-btn--danger" :disabled="isDeleting" @click="confirmDelete">
-            {{ isDeleting ? '删除中...' : '确认删除' }}
-          </button>
-        </div>
-      </div>
-    </div>
   </NovelPageShell>
 
   <WritingModeSelectModal
@@ -138,11 +113,11 @@ import {
   Plus,
   Search,
   SlidersHorizontal,
-  Trash2,
   Upload,
 } from 'lucide-vue-next'
+import { confirm } from '@renderer/composables/useAppDialog'
 import NovelPageShell from '@renderer/components/novel/NovelPageShell.vue'
-import ArenaSelect from '@renderer/components/common/ArenaSelect.vue'
+import NovelSelect from '@renderer/components/common/NovelSelect.vue'
 import MaterialLibraryCard from '@renderer/novel/components/shared/MaterialLibraryCard.vue'
 import MaterialLibraryCardMenu from '@renderer/novel/components/shared/MaterialLibraryCardMenu.vue'
 import WritingModeSelectModal from '@renderer/novel/components/shared/WritingModeSelectModal.vue'
@@ -167,8 +142,6 @@ const sortBy = ref<'updated' | 'name' | 'progress'>('updated')
 const activeFilter = ref('all')
 const isImporting = ref(false)
 const showImportModal = ref(false)
-const showDeleteDialog = ref(false)
-const projectToDelete = ref<NovelProjectSummary | null>(null)
 const isDeleting = ref(false)
 
 const filters = [
@@ -287,26 +260,22 @@ async function handleImport(kind: 'txt' | 'project', file: File) {
   }
 }
 
-function handleDeleteProject(projectId: string) {
+async function handleDeleteProject(projectId: string) {
   const project = novelStore.projects.find((p) => p.id === projectId)
-  if (project) {
-    projectToDelete.value = project
-    showDeleteDialog.value = true
-  }
-}
+  if (!project || isDeleting.value) return
 
-function cancelDelete() {
-  showDeleteDialog.value = false
-  projectToDelete.value = null
-}
+  const accepted = await confirm({
+    title: '确认删除',
+    message: `确定要删除「${project.title}」吗？所有相关数据将被永久删除。`,
+    detail: '此操作无法撤销',
+    confirmText: '确认删除',
+    tone: 'danger',
+  })
+  if (!accepted) return
 
-async function confirmDelete() {
-  if (!projectToDelete.value) return
   isDeleting.value = true
   try {
-    await novelStore.deleteProjects([projectToDelete.value.id])
-    showDeleteDialog.value = false
-    projectToDelete.value = null
+    await novelStore.deleteProjects([project.id])
   } catch (error) {
     alert(error instanceof Error ? error.message : '删除失败，请重试')
   } finally {

@@ -19,6 +19,7 @@ import {
 } from '../services/user-local-profile'
 import MarkdownContent from '../components/common/MarkdownContent.vue'
 import BackgroundTaskPanel from '../components/shell/BackgroundTaskPanel.vue'
+import { useAnchoredPopover } from '../composables/useAnchoredPopover'
 
 const DEFAULT_AVATAR = loginBundledAssets.defaultUserAvatar
 
@@ -39,7 +40,14 @@ const {
 
 const showRecharge = ref(false)
 const showProfilePopover = ref(false)
+const taskPanelOpen = ref(false)
 const profileWrapRef = ref<HTMLElement | null>(null)
+const profileTriggerRef = ref<HTMLElement | null>(null)
+const profilePopoverRef = ref<HTMLElement | null>(null)
+const taskPanelRef = ref<InstanceType<typeof BackgroundTaskPanel> | null>(null)
+const { style: profilePopoverStyle } = useAnchoredPopover(showProfilePopover, profileTriggerRef, {
+  offsetRight: -24,
+})
 const signingOut = ref(false)
 const balanceYuan = ref(0)
 const appVersion = ref('0.1.0')
@@ -138,6 +146,27 @@ function closeProfilePopover() {
   showProfilePopover.value = false
 }
 
+function closeShellPopovers() {
+  closeProfilePopover()
+  taskPanelRef.value?.close?.()
+  taskPanelOpen.value = false
+}
+
+function isTaskPanelOpen(): boolean {
+  return taskPanelOpen.value || (taskPanelRef.value?.isOpen?.() ?? false)
+}
+
+const shellPopoverOpen = computed(() => showProfilePopover.value || taskPanelOpen.value)
+
+function shouldCloseShellPopovers(): boolean {
+  return showProfilePopover.value || isTaskPanelOpen()
+}
+
+function onShellSurfaceDismiss() {
+  if (!shouldCloseShellPopovers()) return
+  closeShellPopovers()
+}
+
 function openProfile() {
   closeProfilePopover()
   navigate('/profile')
@@ -148,12 +177,20 @@ function onProfileNavigate(path: string) {
   navigate(path)
 }
 
-function onDocumentClick(event: MouseEvent) {
-  if (!showProfilePopover.value) return
-  const root = profileWrapRef.value
-  if (root && !root.contains(event.target as Node)) {
-    closeProfilePopover()
+function onShellOutsidePointerDown(event: MouseEvent) {
+  if (!shouldCloseShellPopovers()) return
+  const target = event.target
+  if (!(target instanceof Node)) return
+
+  if (showProfilePopover.value) {
+    const profileRoot = profileWrapRef.value
+    const profilePopover = profilePopoverRef.value
+    if (profileRoot?.contains(target) || profilePopover?.contains(target)) return
   }
+
+  if (isTaskPanelOpen() && taskPanelRef.value?.containsTarget(target)) return
+
+  closeShellPopovers()
 }
 
 async function onLogoutClick() {
@@ -205,7 +242,7 @@ async function onTitlebarUpdateClick() {
     message: '是否下载并安装？',
     detail: `当前版本：${result.res.currentVersion}`,
     content: () =>
-      h('div', { class: 'arena-update-dialog' }, [h(MarkdownContent, { source: notes })]),
+      h('div', { class: 'novel-update-dialog' }, [h(MarkdownContent, { source: notes })]),
     confirmText: '下载并安装',
   })
   if (confirmed) {
@@ -220,41 +257,45 @@ watch(
 
 onMounted(async () => {
   startPolling()
-  document.addEventListener('click', onDocumentClick)
+  document.addEventListener('mousedown', onShellOutsidePointerDown, true)
   void refreshWallet(true)
   void loadAppVersion()
 })
 
 onUnmounted(() => {
   stopPolling()
-  document.removeEventListener('click', onDocumentClick)
+  document.removeEventListener('mousedown', onShellOutsidePointerDown, true)
 })
 
 const shellBgStyle = {
-  '--arena-shell-bg': `url(${loginBundledAssets.bgClean})`,
+  '--novel-shell-bg': `url(${loginBundledAssets.bgClean})`,
 }
 
 </script>
 
 <template>
-  <div class="arena-shell" :style="shellBgStyle">
-    <nav class="arena-nav">
-      <button v-if="backEntry" type="button" class="arena-brand arena-back" @click="goBack(backEntry.path)">
-        <span class="arena-back__icon"><ArrowLeft :size="22" /></span>
+  <div
+    class="novel-shell"
+    :class="{ 'novel-shell--popover-open': shellPopoverOpen }"
+    :style="shellBgStyle"
+  >
+    <nav class="novel-nav" @pointerdown.self="onShellSurfaceDismiss">
+      <button v-if="backEntry" type="button" class="novel-brand novel-back" @click="goBack(backEntry.path)">
+        <span class="novel-back__icon"><ArrowLeft :size="22" /></span>
         <span>返回</span>
       </button>
-      <button v-else type="button" class="arena-brand" @click="navigate('/home')">
-        <img class="arena-brand__logo" :src="loginBundledAssets.statusLogo" alt="" />
-        <span class="arena-brand__title">{{ appName }}</span>
+      <button v-else type="button" class="novel-brand" @click="navigate('/home')">
+        <img class="novel-brand__logo" :src="loginBundledAssets.statusLogo" alt="" />
+        <span class="novel-brand__title">{{ appName }}</span>
       </button>
 
-      <div class="arena-tabs" aria-label="主导航">
+      <div class="novel-tabs" aria-label="主导航">
         <button
           v-for="item in navItems"
           :key="item.key"
           type="button"
-          class="arena-tab"
-          :class="{ 'arena-tab--active': isActive(item.path) }"
+          class="novel-tab"
+          :class="{ 'novel-tab--active': isActive(item.path) }"
           @click="onProfileNavigate(item.path)"
         >
           <component v-if="item.icon" :is="item.icon" :size="19" :stroke-width="2.35" />
@@ -262,11 +303,11 @@ const shellBgStyle = {
         </button>
       </div>
 
-      <div class="arena-actions">
+      <div class="novel-actions">
         <button
           v-if="updateAvailable"
           type="button"
-          class="arena-update-btn"
+          class="novel-update-btn"
           aria-label="下载更新"
           title="下载更新"
           :disabled="checkingUpdate"
@@ -274,11 +315,12 @@ const shellBgStyle = {
         >
           <Download :size="18" />
         </button>
-        <BackgroundTaskPanel />
-        <div ref="profileWrapRef" class="arena-profile-wrap" :class="{ 'is-open': showProfilePopover }">
+        <BackgroundTaskPanel ref="taskPanelRef" v-model:open="taskPanelOpen" />
+        <div ref="profileWrapRef" class="novel-profile-wrap" :class="{ 'is-open': showProfilePopover }">
           <button
+            ref="profileTriggerRef"
             type="button"
-            class="arena-profile"
+            class="novel-profile"
             aria-label="用户菜单"
             :aria-expanded="showProfilePopover"
             @click.stop="toggleProfilePopover"
@@ -286,15 +328,19 @@ const shellBgStyle = {
             <img :src="userAvatarUrl" alt="" />
             <span></span>
           </button>
-          <div
-            v-show="showProfilePopover"
-            class="arena-profile-popover"
-            role="dialog"
-            aria-label="用户菜单"
-            @click.stop
-          >
-            <div class="arena-profile-popover__head">
-              <button type="button" class="arena-profile-popover__identity" @click="openProfile">
+          <Teleport to="body">
+            <div
+              v-show="showProfilePopover"
+              ref="profilePopoverRef"
+              class="novel-profile-popover"
+              :style="profilePopoverStyle"
+              role="dialog"
+              aria-label="用户菜单"
+              @click.stop
+              @mousedown.stop
+            >
+            <div class="novel-profile-popover__head">
+              <button type="button" class="novel-profile-popover__identity" @click="openProfile">
                 <img :src="userAvatarUrl" alt="" />
                 <div>
                   <strong>{{ userName }}</strong>
@@ -303,7 +349,7 @@ const shellBgStyle = {
               </button>
               <button
                 type="button"
-                class="arena-profile-popover__logout"
+                class="novel-profile-popover__logout"
                 aria-label="退出登录"
                 title="退出登录"
                 :disabled="signingOut"
@@ -312,25 +358,25 @@ const shellBgStyle = {
                 <LogOut :size="16" />
               </button>
             </div>
-            <button type="button" class="arena-profile-popover__balance" @click="showRecharge = true">
+            <button type="button" class="novel-profile-popover__balance" @click="showRecharge = true">
               <span>账户余额</span>
               <strong>{{ formatBalance(balanceYuan) }}</strong>
             </button>
-            <div class="arena-profile-popover__section">
-              <p class="arena-profile-popover__section-title">常用入口</p>
+            <div class="novel-profile-popover__section">
+              <p class="novel-profile-popover__section-title">常用入口</p>
               <button
                 v-for="item in profileQuickLinks"
                 :key="item.id"
                 type="button"
-                class="arena-profile-popover__link"
+                class="novel-profile-popover__link"
                 @click="onProfileNavigate(item.path)"
               >
                 <component :is="item.icon" :size="16" />
                 <span>{{ item.label }}</span>
               </button>
             </div>
-            <div class="arena-profile-popover__section">
-              <p class="arena-profile-popover__section-title">
+            <div class="novel-profile-popover__section">
+              <p class="novel-profile-popover__section-title">
                 <Settings :size="14" />
                 应用设置
               </p>
@@ -338,46 +384,53 @@ const shellBgStyle = {
                 v-for="item in profileSettingLinks"
                 :key="item.id"
                 type="button"
-                class="arena-profile-popover__link"
+                class="novel-profile-popover__link"
                 @click="onProfileNavigate(item.path)"
               >
                 <component :is="item.icon" :size="16" />
                 <span>{{ item.label }}</span>
               </button>
             </div>
-          </div>
+            </div>
+          </Teleport>
         </div>
-        <div class="arena-window-controls" aria-label="窗口控制">
-          <button type="button" class="arena-window-btn" aria-label="最小化" @click="minimizeWindow">
+        <div class="novel-window-controls" aria-label="窗口控制">
+          <button type="button" class="novel-window-btn" aria-label="最小化" @click="minimizeWindow">
             <Minus :size="20" />
           </button>
-          <button type="button" class="arena-window-btn arena-window-btn--close" aria-label="关闭" @click="closeWindow">
+          <button type="button" class="novel-window-btn novel-window-btn--close" aria-label="关闭" @click="closeWindow">
             <X :size="20" />
           </button>
         </div>
       </div>
     </nav>
 
-    <main class="arena-content">
+    <main class="novel-content" @pointerdown.capture="onShellSurfaceDismiss">
       <slot />
     </main>
 
-    <footer class="arena-footer">
-      <div class="arena-footer__left">
-        <div class="arena-footer__version">
+    <footer class="novel-footer">
+      <div
+        v-if="shellPopoverOpen"
+        class="novel-footer__dismiss-hit"
+        aria-hidden="true"
+        @pointerdown="onShellSurfaceDismiss"
+      />
+      <div class="novel-footer__left">
+        <div class="novel-footer__version">
           <img :src="loginBundledAssets.statusLogo" alt="" />
           <span>{{ appName }} v{{ appVersion }}</span>
         </div>
-        <div class="arena-footer__links" aria-label="底部信息">
-          <button type="button" class="arena-footer__link-btn" @click="openSettingsHelp('support-version')">
+        <div class="novel-footer__links" aria-label="底部信息">
+          <button type="button" class="novel-footer__link-btn" @click="openSettingsHelp('support-version')">
             <Info :size="17" />
             版本说明
           </button>
-          <button type="button" class="arena-footer__link-btn" @click="openSettingsHelp('support-bug')">
+          <button type="button" class="novel-footer__link-btn" @click="openSettingsHelp('support-bug')">
             <Bug :size="17" />
             报 bug
           </button>
-          <button type="button" class="arena-footer__link-btn" @click="openSettingsHelp('support-help')">
+          <button type="button" class="novel-footer__link-btn" @click="openSettingsHelp('support-help')">
             <FileQuestion :size="17" />
             帮助
           </button>
@@ -391,9 +444,9 @@ const shellBgStyle = {
 </template>
 
 <style>
-.arena-shell {
-  --arena-ink: #142f2f;
-  --arena-muted: #60766f;
+.novel-shell {
+  --novel-ink: #142f2f;
+  --novel-muted: #60766f;
   width: 100%;
   height: 100%;
   min-height: 100%;
@@ -401,12 +454,12 @@ const shellBgStyle = {
   position: relative;
   display: grid;
   grid-template-rows: 72px minmax(0, 1fr) 50px;
-  color: var(--arena-ink);
+  color: var(--novel-ink);
   background-color: #edf3ec;
   background-image:
     radial-gradient(circle at 18% 24%, rgba(255, 255, 255, 0.62) 0, rgba(255, 255, 255, 0) 28%),
     linear-gradient(100deg, rgba(246, 241, 229, 0.68) 0%, rgba(228, 239, 232, 0.54) 48%, rgba(244, 236, 216, 0.54) 100%),
-    var(--arena-shell-bg);
+    var(--novel-shell-bg);
   background-position: center, center, center;
   background-size: auto, auto, cover;
   background-repeat: no-repeat, no-repeat, no-repeat;
@@ -420,7 +473,7 @@ const shellBgStyle = {
     sans-serif;
 }
 
-.arena-shell::before {
+.novel-shell::before {
   content: '';
   position: absolute;
   inset: 0;
@@ -431,22 +484,22 @@ const shellBgStyle = {
   pointer-events: none;
 }
 
-.arena-shell *,
-.arena-shell *::before,
-.arena-shell *::after {
+.novel-shell *,
+.novel-shell *::before,
+.novel-shell *::after {
   box-sizing: border-box;
 }
 
-.arena-shell button {
+.novel-shell button {
   font: inherit;
 }
 
-.arena-shell button:focus-visible {
+.novel-shell button:focus-visible {
   outline: 3px solid rgba(31, 122, 103, 0.28);
   outline-offset: 3px;
 }
 
-.arena-nav {
+.novel-nav {
   position: relative;
   z-index: 10;
   display: grid;
@@ -458,13 +511,14 @@ const shellBgStyle = {
   box-shadow: 0 12px 34px rgba(36, 82, 72, 0.1);
   backdrop-filter: blur(22px);
   -webkit-app-region: drag;
+  overflow: visible;
 }
 
-.arena-nav button {
+.novel-nav button {
   -webkit-app-region: no-drag;
 }
 
-.arena-brand {
+.novel-brand {
   display: inline-flex;
   align-items: center;
   gap: 12px;
@@ -480,16 +534,16 @@ const shellBgStyle = {
     filter 0.18s ease;
 }
 
-.arena-brand:hover {
+.novel-brand:hover {
   transform: translateY(-1px);
   filter: drop-shadow(0 8px 14px rgba(24, 93, 78, 0.18));
 }
 
-.arena-brand:active {
+.novel-brand:active {
   transform: translateY(0) scale(0.985);
 }
 
-.arena-brand__mascot {
+.novel-brand__mascot {
   flex: 0 0 auto;
   width: 46px;
   height: 46px;
@@ -501,22 +555,22 @@ const shellBgStyle = {
     0 9px 16px rgba(31, 122, 103, 0.2);
 }
 
-.arena-brand__logo {
+.novel-brand__logo {
   flex: 0 0 auto;
   width: 36px;
   height: 36px;
   object-fit: contain;
 }
 
-.arena-brand__title {
+.novel-brand__title {
   display: block;
   font-size: 18px;
   font-weight: 700;
   letter-spacing: 0.02em;
-  color: var(--arena-ink);
+  color: var(--novel-ink);
 }
 
-.arena-back {
+.novel-back {
   gap: 10px;
   padding: 0 18px 0 10px;
   height: 46px;
@@ -529,7 +583,7 @@ const shellBgStyle = {
   font-weight: 560;
 }
 
-.arena-back__icon {
+.novel-back__icon {
   display: grid;
   place-items: center;
   width: 34px;
@@ -541,11 +595,11 @@ const shellBgStyle = {
   transition: transform 0.2s ease;
 }
 
-.arena-back:hover .arena-back__icon {
+.novel-back:hover .novel-back__icon {
   transform: translateX(-2px);
 }
 
-.arena-tabs {
+.novel-tabs {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -553,7 +607,7 @@ const shellBgStyle = {
   min-width: 0;
 }
 
-.arena-tab {
+.novel-tab {
   position: relative;
   display: inline-flex;
   align-items: center;
@@ -576,7 +630,7 @@ const shellBgStyle = {
     transform 0.18s ease;
 }
 
-.arena-tab:not(:last-child)::after {
+.novel-tab:not(:last-child)::after {
   content: '';
   position: absolute;
   right: -6px;
@@ -586,7 +640,7 @@ const shellBgStyle = {
   background: rgba(56, 95, 86, 0.2);
 }
 
-.arena-tab--active {
+.novel-tab--active {
   color: #12624f;
   background: rgba(255, 255, 255, 0.86);
   box-shadow:
@@ -594,17 +648,17 @@ const shellBgStyle = {
     0 14px 26px rgba(36, 82, 72, 0.12);
 }
 
-.arena-tab:hover {
+.novel-tab:hover {
   color: #168069;
   background: rgba(255, 255, 255, 0.54);
   transform: translateY(-1px);
 }
 
-.arena-tab:active {
+.novel-tab:active {
   transform: translateY(0) scale(0.985);
 }
 
-.arena-actions {
+.novel-actions {
   display: flex;
   align-items: center;
   justify-self: end;
@@ -612,7 +666,7 @@ const shellBgStyle = {
   min-width: 0;
 }
 
-.arena-update-btn {
+.novel-update-btn {
   display: grid;
   place-items: center;
   flex: 0 0 auto;
@@ -631,26 +685,26 @@ const shellBgStyle = {
     opacity 0.18s ease;
 }
 
-.arena-update-btn:hover:not(:disabled) {
+.novel-update-btn:hover:not(:disabled) {
   transform: translateY(-1px);
   box-shadow: 0 10px 24px rgba(31, 122, 103, 0.32);
 }
 
-.arena-update-btn:active:not(:disabled) {
+.novel-update-btn:active:not(:disabled) {
   transform: translateY(0) scale(0.96);
 }
 
-.arena-update-btn:disabled {
+.novel-update-btn:disabled {
   opacity: 0.7;
   cursor: wait;
 }
 
-.arena-profile-wrap {
+.novel-profile-wrap {
   position: relative;
   -webkit-app-region: no-drag;
 }
 
-.arena-profile {
+.novel-profile {
   position: relative;
   width: 46px;
   height: 46px;
@@ -665,7 +719,7 @@ const shellBgStyle = {
     box-shadow 0.18s ease;
 }
 
-.arena-profile::before {
+.novel-profile::before {
   content: '';
   position: absolute;
   inset: -4px;
@@ -676,7 +730,7 @@ const shellBgStyle = {
     transform 0.2s ease;
 }
 
-.arena-profile::after {
+.novel-profile::after {
   content: '';
   position: absolute;
   inset: -7px;
@@ -689,22 +743,22 @@ const shellBgStyle = {
     transform 0.34s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.arena-profile:hover {
+.novel-profile:hover {
   transform: translateY(-1px) scale(1.04);
   box-shadow: 0 12px 22px rgba(36, 82, 72, 0.2);
 }
 
-.arena-profile:hover::before {
+.novel-profile:hover::before {
   border-color: rgba(31, 122, 103, 0.28);
   transform: scale(1.08);
 }
 
-.arena-profile:hover::after {
+.novel-profile:hover::after {
   opacity: 1;
   transform: scale(1) rotate(35deg);
 }
 
-.arena-profile img {
+.novel-profile img {
   position: relative;
   z-index: 1;
   width: 100%;
@@ -713,7 +767,7 @@ const shellBgStyle = {
   object-fit: cover;
 }
 
-.arena-profile span {
+.novel-profile span {
   position: absolute;
   right: 1px;
   bottom: 5px;
@@ -725,10 +779,9 @@ const shellBgStyle = {
   z-index: 2;
 }
 
-.arena-profile-popover {
-  position: absolute;
-  top: calc(100% + 10px);
-  right: -24px;
+.novel-profile-popover {
+  position: fixed;
+  z-index: 160;
   width: 268px;
   padding: 12px;
   border: 1px solid rgba(255, 255, 255, 0.78);
@@ -740,7 +793,19 @@ const shellBgStyle = {
   backdrop-filter: blur(24px) saturate(1.2);
   transform-origin: 78% top;
   animation: arenaProfilePopoverIn 0.22s cubic-bezier(0.16, 1, 0.3, 1);
-  z-index: 12;
+}
+
+.novel-shell--popover-open .novel-nav {
+  -webkit-app-region: no-drag;
+}
+
+.novel-footer__dismiss-hit {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  background: transparent;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
 }
 
 @keyframes arenaProfilePopoverIn {
@@ -754,14 +819,14 @@ const shellBgStyle = {
   }
 }
 
-.arena-profile-popover__head {
+.novel-profile-popover__head {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
 }
 
-.arena-profile-popover__identity {
+.novel-profile-popover__identity {
   display: grid;
   grid-template-columns: 46px minmax(0, 1fr);
   gap: 12px;
@@ -777,11 +842,11 @@ const shellBgStyle = {
   transition: background 0.18s ease;
 }
 
-.arena-profile-popover__identity:hover {
+.novel-profile-popover__identity:hover {
   background: rgba(31, 122, 103, 0.08);
 }
 
-.arena-profile-popover__logout {
+.novel-profile-popover__logout {
   display: grid;
   place-items: center;
   flex: 0 0 auto;
@@ -798,18 +863,18 @@ const shellBgStyle = {
     transform 0.18s ease;
 }
 
-.arena-profile-popover__logout:hover:not(:disabled) {
+.novel-profile-popover__logout:hover:not(:disabled) {
   background: rgba(243, 95, 125, 0.16);
   color: #c73558;
   transform: translateY(-1px);
 }
 
-.arena-profile-popover__logout:disabled {
+.novel-profile-popover__logout:disabled {
   opacity: 0.6;
   cursor: wait;
 }
 
-.arena-profile-popover__identity img {
+.novel-profile-popover__identity img {
   width: 46px;
   height: 46px;
   border-radius: 16px;
@@ -817,7 +882,7 @@ const shellBgStyle = {
   box-shadow: 0 10px 18px rgba(86, 91, 190, 0.14);
 }
 
-.arena-profile-popover__identity strong {
+.novel-profile-popover__identity strong {
   display: block;
   overflow: hidden;
   color: #153331;
@@ -827,7 +892,7 @@ const shellBgStyle = {
   white-space: nowrap;
 }
 
-.arena-profile-popover__identity span {
+.novel-profile-popover__identity span {
   display: block;
   overflow: hidden;
   margin-top: 3px;
@@ -837,7 +902,7 @@ const shellBgStyle = {
   white-space: nowrap;
 }
 
-.arena-profile-popover__balance {
+.novel-profile-popover__balance {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -857,23 +922,23 @@ const shellBgStyle = {
     transform 0.18s ease;
 }
 
-.arena-profile-popover__balance:hover {
+.novel-profile-popover__balance:hover {
   background: rgba(31, 122, 103, 0.14);
   transform: translateY(-1px);
 }
 
-.arena-profile-popover__balance span {
+.novel-profile-popover__balance span {
   color: #66709d;
   font-size: 12px;
 }
 
-.arena-profile-popover__balance strong {
+.novel-profile-popover__balance strong {
   color: #17205a;
   font-size: 15px;
   font-weight: 700;
 }
 
-.arena-profile-popover__section {
+.novel-profile-popover__section {
   display: grid;
   gap: 4px;
   margin-top: 12px;
@@ -881,7 +946,7 @@ const shellBgStyle = {
   border-top: 1px solid rgba(130, 142, 207, 0.12);
 }
 
-.arena-profile-popover__section-title {
+.novel-profile-popover__section-title {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -893,7 +958,7 @@ const shellBgStyle = {
   text-transform: uppercase;
 }
 
-.arena-profile-popover__link {
+.novel-profile-popover__link {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr);
   align-items: center;
@@ -914,13 +979,13 @@ const shellBgStyle = {
     transform 0.18s ease;
 }
 
-.arena-profile-popover__link:hover {
+.novel-profile-popover__link:hover {
   background: rgba(31, 122, 103, 0.1);
   color: #168069;
   transform: translateX(2px);
 }
 
-.arena-window-controls {
+.novel-window-controls {
   display: flex;
   align-items: center;
   gap: 16px;
@@ -928,7 +993,7 @@ const shellBgStyle = {
   border-left: 1px solid rgba(91, 103, 174, 0.22);
 }
 
-.arena-window-btn {
+.novel-window-btn {
   display: grid;
   place-items: center;
   width: 30px;
@@ -944,21 +1009,21 @@ const shellBgStyle = {
     transform 0.15s ease;
 }
 
-.arena-window-btn:hover {
+.novel-window-btn:hover {
   background: rgba(255, 255, 255, 0.72);
   transform: translateY(-1px);
 }
 
-.arena-window-btn:active {
+.novel-window-btn:active {
   transform: translateY(0) scale(0.92);
 }
 
-.arena-window-btn--close:hover {
+.novel-window-btn--close:hover {
   color: white;
   background: #f35f7d;
 }
 
-.arena-content {
+.novel-content {
   position: relative;
   z-index: 2;
   flex: 1 1 auto;
@@ -972,11 +1037,11 @@ const shellBgStyle = {
   -ms-overflow-style: none;
 }
 
-.arena-content::-webkit-scrollbar {
+.novel-content::-webkit-scrollbar {
   display: none;
 }
 
-.arena-footer {
+.novel-footer {
   position: relative;
   z-index: 10;
   display: flex;
@@ -987,9 +1052,10 @@ const shellBgStyle = {
   border-top: 1px solid rgba(255, 255, 255, 0.72);
   box-shadow: 0 -10px 26px rgba(36, 82, 72, 0.06);
   backdrop-filter: blur(18px);
+  -webkit-app-region: no-drag;
 }
 
-.arena-footer__left {
+.novel-footer__left {
   display: inline-flex;
   align-items: center;
   gap: 12px;
@@ -997,7 +1063,7 @@ const shellBgStyle = {
   flex: 1;
 }
 
-.arena-footer__version {
+.novel-footer__version {
   display: inline-flex;
   align-items: center;
   gap: 12px;
@@ -1007,7 +1073,7 @@ const shellBgStyle = {
   font-weight: 500;
 }
 
-.arena-footer__version img {
+.novel-footer__version img {
   width: 34px;
   height: 34px;
   border-radius: 12px;
@@ -1015,7 +1081,7 @@ const shellBgStyle = {
   box-shadow: 0 6px 10px rgba(31, 122, 103, 0.14);
 }
 
-.arena-footer__links {
+.novel-footer__links {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -1023,7 +1089,7 @@ const shellBgStyle = {
   flex-wrap: wrap;
 }
 
-.arena-footer__link-btn {
+.novel-footer__link-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1045,7 +1111,7 @@ const shellBgStyle = {
     background 0.18s ease;
 }
 
-.arena-footer__link-btn:hover {
+.novel-footer__link-btn:hover {
   transform: translateY(-1px);
   color: #168069;
   border-color: rgba(31, 122, 103, 0.24);

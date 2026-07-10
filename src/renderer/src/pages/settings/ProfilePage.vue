@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, h, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue'
 import {
   Activity,
@@ -1043,8 +1043,8 @@ onBeforeUnmount(() => {
   border-radius: 22px;
   background: var(--profile-nav-bg);
   box-shadow: var(--profile-nav-shadow);
-  backdrop-filter: var(--arena-surface-glass-filter);
-  -webkit-backdrop-filter: var(--arena-surface-glass-filter);
+  backdrop-filter: var(--novel-surface-glass-filter);
+  -webkit-backdrop-filter: var(--novel-surface-glass-filter);
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -1145,8 +1145,8 @@ onBeforeUnmount(() => {
   border-radius: 26px;
   background: var(--profile-panel-bg);
   box-shadow: var(--profile-panel-shadow);
-  backdrop-filter: var(--arena-surface-glass-filter);
-  -webkit-backdrop-filter: var(--arena-surface-glass-filter);
+  backdrop-filter: var(--novel-surface-glass-filter);
+  -webkit-backdrop-filter: var(--novel-surface-glass-filter);
 }
 
 .profile-section {

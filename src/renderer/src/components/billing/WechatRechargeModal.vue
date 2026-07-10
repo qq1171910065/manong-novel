@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
 import { CheckCircle2, Coins, Loader2, QrCode, Sparkles, Wallet } from 'lucide-vue-next'
-import { NAlert, NButton, NModal, NSpin } from '../../ui'
+import NovelModalShell from '@renderer/novel/components/shared/NovelModalShell.vue'
 import { useWechatRecharge } from '@renderer/composables/useWechatRecharge'
 import { yuanToPoints, tierAppPoints } from '@renderer/composables/fee-points'
 
@@ -57,6 +57,10 @@ const selectedPoints = computed(() => {
   return tierAppPoints(selectedTier.value, config.value?.pointsPerYuan)
 })
 
+const modalSubtitle = computed(
+  () => config.value?.description?.trim() || '选择档位后生成二维码，支付成功后积分自动到账。'
+)
+
 function isFeaturedTier(index: number) {
   return index === 1 && tiers.value.length > 2
 }
@@ -83,14 +87,13 @@ function close() {
 </script>
 
 <template>
-  <NModal
-    v-model:show="show"
-    preset="card"
-    class="recharge-modal"
+  <NovelModalShell
+    :show="show"
+    size="md"
+    panel-class="novel-modal__panel--recharge"
+    aria-label="微信扫码充值"
     :mask-closable="!submitting"
-    :closable="!submitting"
-    :style="{ width: '540px', maxWidth: '94vw' }"
-    @after-leave="emit('closed')"
+    @close="close"
   >
     <template #header>
       <div class="recharge-modal-head">
@@ -98,21 +101,24 @@ function close() {
           <Wallet :size="20" />
         </span>
         <div>
-          <div class="recharge-modal-head__title">微信扫码充值</div>
-          <div class="recharge-modal-head__desc text-muted">
-            {{ config?.description?.trim() || '选择档位后生成二维码，支付成功后积分自动到账。' }}
-          </div>
+          <h2 class="recharge-modal-head__title">微信扫码充值</h2>
+          <p class="recharge-modal-head__desc text-muted">{{ modalSubtitle }}</p>
         </div>
       </div>
     </template>
 
-    <NSpin :show="loading">
-      <p v-if="!loading && !ready" class="recharge-modal-unready text-muted">
+    <div v-if="loading" class="recharge-modal-loading">
+      <Loader2 :size="22" class="spin" />
+      <span>加载充值配置…</span>
+    </div>
+
+    <template v-else>
+      <p v-if="!ready" class="recharge-modal-unready text-muted">
         充值功能暂未开放，请联系管理员配置微信支付。
       </p>
 
-      <template v-else-if="ready">
-        <NAlert v-if="error" type="error" :bordered="false" class="recharge-modal-alert">{{ error }}</NAlert>
+      <template v-else>
+        <p v-if="error" class="recharge-modal-alert">{{ error }}</p>
 
         <div v-if="step === 'done'" class="recharge-modal-success">
           <CheckCircle2 :size="52" class="recharge-modal-success__icon" />
@@ -217,29 +223,29 @@ function close() {
           </section>
         </template>
       </template>
-    </NSpin>
-
-    <template #action>
-      <div class="recharge-modal-actions">
-        <NButton v-if="step === 'done'" type="primary" block @click="close">完成</NButton>
-        <template v-else-if="ready">
-          <NButton
-            v-if="step === 'pick'"
-            type="primary"
-            block
-            :loading="submitting"
-            :disabled="loading || !selectedTier"
-            @click="createOrder"
-          >
-            <template v-if="submitting" #icon>
-              <Loader2 :size="16" class="spin" />
-            </template>
-            生成支付二维码
-          </NButton>
-        </template>
-      </div>
     </template>
-  </NModal>
+
+    <template v-if="ready && (step === 'done' || step === 'pick')" #footer>
+      <button
+        v-if="step === 'done'"
+        type="button"
+        class="novel-btn novel-btn--primary md-ripple recharge-modal-footer-btn"
+        @click="close"
+      >
+        完成
+      </button>
+      <button
+        v-else
+        type="button"
+        class="novel-btn novel-btn--primary md-ripple recharge-modal-footer-btn"
+        :disabled="loading || !selectedTier || submitting"
+        @click="createOrder"
+      >
+        <Loader2 v-if="submitting" :size="16" class="spin" />
+        {{ submitting ? '生成中…' : '生成支付二维码' }}
+      </button>
+    </template>
+  </NovelModalShell>
 </template>
 
 <style scoped>
@@ -261,15 +267,26 @@ function close() {
 }
 
 .recharge-modal-head__title {
+  margin: 0;
   font-size: var(--text-xl);
   font-weight: 650;
   letter-spacing: -0.02em;
 }
 
 .recharge-modal-head__desc {
-  margin-top: 4px;
+  margin: 4px 0 0;
   font-size: var(--text-sm);
   line-height: 1.5;
+}
+
+.recharge-modal-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 120px;
+  color: var(--muted);
+  font-size: var(--text-sm);
 }
 
 .recharge-modal-unready {
@@ -277,7 +294,13 @@ function close() {
 }
 
 .recharge-modal-alert {
-  margin-bottom: 14px;
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  color: var(--danger, #dc2626);
+  background: color-mix(in srgb, var(--danger, #dc2626) 8%, var(--surface));
+  font-size: var(--text-sm);
+  line-height: 1.5;
 }
 
 .recharge-modal-summary {
@@ -597,17 +620,8 @@ function close() {
   font-size: var(--text-sm);
 }
 
-.recharge-modal-actions {
+.recharge-modal-footer-btn {
   width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.recharge-modal-actions__hint {
-  margin: 0;
-  text-align: center;
-  font-size: var(--text-xs);
 }
 
 @keyframes recharge-qr-pulse {

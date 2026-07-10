@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { Lock, Mail, QrCode, X } from 'lucide-vue-next'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NAlert, NButton, NInput, NInputGroup } from '../../ui'
@@ -162,7 +162,7 @@ const wechatHint = computed(() => {
 })
 
 const loginBgStyle = computed(() => ({
-  '--arena-login-bg': `url(${loginBundledAssets.bgClean})`,
+  '--novel-login-bg': `url(${loginBundledAssets.bgClean})`,
 }))
 
 const canSendCode = computed(() => countdown.value <= 0 && email.value.trim().length > 0 && !loading.value)
@@ -598,16 +598,16 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="arena-login" :style="loginBgStyle">
-    <header class="arena-login__nav">
-      <div class="arena-login__brand" aria-label="登录方式">
+  <div class="novel-login" :style="loginBgStyle">
+    <header class="novel-login__nav">
+      <div class="novel-login__brand" aria-label="登录方式">
         <img :src="loginBundledAssets.statusLogo" alt="" />
         <span>{{ appName }}</span>
       </div>
-      <div class="arena-login__window-actions">
+      <div class="novel-login__window-actions">
         <button
           type="button"
-          class="arena-login__icon-btn arena-login__icon-btn--close"
+          class="novel-login__icon-btn novel-login__icon-btn--close"
           :title="isWeb ? '关闭' : '退出'"
           @click="closeLogin"
         >
@@ -616,14 +616,14 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
-    <main class="arena-login__body">
-      <section class="arena-login__stage" aria-hidden="true">
-        <div class="arena-login__stage-copy">
-          <p class="arena-login__stage-kicker"><span>小说家的 AI 写作台</span></p>
-          <h2 :key="stageTitle" class="arena-login__stage-title">{{ stageTitle }}</h2>
-          <span class="arena-login__stage-desc">{{ stageTypedText }}<i aria-hidden="true" /></span>
+    <main class="novel-login__body">
+      <section class="novel-login__stage" aria-hidden="true">
+        <div class="novel-login__stage-copy">
+          <p class="novel-login__stage-kicker"><span>小说家的 AI 写作台</span></p>
+          <h2 :key="stageTitle" class="novel-login__stage-title">{{ stageTitle }}</h2>
+          <span class="novel-login__stage-desc">{{ stageTypedText }}<i aria-hidden="true" /></span>
         </div>
-        <div class="arena-login__avatar-stack">
+        <div class="novel-login__avatar-stack">
             <img :src="loginBundledAssets.avatars.doubao" alt="" />
             <img :src="loginBundledAssets.avatars.gpt" alt="" />
             <img :src="loginBundledAssets.avatars.claude" alt="" />
@@ -631,11 +631,11 @@ onBeforeUnmount(() => {
         <SleepyCatWidget placement="stage" />
       </section>
 
-      <section class="arena-login__panel" :class="{ 'is-wechat': authView === 'wechat' }">
+      <section class="novel-login__panel" :class="{ 'is-wechat': authView === 'wechat' }">
         <button
           v-if="props.login.wechatOAuth && authView !== 'register' && !wechatNeedEmail"
           type="button"
-          class="arena-login__qr-corner"
+          class="novel-login__qr-corner"
           :class="{ 'is-account': authView === 'wechat' }"
           :title="authView === 'wechat' ? '账号登录' : '微信扫码登录'"
           @click="authView === 'wechat' ? openLogin() : openWechatLogin()"
@@ -644,20 +644,20 @@ onBeforeUnmount(() => {
           <QrCode v-else :size="19" />
         </button>
 
-        <header class="arena-login__head">
-          <p class="arena-login__eyebrow">{{ viewEyebrow }}</p>
-          <h1 class="arena-login__title">{{ pageTitle }}</h1>
-          <p class="arena-login__desc">{{ pageDesc }}</p>
+        <header class="novel-login__head">
+          <p class="novel-login__eyebrow">{{ viewEyebrow }}</p>
+          <h1 class="novel-login__title">{{ pageTitle }}</h1>
+          <p class="novel-login__desc">{{ pageDesc }}</p>
         </header>
 
         <template v-if="authView === 'login'">
-          <div v-if="loginMethods.length > 1" class="arena-login__tabs" role="tablist" aria-label="登录方式">
+          <div v-if="loginMethods.length > 1" class="novel-login__tabs" role="tablist" aria-label="登录方式">
             <button
               v-for="t in loginMethods"
               :key="t.id"
               type="button"
               role="tab"
-              class="arena-login__tab"
+              class="novel-login__tab"
               :class="{ 'is-active': loginMethod === t.id }"
               :aria-selected="loginMethod === t.id"
               @click="switchLoginMethod(t.id)"
@@ -666,13 +666,13 @@ onBeforeUnmount(() => {
             </button>
           </div>
 
-          <div class="arena-login__form" role="tabpanel" @keydown.enter="onLoginKeydown">
+          <div class="novel-login__form" role="tabpanel" @keydown.enter="onLoginKeydown">
             <template v-if="loginMethod === 'email'">
-              <label class="arena-login__field">
+              <label class="novel-login__field">
                 <span>账号</span>
                 <NInput v-model:value="email" type="text" autocomplete="email" placeholder="请输入密码" :disabled="loading" />
               </label>
-              <label class="arena-login__field">
+              <label class="novel-login__field">
                 <span>密码</span>
                 <NInputGroup>
                   <NInput v-model:value="code" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="6 位数字" :disabled="loading" />
@@ -681,97 +681,97 @@ onBeforeUnmount(() => {
                   </NButton>
                 </NInputGroup>
               </label>
-              <NButton type="primary" block class="arena-login__submit" :loading="loading" :disabled="!code.trim()" @click="onEmailLogin">
+              <NButton type="primary" block class="novel-login__submit" :loading="loading" :disabled="!code.trim()" @click="onEmailLogin">
                 <template #icon><Mail :size="15" /></template>
                 进入大厅
               </NButton>
             </template>
 
             <template v-else-if="loginMethod === 'password'">
-              <label class="arena-login__field">
+              <label class="novel-login__field">
                 <span>邮箱</span>
                 <NInput v-model:value="username" type="text" autocomplete="email" placeholder="name@example.com" :disabled="loading" @blur="checkPasswordCaptcha" />
               </label>
-              <label class="arena-login__field">
+              <label class="novel-login__field">
                 <span>密码</span>
                 <NInput v-model:value="password" type="password" autocomplete="current-password" placeholder="请输入密码" :disabled="loading" />
               </label>
-              <label v-if="captchaRequired" class="arena-login__field">
+              <label v-if="captchaRequired" class="novel-login__field">
                 <span>图形验证码</span>
-                <div class="arena-login__captcha">
+                <div class="novel-login__captcha">
                   <NInput v-model:value="captchaCode" placeholder="验证码" maxlength="6" :disabled="loading" />
-                  <button type="button" class="arena-login__captcha-img" :disabled="captchaLoading" @click="loadCaptcha">
+                  <button type="button" class="novel-login__captcha-img" :disabled="captchaLoading" @click="loadCaptcha">
                     <img v-if="captchaImage" :src="captchaImage" alt="验证码" />
                     <span v-else>加载</span>
                   </button>
                 </div>
               </label>
 
-              <NButton type="primary" block class="arena-login__submit" :loading="loading" :disabled="!canPasswordLogin" @click="onPasswordLogin">
+              <NButton type="primary" block class="novel-login__submit" :loading="loading" :disabled="!canPasswordLogin" @click="onPasswordLogin">
                 <template #icon><Lock :size="15" /></template>
                 进入大厅
               </NButton>
             </template>
           </div>
 
-          <NAlert v-if="error" type="error" :bordered="false" class="arena-login__error">{{ error }}</NAlert>
+          <NAlert v-if="error" type="error" :bordered="false" class="novel-login__error">{{ error }}</NAlert>
 
 
-          <p v-if="canShowRegister" class="arena-login__switch">
+          <p v-if="canShowRegister" class="novel-login__switch">
             还没有账号？
-            <button type="button" class="arena-login__switch-link" @click="openRegister">创建一个</button>
+            <button type="button" class="novel-login__switch-link" @click="openRegister">创建一个</button>
           </p>
         </template>
 
         <template v-else-if="authView === 'register'">
-          <div class="arena-login__form" @keydown.enter="onLoginKeydown">
-            <label class="arena-login__field"><span>邮箱</span><NInput v-model:value="regEmail" type="text" autocomplete="email" placeholder="name@example.com" :disabled="loading" /></label>
-            <label class="arena-login__field">
+          <div class="novel-login__form" @keydown.enter="onLoginKeydown">
+            <label class="novel-login__field"><span>邮箱</span><NInput v-model:value="regEmail" type="text" autocomplete="email" placeholder="name@example.com" :disabled="loading" /></label>
+            <label class="novel-login__field">
               <span>验证码</span>
               <NInputGroup>
                 <NInput v-model:value="regCode" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="6 位数字" :disabled="loading" />
                 <NButton :disabled="!canSendRegCode" @click="sendRegCode">{{ regCountdown > 0 ? `${regCountdown}s` : '获取验证码' }}</NButton>
               </NInputGroup>
             </label>
-            <NButton type="primary" block class="arena-login__submit" :loading="loading" :disabled="!canRegister" @click="onRegister">创建并进入</NButton>
+            <NButton type="primary" block class="novel-login__submit" :loading="loading" :disabled="!canRegister" @click="onRegister">创建并进入</NButton>
           </div>
-          <NAlert v-if="error" type="error" :bordered="false" class="arena-login__error">{{ error }}</NAlert>
-          <p class="arena-login__switch">已有账号？<button type="button" class="arena-login__switch-link" @click="openLogin">返回登录</button></p>
+          <NAlert v-if="error" type="error" :bordered="false" class="novel-login__error">{{ error }}</NAlert>
+          <p class="novel-login__switch">已有账号？<button type="button" class="novel-login__switch-link" @click="openLogin">返回登录</button></p>
         </template>
 
         <template v-else-if="authView === 'wechat'">
-          <div v-if="wechatNeedEmail" class="arena-login__wechat arena-login__wechat--bind">
-            <p class="arena-login__bind-hint">扫码成功,请绑定邮箱以完成账号归属。</p>
-            <div class="arena-login__form" @keydown.enter="onWechatKeydown">
-              <label class="arena-login__field"><span>邮箱</span><NInput v-model:value="wechatLinkEmail" type="text" autocomplete="email" placeholder="name@example.com" :disabled="loading" /></label>
-              <label class="arena-login__field">
+          <div v-if="wechatNeedEmail" class="novel-login__wechat novel-login__wechat--bind">
+            <p class="novel-login__bind-hint">扫码成功,请绑定邮箱以完成账号归属。</p>
+            <div class="novel-login__form" @keydown.enter="onWechatKeydown">
+              <label class="novel-login__field"><span>邮箱</span><NInput v-model:value="wechatLinkEmail" type="text" autocomplete="email" placeholder="name@example.com" :disabled="loading" /></label>
+              <label class="novel-login__field">
                 <span>验证码</span>
                 <NInputGroup>
                   <NInput v-model:value="wechatLinkCode" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="6 位数字" :disabled="loading" />
                   <NButton :disabled="!canSendWechatCode" @click="sendWechatLinkCode">{{ wechatCountdown > 0 ? `${wechatCountdown}s` : '获取验证码' }}</NButton>
                 </NInputGroup>
               </label>
-              <NButton type="primary" block class="arena-login__submit" :loading="loading" :disabled="!canSubmitWechatLink" @click="submitWechatLink">完成绑定</NButton>
+              <NButton type="primary" block class="novel-login__submit" :loading="loading" :disabled="!canSubmitWechatLink" @click="submitWechatLink">完成绑定</NButton>
             </div>
           </div>
 
-          <div v-else class="arena-login__wechat">
+          <div v-else class="novel-login__wechat">
             <button
               type="button"
-              class="arena-login__wechat-qr"
+              class="novel-login__wechat-qr"
               :class="{ 'is-loading': wechatQrLoading, 'is-scanned': wechatScanned }"
               :disabled="wechatQrLoading || wechatScanned"
               :title="wechatScanned ? undefined : '点击刷新二维码'"
               @click="refreshWechatQr"
             >
-              <div v-if="wechatQrLoading" class="arena-login__wechat-qr-skeleton" aria-hidden="true" />
-              <img v-if="wechatQr" class="arena-login__wechat-qr-img" :src="wechatQr" alt="微信扫码登录" />
-              <div v-else-if="!wechatQrLoading" class="arena-login__wechat-qr-empty"><QrCode :size="36" /></div>
-              <div v-if="wechatScanned" class="arena-login__wechat-qr-status">已扫码</div>
+              <div v-if="wechatQrLoading" class="novel-login__wechat-qr-skeleton" aria-hidden="true" />
+              <img v-if="wechatQr" class="novel-login__wechat-qr-img" :src="wechatQr" alt="微信扫码登录" />
+              <div v-else-if="!wechatQrLoading" class="novel-login__wechat-qr-empty"><QrCode :size="36" /></div>
+              <div v-if="wechatScanned" class="novel-login__wechat-qr-status">已扫码</div>
             </button>
-            <p class="arena-login__wechat-hint" :class="{ 'is-scanned': wechatScanned }">{{ wechatHint }}</p>
+            <p class="novel-login__wechat-hint" :class="{ 'is-scanned': wechatScanned }">{{ wechatHint }}</p>
           </div>
-          <NAlert v-if="error" type="error" :bordered="false" class="arena-login__error">{{ error }}</NAlert>
+          <NAlert v-if="error" type="error" :bordered="false" class="novel-login__error">{{ error }}</NAlert>
         </template>
 
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+﻿import { describe, expect, it } from 'vitest'
 import {
   buildMaterialPortableFile,
   parseMaterialPortableFile,
@@ -19,7 +19,7 @@ const sampleCharacter: MaterialItem = {
 describe('material-library-portable', () => {
   it('builds export payload without built-in flags', () => {
     const portable = buildMaterialPortableFile(sampleCharacter)
-    expect(portable.format).toBe('arena-material')
+    expect(portable.format).toBe('novel-material')
     expect(portable.type).toBe('characters')
     expect(portable.item.title).toBe('测试角色')
     expect(portable.item.payload.builtIn).toBeUndefined()

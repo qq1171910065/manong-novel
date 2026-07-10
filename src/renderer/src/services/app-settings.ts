@@ -1,4 +1,4 @@
-import { DEFAULT_IMAGE_MODEL_ID, DEFAULT_SYSTEM_ROLE_MODEL_ID, MIMO_TTS_MODEL_ID } from '@shared/gateway/constants'
+﻿import { DEFAULT_IMAGE_MODEL_ID, DEFAULT_SYSTEM_ROLE_MODEL_ID, MIMO_TTS_MODEL_ID } from '@shared/gateway/constants'
 
 export interface AppSettings {
   uiScale: 100 | 125 | 150
@@ -85,11 +85,11 @@ export function applyAppSettingsEffects(settings?: AppSettings): void {
   const plain = settings ?? DEFAULT_APP_SETTINGS
   const root = document.documentElement
   const scale = UI_SCALE_MAP[plain.uiScale] || '1'
-  root.dataset.arenaScale = String(plain.uiScale)
-  root.dataset.arenaMotion = plain.animationEnabled ? 'on' : 'off'
-  root.dataset.arenaDensity = plain.compactLayout ? 'compact' : 'comfortable'
-  root.dataset.arenaGlass = plain.glassEffect ? 'on' : 'off'
-  root.style.setProperty('--arena-ui-scale', scale)
+  root.dataset.novelScale = String(plain.uiScale)
+  root.dataset.novelMotion = plain.animationEnabled ? 'on' : 'off'
+  root.dataset.novelDensity = plain.compactLayout ? 'compact' : 'comfortable'
+  root.dataset.novelGlass = plain.glassEffect ? 'on' : 'off'
+  root.style.setProperty('--novel-ui-scale', scale)
 }
 
 export function formatUserMessage(error: unknown): string {

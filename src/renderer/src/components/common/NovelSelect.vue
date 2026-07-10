@@ -1,5 +1,5 @@
-<script setup lang="ts">
-export type ArenaSelectOption = {
+﻿<script setup lang="ts">
+export type NovelSelectOption = {
   label: string
   value: string
   disabled?: boolean
@@ -7,7 +7,7 @@ export type ArenaSelectOption = {
 
 withDefaults(
   defineProps<{
-    options?: ArenaSelectOption[]
+    options?: NovelSelectOption[]
     variant?: 'inline' | 'pill' | 'default'
     disabled?: boolean
     ariaLabel?: string
@@ -23,10 +23,10 @@ const model = defineModel<string>({ required: true })
 </script>
 
 <template>
-  <label class="arena-select" :class="`arena-select--${variant}`">
+  <label class="novel-select" :class="`novel-select--${variant}`">
     <select
       v-model="model"
-      class="arena-select__control"
+      class="novel-select__control"
       :disabled="disabled"
       :aria-label="ariaLabel"
     >
@@ -41,19 +41,19 @@ const model = defineModel<string>({ required: true })
         </option>
       </slot>
     </select>
-    <span class="arena-select__chevron" aria-hidden="true" />
+    <span class="novel-select__chevron" aria-hidden="true" />
   </label>
 </template>
 
 <style scoped>
-.arena-select {
+.novel-select {
   position: relative;
   display: inline-flex;
   align-items: center;
   min-width: 0;
 }
 
-.arena-select__control {
+.novel-select__control {
   width: 100%;
   margin: 0;
   border: 0;
@@ -68,12 +68,12 @@ const model = defineModel<string>({ required: true })
   padding-right: 18px;
 }
 
-.arena-select__control:disabled {
+.novel-select__control:disabled {
   opacity: 0.55;
   cursor: not-allowed;
 }
 
-.arena-select__chevron {
+.novel-select__chevron {
   position: absolute;
   right: 0;
   top: 50%;
@@ -86,13 +86,13 @@ const model = defineModel<string>({ required: true })
   opacity: 0.82;
 }
 
-.arena-select--inline .arena-select__control {
+.novel-select--inline .novel-select__control {
   min-width: 72px;
   max-width: 132px;
   padding-left: 2px;
 }
 
-.arena-select--pill {
+.novel-select--pill {
   height: 38px;
   padding: 0 12px 0 14px;
   border-radius: 999px;
@@ -105,27 +105,27 @@ const model = defineModel<string>({ required: true })
     background 0.18s ease;
 }
 
-.arena-select--pill:hover {
+.novel-select--pill:hover {
   border-color: rgba(112, 105, 255, 0.28);
   background: rgba(255, 255, 255, 0.88);
 }
 
-.arena-select--pill:focus-within {
+.novel-select--pill:focus-within {
   border-color: rgba(91, 87, 243, 0.42);
   box-shadow: 0 0 0 3px rgba(112, 105, 255, 0.12);
 }
 
-.arena-select--pill .arena-select__control {
+.novel-select--pill .novel-select__control {
   font-size: 13px;
   min-width: 88px;
   padding-right: 20px;
 }
 
-.arena-select--pill .arena-select__chevron {
+.novel-select--pill .novel-select__chevron {
   right: 12px;
 }
 
-.arena-select--default {
+.novel-select--default {
   width: 100%;
   height: 38px;
   padding: 0 12px 0 14px;
@@ -137,17 +137,17 @@ const model = defineModel<string>({ required: true })
     box-shadow 0.18s ease;
 }
 
-.arena-select--default:focus-within {
+.novel-select--default:focus-within {
   border-color: rgba(91, 87, 243, 0.42);
   box-shadow: 0 0 0 3px rgba(112, 105, 255, 0.12);
 }
 
-.arena-select--default .arena-select__control {
+.novel-select--default .novel-select__control {
   font-size: 13.5px;
   padding-right: 22px;
 }
 
-.arena-select--default .arena-select__chevron {
+.novel-select--default .novel-select__chevron {
   right: 12px;
 }
 </style>

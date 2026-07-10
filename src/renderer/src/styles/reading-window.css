@@ -195,6 +195,7 @@
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
+  overflow-anchor: auto;
   scroll-behavior: auto;
   scrollbar-width: none;
   -ms-overflow-style: none;

@@ -1,4 +1,4 @@
-/* Novel detail — flat section design, minimal borders */
+﻿/* Novel detail — flat section design, minimal borders */
 
 .detail-page.portal-page {
   padding: 12px clamp(24px, 3vw, 48px);
@@ -284,8 +284,8 @@
   border: 1px solid var(--profile-panel-border);
   background: var(--profile-panel-bg);
   box-shadow: var(--profile-panel-shadow);
-  backdrop-filter: var(--arena-surface-glass-filter);
-  -webkit-backdrop-filter: var(--arena-surface-glass-filter);
+  backdrop-filter: var(--novel-surface-glass-filter);
+  -webkit-backdrop-filter: var(--novel-surface-glass-filter);
 }
 
 .detail-page .profile-panel .profile-section {

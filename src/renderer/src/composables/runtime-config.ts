@@ -1,4 +1,4 @@
-import type { ShellLayout } from '@shared/types'
+﻿import type { ShellLayout } from '@shared/types'
 
 export interface AppFeatures {
   platform: boolean
@@ -31,7 +31,7 @@ const DEFAULT_FEATURES: AppFeatures = {
 
 let runtimeConfig: RuntimeConfig = {
   appId: 'mntools-app',
-  productCode: 'arena',
+  productCode: 'novel',
   displayName: 'Mntools App',
   description: 'Electron desktop tool',
   shellLayout: 'sidebar',

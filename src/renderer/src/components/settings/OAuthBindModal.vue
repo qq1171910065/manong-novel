@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref, watch } from 'vue'
-import { RefreshCw } from 'lucide-vue-next'
-import { NButton, NModal, NSpin, useMessage } from '../../ui'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { Loader2, RefreshCw } from 'lucide-vue-next'
+import NovelModalShell from '@renderer/novel/components/shared/NovelModalShell.vue'
 import { authApi } from '@renderer/services'
 
 const props = defineProps<{
@@ -15,14 +15,14 @@ const emit = defineEmits<{
   bound: []
 }>()
 
-const message = useMessage()
-
 const loading = ref(false)
 const qrDataUrl = ref('')
 const error = ref('')
 const bindState = ref('')
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let pollGen = 0
+
+const modalTitle = computed(() => `${props.channelLabel || props.channel} 绑定`)
 
 function close() {
   emit('update:show', false)
@@ -70,7 +70,6 @@ async function pollBind(gen: number) {
     if (gen !== pollGen) return
     if (r.status === 'ok') {
       stopPoll()
-      message.success('绑定成功')
       emit('bound')
       close()
     } else if (r.status === 'error') {
@@ -97,29 +96,38 @@ onBeforeUnmount(() => stopPoll())
 </script>
 
 <template>
-  <NModal
+  <NovelModalShell
     :show="show"
-    preset="card"
-    :title="`${channelLabel || channel} 绑定`"
-    style="max-width: 360px"
+    size="auto"
+    auto-min-width="sm"
+    :title="modalTitle"
+    subtitle="请使用微信扫描二维码完成账号绑定"
+    aria-label="账号绑定"
     :mask-closable="!loading"
-    @update:show="(v) => emit('update:show', v)"
+    @close="close"
   >
     <div class="oauth-bind-modal">
-      <p class="text-muted oauth-bind-hint">请使用微信扫描二维码完成账号绑定</p>
-      <NSpin :show="loading">
-        <div class="oauth-bind-qr-frame">
-          <img v-if="qrDataUrl" :src="qrDataUrl" alt="绑定二维码" class="oauth-bind-qr" />
-          <div v-else class="oauth-bind-qr-empty">加载中…</div>
+      <div class="oauth-bind-qr-frame">
+        <img v-if="qrDataUrl" :src="qrDataUrl" alt="绑定二维码" class="oauth-bind-qr" />
+        <div v-else-if="loading" class="oauth-bind-qr-empty">
+          <Loader2 :size="22" class="spin" />
+          加载中…
         </div>
-      </NSpin>
-      <NButton block quaternary :loading="loading" @click="startBind">
-        <template #icon><RefreshCw :size="16" /></template>
+        <div v-else class="oauth-bind-qr-empty">暂无二维码</div>
+      </div>
+      <button
+        type="button"
+        class="novel-btn novel-btn--ghost md-ripple oauth-bind-refresh"
+        :disabled="loading"
+        @click="startBind"
+      >
+        <Loader2 v-if="loading" :size="16" class="spin" />
+        <RefreshCw v-else :size="16" />
         刷新二维码
-      </NButton>
+      </button>
       <p v-if="error" class="oauth-bind-error">{{ error }}</p>
     </div>
-  </NModal>
+  </NovelModalShell>
 </template>
 
 <style scoped>
@@ -130,19 +138,13 @@ onBeforeUnmount(() => stopPoll())
   align-items: center;
 }
 
-.oauth-bind-hint {
-  margin: 0;
-  text-align: center;
-  font-size: 13px;
-}
-
 .oauth-bind-qr-frame {
   width: 220px;
   height: 220px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--border-color, #e2e8f0);
+  border: 1px solid var(--line);
   border-radius: 12px;
   overflow: hidden;
   background: #fff;
@@ -155,13 +157,20 @@ onBeforeUnmount(() => stopPoll())
 }
 
 .oauth-bind-qr-empty {
-  color: var(--text-muted, #64748b);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
   font-size: 13px;
+}
+
+.oauth-bind-refresh {
+  width: 100%;
 }
 
 .oauth-bind-error {
   margin: 0;
-  color: var(--error-color, #dc2626);
+  color: var(--danger, #dc2626);
   font-size: 13px;
   text-align: center;
 }

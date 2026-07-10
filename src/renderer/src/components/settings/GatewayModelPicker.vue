@@ -17,6 +17,8 @@ const props = withDefaults(
     emptyHint?: string
     hideScrollbar?: boolean
     compact?: boolean
+    /** 在弹窗内占满剩余高度，列表区域可滚动 */
+    fill?: boolean
   }>(),
   {
     recommendedIds: () => [],
@@ -24,6 +26,7 @@ const props = withDefaults(
     emptyHint: '暂无可用模型，请先刷新网关连接。',
     hideScrollbar: false,
     compact: false,
+    fill: false,
   }
 )
 
@@ -68,7 +71,13 @@ function isSelected(id: string) {
 </script>
 
 <template>
-  <div class="gateway-model-picker" :class="{ 'gateway-model-picker--compact': compact }">
+  <div
+    class="gateway-model-picker"
+    :class="{
+      'gateway-model-picker--compact': compact,
+      'gateway-model-picker--fill': fill,
+    }"
+  >
     <NInput v-model:value="query" clearable placeholder="搜索模型…" size="small" />
 
     <div v-if="loading" class="gateway-model-picker__loading">
@@ -136,6 +145,25 @@ function isSelected(id: string) {
 .gateway-model-picker {
   display: grid;
   gap: 10px;
+  min-height: 0;
+}
+
+.gateway-model-picker--fill {
+  height: 100%;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.gateway-model-picker--fill .gateway-model-picker__scroll {
+  max-height: none;
+  min-height: 0;
+}
+
+.gateway-model-picker :deep(.n-input) {
+  min-height: 34px;
+}
+
+.gateway-model-picker :deep(.n-input__input-el) {
+  line-height: 1.45;
 }
 
 .gateway-model-picker__loading {
@@ -159,7 +187,7 @@ function isSelected(id: string) {
   padding-right: 2px;
 }
 
-.gateway-model-picker--compact .gateway-model-picker__scroll {
+.gateway-model-picker--compact:not(.gateway-model-picker--fill) .gateway-model-picker__scroll {
   max-height: min(32vh, 240px);
 }
 

@@ -1,4 +1,4 @@
-import {
+﻿import {
   clearStoredGatewayKey,
   invalidateGatewayModelCache,
 } from '@renderer/services/gateway-api'
@@ -26,8 +26,8 @@ const LOCAL_DATA_KEYS = [
   'novel_material_library_v1',
   'novel_project_stats_v1',
   'novel_reading_settings_v1',
-  'arena-login-cache-v2',
-  'arena-user-local-profile-v1',
+  'novel-login-cache-v2',
+  'novel-user-local-profile-v1',
   'userInfo',
   'token',
   'refreshToken',

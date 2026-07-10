@@ -1,10 +1,10 @@
-import { randomUUID } from 'node:crypto'
+﻿import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs'
 import { join } from 'node:path'
 import { getAppHomeDir } from '../app-home'
 import { NOVEL_STORE_KEY, NOVEL_STORE_VERSION } from '@shared/novel/constants'
 import type {
-  ArenaResult,
+  NovelResult,
   Chapter,
   NovelProject,
   NovelProjectSummary,
@@ -90,7 +90,7 @@ export class NovelStore {
     saveStore(this.appId, this.userId, data)
   }
 
-  listProjects(): ArenaResult<NovelProjectSummary[]> {
+  listProjects(): NovelResult<NovelProjectSummary[]> {
     const store = this.read()
     const list = Object.values(store.projects)
       .map(toSummary)
@@ -98,7 +98,7 @@ export class NovelStore {
     return { ok: true, data: list }
   }
 
-  getProject(projectId: string): ArenaResult<NovelProject> {
+  getProject(projectId: string): NovelResult<NovelProject> {
     const project = this.read().projects[projectId]
     if (!project) return { ok: false, error: '项目不存在' }
     return { ok: true, data: project }
@@ -108,7 +108,7 @@ export class NovelStore {
     title: string,
     initialPrompt: string,
     writingMode: import('@shared/novel/types').WritingMode = 'full'
-  ): ArenaResult<NovelProject> {
+  ): NovelResult<NovelProject> {
     const store = this.read()
     const now = new Date().toISOString()
     const project: NovelProject = {
@@ -125,7 +125,7 @@ export class NovelStore {
     return { ok: true, data: project }
   }
 
-  saveProject(project: NovelProject): ArenaResult<NovelProject> {
+  saveProject(project: NovelProject): NovelResult<NovelProject> {
     const store = this.read()
     project.updated_at = new Date().toISOString()
     store.projects[project.id] = project
@@ -133,7 +133,7 @@ export class NovelStore {
     return { ok: true, data: project }
   }
 
-  deleteProjects(projectIds: string[]): ArenaResult<{ deleted: number }> {
+  deleteProjects(projectIds: string[]): NovelResult<{ deleted: number }> {
     const store = this.read()
     let deleted = 0
     for (const id of projectIds) {
@@ -176,7 +176,7 @@ export class NovelStore {
     this.write(emptyStore())
   }
 
-  getChapter(projectId: string, chapterNumber: number): ArenaResult<Chapter> {
+  getChapter(projectId: string, chapterNumber: number): NovelResult<Chapter> {
     const projectResult = this.getProject(projectId)
     if (!projectResult.ok) return projectResult
     const chapter = ensureChapter(projectResult.data, chapterNumber)
@@ -184,7 +184,7 @@ export class NovelStore {
     return { ok: true, data: chapter }
   }
 
-  getSection(projectId: string, section: string): ArenaResult<{ section: string; data: Record<string, unknown> }> {
+  getSection(projectId: string, section: string): NovelResult<{ section: string; data: Record<string, unknown> }> {
     const projectResult = this.getProject(projectId)
     if (!projectResult.ok) return projectResult
     const project = projectResult.data

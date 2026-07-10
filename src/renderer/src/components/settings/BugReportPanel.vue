@@ -2,17 +2,10 @@
 import { computed, ref } from 'vue'
 import { MessageSquare, PenLine } from 'lucide-vue-next'
 import type { PortalTicketRecord } from '@renderer/services'
+import NovelModalShell from '@renderer/novel/components/shared/NovelModalShell.vue'
+import NovelSelect from '@renderer/components/common/NovelSelect.vue'
 import ProfileSectionLayout from './ProfileSectionLayout.vue'
-import {
-  NButton,
-  NForm,
-  NFormItem,
-  NInput,
-  NModal,
-  NSelect,
-  NSpace,
-  NTag,
-} from '../../ui'
+import { NButton, NSelect, NTag } from '../../ui'
 
 const props = defineProps<{
   tickets: PortalTicketRecord[]
@@ -53,6 +46,10 @@ const paginatedTickets = computed(() => {
 
 const totalPages = computed(() => Math.max(1, Math.ceil(sortedTickets.value.length / pageSize.value)))
 
+const canSubmitTicket = computed(
+  () => Boolean(ticketTitle.value.trim() && ticketContent.value.trim()) && !ticketSubmitting.value
+)
+
 function formatShortTime(raw: string) {
   if (!raw) return '—'
   const d = new Date(raw)
@@ -80,6 +77,11 @@ function openTicketModal() {
   ticketContent.value = ''
   ticketPriority.value = 'normal'
   ticketModalOpen.value = true
+}
+
+function closeTicketModal() {
+  if (ticketSubmitting.value) return
+  ticketModalOpen.value = false
 }
 
 async function submitTicket() {
@@ -154,44 +156,66 @@ function onPageSizeChange(next: number) {
       </div>
     </div>
 
-    <NModal
-      v-model:show="ticketModalOpen"
-      preset="card"
+    <NovelModalShell
+      :show="ticketModalOpen"
+      variant="form"
+      auto-min-width="md"
       title="提交反馈"
-      style="max-width: 520px"
+      aria-label="提交反馈"
+      foot-class="novel-modal__foot--form"
       :mask-closable="!ticketSubmitting"
+      @close="closeTicketModal"
     >
-      <NForm label-placement="top">
-        <NFormItem label="标题">
-          <NInput v-model:value="ticketTitle" maxlength="120" placeholder="简要描述问题" />
-        </NFormItem>
-        <NFormItem label="优先级">
-          <NSelect v-model:value="ticketPriority" :options="ticketPriorityOptions" />
-        </NFormItem>
-        <NFormItem label="详细说明">
-          <NInput
-            v-model:value="ticketContent"
-            type="textarea"
-            :rows="5"
+      <div class="novel-modal__compact-form">
+        <div class="md-text-field md-text-field-filled">
+          <label for="ticket-title" class="md-text-field-label">标题</label>
+          <input
+            id="ticket-title"
+            v-model="ticketTitle"
+            type="text"
+            maxlength="120"
+            class="md-text-field-input w-full"
+            placeholder="简要描述问题"
+          />
+        </div>
+
+        <div class="md-text-field md-text-field-filled">
+          <label class="md-text-field-label">优先级</label>
+          <NovelSelect v-model="ticketPriority" :options="ticketPriorityOptions" aria-label="优先级" />
+        </div>
+
+        <div class="md-text-field md-text-field-filled">
+          <label for="ticket-content" class="md-text-field-label">详细说明</label>
+          <textarea
+            id="ticket-content"
+            v-model="ticketContent"
+            class="md-textarea w-full"
+            rows="5"
             maxlength="2000"
             placeholder="请描述复现步骤、期望结果、实际表现或模型调用相关问题"
           />
-        </NFormItem>
-      </NForm>
+        </div>
+      </div>
+
       <template #footer>
-        <NSpace justify="end">
-          <NButton :disabled="ticketSubmitting" @click="ticketModalOpen = false">取消</NButton>
-          <NButton
-            type="primary"
-            :loading="ticketSubmitting"
-            :disabled="!ticketTitle.trim() || !ticketContent.trim()"
-            @click="submitTicket"
-          >
-            提交
-          </NButton>
-        </NSpace>
+        <button
+          type="button"
+          class="md-btn md-btn-tonal md-ripple"
+          :disabled="ticketSubmitting"
+          @click="closeTicketModal"
+        >
+          取消
+        </button>
+        <button
+          type="button"
+          class="md-btn md-btn-filled md-ripple"
+          :disabled="!canSubmitTicket"
+          @click="submitTicket"
+        >
+          {{ ticketSubmitting ? '提交中…' : '提交' }}
+        </button>
       </template>
-    </NModal>
+    </NovelModalShell>
   </ProfileSectionLayout>
 </template>
 
@@ -227,5 +251,9 @@ function onPageSizeChange(next: number) {
   margin-top: auto;
   padding-top: 14px;
   flex: 0 0 auto;
+}
+
+.bug-report-panel .novel-modal__compact-form :deep(.novel-select--default) {
+  width: 100%;
 }
 </style>

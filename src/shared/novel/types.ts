@@ -1,4 +1,4 @@
-export type WritingMode = 'simple' | 'full'
+﻿export type WritingMode = 'simple' | 'full'
 
 /** 项目来源：手动创建 或 txt 文件导入 */
 export type ProjectSourceType = 'created' | 'txt_import'
@@ -222,4 +222,4 @@ export interface NovelStoreStats {
   completedChapterCount: number
 }
 
-export type ArenaResult<T> = { ok: true; data: T } | { ok: false; error: string }
+export type NovelResult<T> = { ok: true; data: T } | { ok: false; error: string }

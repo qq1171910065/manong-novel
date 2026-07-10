@@ -1,8 +1,8 @@
-/* Page scroll layout inside ImmersiveShell — complements agent-arena.css */
+﻿/* Page scroll layout inside ImmersiveShell — complements agent-arena.css */
 
 :root {
-  --arena-nav-height: 72px;
-  --arena-content-height: calc(100vh - var(--arena-nav-height));
+  --novel-nav-height: 72px;
+  --novel-content-height: calc(100vh - var(--novel-nav-height));
 }
 
 html,
@@ -31,18 +31,18 @@ body,
 }
 
 /* Viewport-lock pages (settings, detail, writing desk) */
-.arena-content:has(.portal-page--viewport-lock),
-.arena-content:has(.page--viewport-lock),
-.arena-content:has(.aa-subpage--viewport-lock) {
+.novel-content:has(.portal-page--viewport-lock),
+.novel-content:has(.page--viewport-lock),
+.novel-content:has(.aa-subpage--viewport-lock) {
   overflow: hidden;
 }
 
-.arena-content:has(.portal-page--viewport-lock) .page-view-host,
-.arena-content:has(.portal-page--viewport-lock) .page-view-host__page,
-.arena-content:has(.page--viewport-lock) .page-view-host,
-.arena-content:has(.page--viewport-lock) .page-view-host__page,
-.arena-content:has(.aa-subpage--viewport-lock) .page-view-host,
-.arena-content:has(.aa-subpage--viewport-lock) .page-view-host__page {
+.novel-content:has(.portal-page--viewport-lock) .page-view-host,
+.novel-content:has(.portal-page--viewport-lock) .page-view-host__page,
+.novel-content:has(.page--viewport-lock) .page-view-host,
+.novel-content:has(.page--viewport-lock) .page-view-host__page,
+.novel-content:has(.aa-subpage--viewport-lock) .page-view-host,
+.novel-content:has(.aa-subpage--viewport-lock) .page-view-host__page {
   flex: 1 1 0;
   min-height: 0;
   height: 100%;
@@ -69,7 +69,7 @@ body,
 .page-view-host__loading,
 .page-view-host__error {
   flex: 1;
-  min-height: var(--arena-content-height);
+  min-height: var(--novel-content-height);
   display: grid;
   place-content: center;
   gap: 12px;

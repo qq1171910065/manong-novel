@@ -1,4 +1,4 @@
-import { app, type BrowserWindow } from 'electron'
+﻿import { app, type BrowserWindow } from 'electron'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { URL } from 'node:url'
 
@@ -39,8 +39,8 @@ async function handleScreenshot(getWindow: WindowGetter, res: ServerResponse): P
   res.writeHead(200, {
     'cache-control': 'no-store',
     'content-type': 'image/png',
-    'x-arena-window-width': String(size.width),
-    'x-arena-window-height': String(size.height),
+    'x-novel-window-width': String(size.width),
+    'x-novel-window-height': String(size.height),
   })
   res.end(image.toPNG())
 }
