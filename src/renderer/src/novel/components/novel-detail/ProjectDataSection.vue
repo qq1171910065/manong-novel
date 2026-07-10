@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Download, Trash2 } from 'lucide-vue-next'
+import { Download, Eraser, Trash2 } from 'lucide-vue-next'
 import type { NovelProject } from '@shared/novel/types'
 import { NovelAPI } from '@renderer/services/novel/api'
 import {
@@ -12,22 +12,36 @@ import { formatDateTimeCompact } from '@renderer/novel/utils/date'
 import { confirm } from '@renderer/composables/useAppDialog'
 import { useRouter } from '@renderer/novel/composables/useNovelRouter'
 import { useNovelStore } from '@renderer/stores/novel'
+import {
+  listWrittenChapterNumbers,
+  SETTING_EDIT_REQUIRES_CLEAR_CHAPTERS_MESSAGE,
+} from '@shared/novel/project-writing-guard'
 
 const props = defineProps<{
   projectId: string
   project: NovelProject | null
 }>()
 
+const emit = defineEmits<{
+  chaptersCleared: []
+}>()
+
 const router = useRouter()
 const novelStore = useNovelStore()
 
-const busy = ref<'txt' | 'project' | 'delete' | null>(null)
+const busy = ref<'txt' | 'project' | 'delete' | 'clearChapters' | null>(null)
 const message = ref('')
 const error = ref('')
 
 const storage = computed(() =>
   props.project ? estimateProjectStorage(props.project) : null
 )
+
+const writtenChapterNumbers = computed(() =>
+  props.project ? listWrittenChapterNumbers(props.project) : []
+)
+
+const writtenChapterCount = computed(() => writtenChapterNumbers.value.length)
 
 const summaryCards = computed(() => {
   const project = props.project
@@ -121,6 +135,36 @@ async function runExport(kind: 'txt' | 'project') {
   }
 }
 
+async function clearAllChapterContent() {
+  if (busy.value || !props.project) return
+  const count = writtenChapterCount.value
+  if (!count) return
+
+  const ok = await confirm({
+    title: '清除全部章节正文',
+    message: `确定清除 ${count} 章正文吗？`,
+    detail:
+      '章节大纲会保留，正文删除后可通过写作台重新生成。清除后可在各 Tab 使用 AI 助手调整设定。',
+    tone: 'danger',
+    confirmText: '清除正文',
+  })
+  if (!ok) return
+
+  busy.value = 'clearChapters'
+  message.value = ''
+  error.value = ''
+  try {
+    await NovelAPI.clearAllWrittenChapterContent(props.projectId)
+    await novelStore.loadProject(props.projectId, true)
+    emit('chaptersCleared')
+    message.value = '已清除全部章节正文，现在可以使用 AI 调整设定。'
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : '清除失败，请重试'
+  } finally {
+    busy.value = null
+  }
+}
+
 async function deleteProject() {
   if (busy.value || !props.project) return
   const title = props.project.title || '未命名作品'
@@ -187,6 +231,30 @@ async function deleteProject() {
             <span class="nd-timeline__value">{{ item.value }}</span>
           </li>
         </ul>
+      </section>
+
+      <section v-if="writtenChapterCount > 0" class="nd-block">
+        <div class="nd-block__head">
+          <div>
+            <h3 class="nd-block__title">设定修改</h3>
+            <p class="nd-block__subtitle">写作开始后需先清除正文，才能用 AI 调整蓝图</p>
+          </div>
+        </div>
+        <div class="project-data-setting-lock">
+          <div class="project-data-setting-lock__body">
+            <strong>已写 {{ writtenChapterCount }} 章正文</strong>
+            <p>{{ SETTING_EDIT_REQUIRES_CLEAR_CHAPTERS_MESSAGE }}</p>
+          </div>
+          <button
+            type="button"
+            class="novel-btn novel-btn--ghost"
+            :disabled="Boolean(busy)"
+            @click="clearAllChapterContent"
+          >
+            <Eraser :size="15" />
+            {{ busy === 'clearChapters' ? '清除中...' : '清除全部章节正文' }}
+          </button>
+        </div>
       </section>
 
       <section class="nd-block">
@@ -256,6 +324,7 @@ async function deleteProject() {
 </template>
 
 <style scoped>
+.project-data-setting-lock,
 .project-data-danger {
   display: flex;
   align-items: center;
@@ -263,21 +332,31 @@ async function deleteProject() {
   gap: 16px;
   padding: 14px 16px;
   border-radius: var(--radius-lg);
-  border: 1px solid color-mix(in srgb, var(--danger, #ef4444) 18%, transparent);
-  background: color-mix(in srgb, var(--danger, #ef4444) 6%, transparent);
 }
 
+.project-data-setting-lock {
+  border: 1px solid color-mix(in srgb, var(--warning, #f59e0b) 22%, transparent);
+  background: color-mix(in srgb, var(--warning, #f59e0b) 7%, transparent);
+}
+
+.project-data-setting-lock__body strong,
 .project-data-danger__body strong {
   display: block;
   font-size: var(--text-sm);
   color: var(--text);
 }
 
+.project-data-setting-lock__body p,
 .project-data-danger__body p {
   margin: 4px 0 0;
   font-size: var(--text-xs);
   line-height: 1.55;
   color: var(--muted);
+}
+
+.project-data-danger {
+  border: 1px solid color-mix(in srgb, var(--danger, #ef4444) 18%, transparent);
+  background: color-mix(in srgb, var(--danger, #ef4444) 6%, transparent);
 }
 
 .project-data-message {
@@ -298,6 +377,7 @@ async function deleteProject() {
 }
 
 @media (max-width: 720px) {
+  .project-data-setting-lock,
   .project-data-danger {
     flex-direction: column;
     align-items: stretch;

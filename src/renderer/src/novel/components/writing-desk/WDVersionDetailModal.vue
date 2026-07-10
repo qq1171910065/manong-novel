@@ -13,7 +13,11 @@
     @close="$emit('close')"
   >
     <div class="novel-preview-dialog__chapter-content">
-      <p class="novel-preview-dialog__text">{{ cleanVersionContent(version?.content || '') }}</p>
+      <NovelChapterMarkdown
+        :source="versionText"
+        :blueprint="blueprint"
+        variant="desk"
+      />
     </div>
 
     <template #footer>
@@ -55,7 +59,11 @@
 
 <script setup lang="ts">
 import type { ChapterVersion } from '@renderer/services/novel/api'
+import type { Blueprint } from '@shared/novel/types'
 import { computed } from 'vue'
+import { extractChapterPlainText } from '@shared/novel/chapter-content-text'
+import { countChapterChars } from '@shared/novel/chapter-length-plan'
+import NovelChapterMarkdown from '@renderer/novel/components/shared/NovelChapterMarkdown.vue'
 import NovelPreviewDialog from '@renderer/novel/components/shared/NovelPreviewDialog.vue'
 
 interface Props {
@@ -63,54 +71,18 @@ interface Props {
   detailVersionIndex: number
   version: ChapterVersion | null
   isCurrent: boolean
+  blueprint?: Blueprint | null
 }
 
 const props = defineProps<Props>()
 
 defineEmits(['close', 'selectVersion'])
 
+const versionText = computed(() => extractChapterPlainText(props.version?.content || ''))
+
 const versionSubtitle = computed(() => {
   const style = props.version?.style || '标准'
-  const words = Math.round(cleanVersionContent(props.version?.content || '').length / 100) * 100
+  const words = countChapterChars(versionText.value)
   return `${style}风格 · 约 ${words} 字`
 })
-
-const cleanVersionContent = (content: string): string => {
-  if (!content) return ''
-  try {
-    const parsed = JSON.parse(content)
-    const extractContent = (value: any): string | null => {
-      if (!value) return null
-      if (typeof value === 'string') return value
-      if (Array.isArray(value)) {
-        for (const item of value) {
-          const nested = extractContent(item)
-          if (nested) return nested
-        }
-        return null
-      }
-      if (typeof value === 'object') {
-        for (const key of ['content', 'chapter_content', 'chapter_text', 'text', 'body', 'story']) {
-          if (value[key]) {
-            const nested = extractContent(value[key])
-            if (nested) return nested
-          }
-        }
-      }
-      return null
-    }
-    const extracted = extractContent(parsed)
-    if (extracted) {
-      content = extracted
-    }
-  } catch {
-    // not json
-  }
-  let cleaned = content.replace(/^"|"$/g, '')
-  cleaned = cleaned.replace(/\\n/g, '\n')
-  cleaned = cleaned.replace(/\\"/g, '"')
-  cleaned = cleaned.replace(/\\t/g, '\t')
-  cleaned = cleaned.replace(/\\\\/g, '\\')
-  return cleaned
-}
 </script>

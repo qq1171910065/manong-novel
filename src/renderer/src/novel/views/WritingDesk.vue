@@ -153,6 +153,7 @@
       :detail-version-index="detailVersionIndex"
       :version="availableVersions[detailVersionIndex]"
       :is-current="isCurrentVersion(detailVersionIndex)"
+      :blueprint="project?.blueprint ?? null"
       @close="closeVersionDetail"
       @select-version="selectVersionFromDetail"
     />

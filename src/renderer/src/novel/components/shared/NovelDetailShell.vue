@@ -7,12 +7,18 @@
           <button
             type="button"
             class="detail-sidebar-create"
-            :class="{ 'is-auto-writing': isCurrentProjectAutoWriteRunning }"
+            :class="{ 'is-auto-writing': isAutoWriteActive }"
             :disabled="isPrimaryActionBusy"
             :title="primaryActionHint"
             @click="goToWritingDesk"
           >
-            <PenLine :size="18" aria-hidden="true" />
+            <Loader2
+              v-if="isAutoWriteActive"
+              :size="18"
+              class="detail-sidebar-create__spinner"
+              aria-hidden="true"
+            />
+            <PenLine v-else :size="18" aria-hidden="true" />
             <span>{{ primaryActionLabel }}</span>
           </button>
 
@@ -49,6 +55,23 @@
               </div>
               <div v-if="showSectionHeaderActions" class="profile-section__actions">
                 <button
+                  v-if="showAiAssistantAction"
+                  type="button"
+                  class="detail-action-btn detail-action-btn--ai md-ripple"
+                  :disabled="!canOpenAiAssistant || aiAssistantBusy"
+                  :title="aiAssistantActionTitle"
+                  @click="openAiAssistant()"
+                >
+                  <Loader2
+                    v-if="aiAssistantBusy"
+                    :size="16"
+                    class="detail-action-btn__spinner"
+                    aria-hidden="true"
+                  />
+                  <Sparkles v-else :size="16" aria-hidden="true" />
+                  <span>{{ aiAssistantBusy ? 'AI 处理中' : 'AI 助手' }}</span>
+                </button>
+                <button
                   v-if="showAddButton"
                   type="button"
                   class="detail-action-btn detail-action-btn--primary md-ripple"
@@ -62,7 +85,10 @@
 
             <div
               class="profile-section__body"
-              :class="{ 'profile-section__body--fill': isFillSection || showBlueprintSetupEmpty }"
+              :class="{
+                'profile-section__body--fill': isFillSection || showBlueprintSetupEmpty,
+                'profile-section__body--flush': isFlushSection,
+              }"
             >
               <div v-if="isSectionLoading" class="novel-detail-state">
                 <div class="md-spinner"></div>
@@ -92,6 +118,7 @@
                 @portrait-update="handlePortraitUpdate"
                 @portrait-generate="handlePortraitGenerate"
                 @asset-saved="reloadSection($event, true)"
+                @chapters-cleared="onChaptersCleared"
               />
             </div>
           </div>
@@ -106,16 +133,10 @@
       :auto-write-running="isCurrentProjectAutoWriteRunning"
       :auto-write-paused="isCurrentProjectAutoWritePaused"
       :auto-write-pause-reason="autoWrite.pauseReason.value"
-      :can-open-inspiration-chat="canOpenInspirationChat"
-      :can-open-ai-assistant="canOpenAiAssistant"
-      :ai-assistant-busy="aiAssistantBusy"
       @close="closeWritingDesk"
       @start-auto-write="runAutoWritePipeline"
       @resume-auto-write="resumeAutoWritePipeline"
       @pause-auto-write="pauseAutoWritePipeline"
-      @open-inspiration-chat="openInspirationChat"
-      @open-ai-assistant="() => openAiAssistant()"
-      @open-reinspiration="openReinspiration"
     />
 
     <InspirationModal
@@ -216,6 +237,8 @@ import {
   Database,
   PenLine,
   Plus,
+  Sparkles,
+  Loader2,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
 import { useRoute } from '@renderer/novel/composables/useNovelRouter'
@@ -290,6 +313,10 @@ import {
   WRITING_MODE_LABELS,
   type WritingModeSectionKey,
 } from '@shared/novel/writing-mode'
+import {
+  canEditProjectSettingsWithAi,
+  SETTING_EDIT_REQUIRES_CLEAR_CHAPTERS_MESSAGE,
+} from '@shared/novel/project-writing-guard'
 import { isTxtImportLocked, isTxtImportPending } from '@shared/novel/import-status'
 import type { ImportParseProgress } from '@renderer/services/novel/api'
 
@@ -489,32 +516,39 @@ const showBlueprintGenerating = computed(() => {
 const showImportParsing = computed(() => {
   return importParseGen.isGenerating.value || isImportParsing(projectId.value)
 })
-const generationOverlayDescription = computed(() =>
-  showImportParsing.value
-    ? '智能解析会逐批阅读全书，耗时可能较长，请保持应用在前台；可随时点击取消。'
-    : 'AI 正在为您精心打造独特的故事蓝图，请稍候…'
-)
+const generationOverlayDescription = computed(() => {
+  if (isAutoWriteActive.value) {
+    return '自动写作进行中，可在写作台查看章节生成进度；点击取消可暂停创作。'
+  }
+  if (showImportParsing.value) {
+    return '智能解析会逐批阅读全书，耗时可能较长，请保持应用在前台；可随时点击取消。'
+  }
+  return 'AI 正在为您精心打造独特的故事蓝图，请稍候…'
+})
 
-const generationOverlayProgress = computed(() =>
-  Math.round(generationOverlay.value.progress.value)
-)
+const generationOverlayProgress = computed(() => {
+  if (isAutoWriteActive.value) return autoWrite.progressPercent.value
+  return Math.round(generationOverlay.value.progress.value)
+})
 
 const generationOverlayText = computed(() => {
+  if (isAutoWriteActive.value) return autoWrite.statusMessage.value
   if (showImportParsing.value) return importParseMessage.value
   return generationOverlay.value.loadingText.value
 })
 
 const showGenerationOverlay = computed(
   () =>
-    (showBlueprintGenerating.value || showImportParsing.value) &&
+    (showBlueprintGenerating.value || showImportParsing.value || isAutoWriteActive.value) &&
     !showInspirationModal.value
 )
 
 const isCurrentProjectAutoWriteRunning = computed(() => autoWrite.isProjectActive(projectId.value))
 const isCurrentProjectAutoWritePaused = computed(() => autoWrite.isProjectPaused(projectId.value))
-const isWritingDeskLocked = computed(
+const isAutoWriteActive = computed(
   () => isCurrentProjectAutoWriteRunning.value && !isCurrentProjectAutoWritePaused.value
 )
+const isWritingDeskLocked = computed(() => isAutoWriteActive.value)
 
 function resolveImportParseProgressPercent(progress: ImportParseProgress): number {
   switch (progress.phase) {
@@ -543,6 +577,10 @@ const isImportPending = computed(() => isTxtImportPending(novel.value))
 const isContentLocked = computed(() => isTxtImportLocked(novel.value))
 const importedChapterCount = computed(() => novel.value?.chapters?.length ?? 0)
 const primaryActionLabel = computed(() => {
+  if (isAutoWriteActive.value) {
+    const msg = autoWrite.statusMessage.value
+    return msg.length > 18 ? `${msg.slice(0, 18)}…` : msg || '创作中…'
+  }
   if (showImportParsing.value) return '解析中...'
   if (isImportPending.value) return '智能解析'
   const project = novel.value
@@ -589,105 +627,69 @@ const canPolishActiveSection = computed(() => {
   return isPolishableSection(section as PolishableSectionKey)
 })
 
-const canOpenAiAssistant = computed(() => {
+const settingsAiEligible = computed(() => {
   if (isContentLocked.value) return false
   const project = novel.value
   if (!project) return false
   return !needsInspirationConversation(project)
 })
 
-const canOpenInspirationChat = computed(() => {
-  if (isContentLocked.value) return false
-  const project = novel.value
-  if (!project || isTxtImportPending(project)) return false
-  if (needsInspirationConversation(project)) return false
-  return (project.conversation_history?.length ?? 0) > 0
+const canOpenAiAssistant = computed(
+  () => settingsAiEligible.value && canEditProjectSettingsWithAi(novel.value)
+)
+
+const aiAssistantBlockedReason = computed(() => {
+  if (!settingsAiEligible.value) return ''
+  if (canEditProjectSettingsWithAi(novel.value)) return ''
+  return SETTING_EDIT_REQUIRES_CLEAR_CHAPTERS_MESSAGE
 })
+
+const guardSettingsAiEdit = (): boolean => {
+  if (canEditProjectSettingsWithAi(novel.value)) return true
+  globalAlert.showError(SETTING_EDIT_REQUIRES_CLEAR_CHAPTERS_MESSAGE, '无法修改设定')
+  return false
+}
 
 const aiAssistantBusy = computed(() => isAiAssistantBusy(projectId.value))
 
+const showAiAssistantAction = computed(() => settingsAiEligible.value)
+
+const aiAssistantActionTitle = computed(() => {
+  if (aiAssistantBlockedReason.value) return aiAssistantBlockedReason.value
+  return 'AI 助手 · 全书联动调整当前 Tab 与蓝图设定'
+})
+
 const showAddButton = computed(() => {
   if (isContentLocked.value || showBlueprintSetupEmpty.value) return false
-  const ws = sectionData.world_setting?.world_setting as { core_rules?: string; key_locations?: unknown[]; factions?: unknown[] } | undefined
   switch (activeSection.value) {
     case 'chapter_outline':
       return (sectionData.chapter_outline?.chapter_outline?.length ?? 0) > 0
-    case 'characters':
-      return (sectionData.characters?.characters?.length ?? 0) > 0
     case 'relationships':
       return (sectionData.relationships?.relationships?.length ?? 0) > 0
-    case 'world_rules':
-      return Boolean(ws?.core_rules?.trim())
-    case 'world_locations':
-      return Array.isArray(ws?.key_locations) && ws.key_locations.length > 0
-    case 'world_factions':
-      return Array.isArray(ws?.factions) && ws.factions.length > 0
     default:
       return false
   }
 })
 
-const showSectionHeaderActions = computed(() => showAddButton.value)
+const showSectionHeaderActions = computed(() => showAiAssistantAction.value || showAddButton.value)
 
 const onHeaderAdd = () => {
   if (activeSection.value === 'chapter_outline') {
     startAddChapter()
     return
   }
-  if (activeSection.value === 'characters') {
-    activeSectionRef.value?.openAddCharacter?.()
-    return
-  }
   if (activeSection.value === 'relationships') {
     activeSectionRef.value?.openAddRelationship?.()
-    return
   }
-  if (activeSection.value === 'world_rules') {
-    activeSectionRef.value?.openAdd?.()
-    return
-  }
-  if (activeSection.value === 'world_locations' || activeSection.value === 'world_factions') {
-    activeSectionRef.value?.openAdd?.()
-    return
-  }
-  openSectionEdit()
 }
 
 interface AnalysisSectionHandle {
   refreshData?: () => void
   useAIAnalysis?: () => void
-  openAddCharacter?: () => void
   openAddRelationship?: () => void
-  openAdd?: () => void
 }
 
 const activeSectionRef = ref<AnalysisSectionHandle | null>(null)
-
-const openSectionEdit = () => {
-  switch (activeSection.value) {
-    case 'characters':
-      handleSectionEdit({
-        field: 'characters',
-        title: '主要角色',
-        value: sectionData.characters?.characters ?? [],
-      })
-      break
-    case 'relationships':
-      handleSectionEdit({
-        field: 'relationships',
-        title: '人物关系',
-        value: sectionData.relationships?.relationships ?? [],
-      })
-      break
-    case 'chapter_outline':
-      handleSectionEdit({
-        field: 'chapter_outline',
-        title: '章节大纲',
-        value: sectionData.chapter_outline?.chapter_outline ?? [],
-      })
-      break
-  }
-}
 
 const activeSectionMeta = computed(() => {
   const hit = sections.value.find((item) => item.key === activeSection.value)
@@ -712,6 +714,10 @@ const isFillSection = computed(() =>
     'foreshadowing',
     'data',
   ].includes(activeSection.value)
+)
+
+const isFlushSection = computed(() =>
+  ['characters', 'world_locations', 'world_factions', 'chapters'].includes(activeSection.value)
 )
 
 const componentContainerClass = computed(() => {
@@ -918,6 +924,7 @@ const openAiAssistant = async (options?: {
   await ensureProjectLoaded()
   const project = novel.value
   if (!project) return
+  if (!guardSettingsAiEdit()) return
 
   const entrySection = canPolishActiveSection.value
     ? (resolvePolishableSection(activeSection.value) as PolishableSectionKey)
@@ -938,13 +945,7 @@ const openAiAssistant = async (options?: {
     sectionData as Record<string, unknown>,
     project.blueprint ?? novelStore.currentProject?.blueprint,
     {
-      scopeMode:
-        options?.scopeMode ??
-        (savedState.scope_mode === 'entry' ||
-        savedState.scope_mode === 'global' ||
-        savedState.scope_mode === 'auto'
-          ? savedState.scope_mode
-          : 'auto'),
+      scopeMode: options?.scopeMode ?? 'global',
       workflowMode:
         options?.workflowMode ??
         (savedState.workflow_mode === 'reinspiration' ? 'reinspiration' : 'edit'),
@@ -956,22 +957,9 @@ const openAiAssistant = async (options?: {
   showInspirationModal.value = true
 }
 
-const openInspirationChat = async () => {
-  await ensureProjectLoaded()
-  const project = novel.value
-  if (!project) return
-  inspirationModalMode.value = 'inspiration'
-  polishContext.value = null
-  showInspirationModal.value = true
-}
-
-const openReinspiration = async () => {
-  const confirmed = await globalAlert.showConfirm(
-    '「重新过灵感」会基于现有蓝图重构整体框架（类型、世界观、人物、关系、大纲等）。已写章节可能与新版设定不符，请谨慎使用。是否打开 AI 助手进入重构对话？',
-    '重新过灵感'
-  )
-  if (!confirmed) return
-  await openAiAssistant({ workflowMode: 'reinspiration', scopeMode: 'global' })
+const onChaptersCleared = async () => {
+  await novelStore.loadProject(projectId.value, true)
+  void loadSection('chapters', true)
 }
 
 const syncSectionDataFromBlueprint = (blueprint: import('@shared/novel/types').Blueprint | undefined) => {
@@ -1071,12 +1059,7 @@ watch(activeSection, () => {
     sectionData as Record<string, unknown>,
     novel.value.blueprint,
     {
-      scopeMode:
-        savedState.scope_mode === 'entry' ||
-        savedState.scope_mode === 'global' ||
-        savedState.scope_mode === 'auto'
-          ? savedState.scope_mode
-          : polishContext.value?.scopeMode ?? 'auto',
+      scopeMode: polishContext.value?.scopeMode ?? 'global',
       workflowMode:
         savedState.workflow_mode === 'reinspiration'
           ? 'reinspiration'
@@ -1096,6 +1079,10 @@ const refreshDetailSections = () => {
 }
 
 const cancelGenerationOverlay = () => {
+  if (isAutoWriteActive.value) {
+    autoWrite.pause()
+    return
+  }
   if (showImportParsing.value) {
     novelStore.cancelImportParse()
     return
@@ -1203,6 +1190,7 @@ const componentProps = computed(() => {
           novel.value?.blueprint?.chapter_outline ||
           [],
         projectId: projectId.value,
+        blueprint: novel.value?.blueprint ?? null,
       }
     case 'activity_log':
       return { entries: activityEntries.value }

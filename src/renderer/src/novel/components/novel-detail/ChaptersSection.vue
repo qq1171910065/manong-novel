@@ -92,7 +92,11 @@
           <div v-if="displayContent" class="nd-chapter-pane">
             <div class="nd-chapter-reader">
               <div class="nd-chapter-body">
-                <p class="nd-chapter-body__text">{{ displayContent }}</p>
+                <NovelChapterMarkdown
+                  :source="displayContent"
+                  :blueprint="blueprint"
+                  variant="detail"
+                />
               </div>
             </div>
           </div>
@@ -118,8 +122,12 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import type { Blueprint } from '@shared/novel/types'
+import { extractChapterPlainText } from '@shared/novel/chapter-content-text'
+import { countChapterChars } from '@shared/novel/chapter-length-plan'
 import { NovelAPI } from '@renderer/services/novel/api'
 import { useRoute } from '@renderer/novel/composables/useNovelRouter'
+import NovelChapterMarkdown from '@renderer/novel/components/shared/NovelChapterMarkdown.vue'
 import DetailEmptyState from './DetailEmptyState.vue'
 
 export interface ChapterItem {
@@ -147,6 +155,7 @@ const props = defineProps<{
   chapters: ChapterItem[]
   outline?: ChapterOutlineItem[]
   projectId?: string
+  blueprint?: Blueprint | null
 }>()
 
 const route = useRoute()
@@ -177,49 +186,9 @@ const chapterList = computed(() => {
   }))
 })
 
-const displayContent = computed(() => cleanChapterContent(selectedChapter.value?.content))
+const displayContent = computed(() => extractChapterPlainText(selectedChapter.value?.content))
 
-const calculateWordCount = (content: string | null | undefined): number => {
-  if (!content) return 0
-  return content.replace(/\s/g, '').length
-}
-
-const cleanChapterContent = (content: string | null | undefined): string => {
-  if (!content?.trim()) return ''
-  let text = content
-  try {
-    const parsed = JSON.parse(content)
-    const extractContent = (value: unknown): string | null => {
-      if (!value) return null
-      if (typeof value === 'string') return value
-      if (Array.isArray(value)) {
-        for (const item of value) {
-          const nested = extractContent(item)
-          if (nested) return nested
-        }
-        return null
-      }
-      if (typeof value === 'object') {
-        for (const key of ['content', 'chapter_content', 'chapter_text', 'text', 'body', 'story']) {
-          const nested = extractContent((value as Record<string, unknown>)[key])
-          if (nested) return nested
-        }
-      }
-      return null
-    }
-    const extracted = extractContent(parsed)
-    if (extracted) text = extracted
-  } catch {
-    // plain text
-  }
-  return text
-    .replace(/^"|"$/g, '')
-    .replace(/\\n/g, '\n')
-    .replace(/\\"/g, '"')
-    .replace(/\\t/g, '\t')
-    .replace(/\\\\/g, '\\')
-    .trim()
-}
+const calculateWordCount = (content: string | null | undefined): number => countChapterChars(content)
 
 const getStatusLabel = (status: string): string => {
   const statusMap: Record<string, string> = {
@@ -252,11 +221,11 @@ const getStatusClass = (status: string): string => {
 const getChapterListMeta = (chapterNumber: number): string => {
   const cached = chapterCache.get(chapterNumber)
   if (cached) {
-    const words = calculateWordCount(cleanChapterContent(cached.content))
+    const words = calculateWordCount(extractChapterPlainText(cached.content))
     return words > 0 ? `${words} 字` : '未撰写'
   }
   const saved = props.chapters.find((chapter) => chapter.chapter_number === chapterNumber)
-  const words = calculateWordCount(cleanChapterContent(saved?.content))
+  const words = calculateWordCount(extractChapterPlainText(saved?.content))
   return words > 0 ? `${words} 字` : '未撰写'
 }
 

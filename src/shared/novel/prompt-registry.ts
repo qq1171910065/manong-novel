@@ -17,6 +17,7 @@ export const NOVEL_PROMPT_REGISTRY: PromptRegistryEntry[] = [
   { id: 'chapter_plan', file: 'chapter_plan.md', purpose: '章节导演脚本', status: 'wired', wiredIn: 'generateChapterMission' },
   { id: 'writing_v2', file: 'writing_v2.md', purpose: '章节正文撰写', status: 'wired', wiredIn: 'generateChapterDraft' },
   { id: 'evaluation', file: 'evaluation.md', purpose: '多版本评审', status: 'wired', wiredIn: 'evaluateChapter' },
+  { id: 'chapter_proofread', file: 'chapter_proofread.md', purpose: '章节通篇校对润色', status: 'wired', wiredIn: 'proofreadChapterContent' },
   { id: 'extraction', file: 'extraction.md', purpose: '确认时章节摘要', status: 'wired', wiredIn: 'summarizeChapter' },
   { id: 'section_polish', file: 'section_polish.md', purpose: '蓝图板块 AI 修改', status: 'wired', wiredIn: 'converseSectionPolish' },
   { id: 'blueprint_reinspiration', file: 'blueprint_reinspiration.md', purpose: '整本蓝图重灵感', status: 'wired', wiredIn: 'blueprintReinspiration' },

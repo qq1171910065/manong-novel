@@ -912,7 +912,8 @@ function extractStreamDeltaParts(parsed: StreamChoicePayload): {
     readStreamTextField(delta?.reasoning) ||
     readStreamTextField(delta?.thinking) ||
     readStreamTextField(message?.reasoning_content) ||
-    readStreamTextField(message?.reasoning)
+    readStreamTextField(message?.reasoning) ||
+    readStreamTextField(message?.thinking)
   const finishReason =
     typeof choice?.finish_reason === 'string' ? choice.finish_reason : null
   return { content, reasoning, finishReason }
@@ -920,6 +921,23 @@ function extractStreamDeltaParts(parsed: StreamChoicePayload): {
 
 function isStreamFinishReason(reason: string | null | undefined): boolean {
   return reason === 'stop' || reason === 'length' || reason === 'content_filter'
+}
+
+function ingestSseDataLine(line: string, handlers: StreamChatHandlers): 'done' | 'data' | 'skip' {
+  if (!line.startsWith('data:')) return 'skip'
+  const payload = line.slice(5).trim()
+  if (payload === '[DONE]') return 'done'
+  try {
+    const parsed = JSON.parse(payload) as StreamChoicePayload
+    const { content, reasoning, finishReason } = extractStreamDeltaParts(parsed)
+    if (content) handlers.onChunk(content)
+    if (reasoning) handlers.onReasoningChunk?.(reasoning)
+    if (parsed.usage) handlers.onUsage?.(parsed.usage)
+    if (isStreamFinishReason(finishReason)) return 'done'
+  } catch {
+    /* ignore partial json */
+  }
+  return 'data'
 }
 
 export function gatewayChatStreamCollect(
@@ -997,26 +1015,19 @@ export async function gatewayChatStream(
     if (params?.max_tokens != null) bodyPayload.max_tokens = params.max_tokens
     const body = JSON.stringify(bodyPayload)
 
+    const seenLines = new Set<string>()
+    const ingestLine = (line: string) => {
+      const trimmed = line.trim()
+      if (!trimmed || seenLines.has(trimmed)) return
+      seenLines.add(trimmed)
+      ingestSseDataLine(trimmed, handlers)
+    }
+
     const offChunk = window.api.onSSEChunk((line: string) => {
-      if (!line.startsWith('data:')) return
-      const payload = line.slice(5).trim()
-      if (payload === '[DONE]') {
-        finish()
-        return
-      }
-      try {
-        const parsed = JSON.parse(payload) as StreamChoicePayload
-        const { content, reasoning, finishReason } = extractStreamDeltaParts(parsed)
-        if (content) handlers.onChunk(content)
-        if (reasoning) handlers.onReasoningChunk?.(reasoning)
-        if (parsed.usage) handlers.onUsage?.(parsed.usage)
-        if (isStreamFinishReason(finishReason)) finish()
-      } catch {
-        /* ignore partial json */
-      }
+      ingestLine(line)
     })
     const offEnd = window.api.onSSEEnd(() => {
-      finish()
+      /* 等 fetchSSE invoke 返回并回放 lines 后再 finish，避免 IPC 竞态丢 chunk */
     })
     const offError = window.api.onSSEError((err: string) => {
       cleanup()
@@ -1047,13 +1058,16 @@ export async function gatewayChatStream(
     cleanupFns = [cleanup]
 
     try {
-      await window.api.fetchSSE({
+      const result = (await window.api.fetchSSE({
         url,
         method: 'POST',
         body,
         token: key,
         timeoutMs: params?.timeoutMs ?? 120_000,
-      })
+      })) as { lines?: string[] } | void
+      for (const line of result?.lines ?? []) {
+        ingestLine(line)
+      }
       if (!ended && !cancelled) finish()
     } catch (err) {
       cleanup()

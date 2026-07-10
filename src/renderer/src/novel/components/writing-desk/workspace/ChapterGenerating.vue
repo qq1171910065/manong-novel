@@ -125,7 +125,8 @@ const targetProgress = computed(() => {
     planning: 0.14,
     writing: 0.18,
     processing: 0.84,
-    evaluating: 0.9,
+    evaluating: 0.88,
+    proofreading: 0.93,
     confirming: 0.96,
   }
 

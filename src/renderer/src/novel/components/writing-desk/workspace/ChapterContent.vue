@@ -2,9 +2,11 @@
 <template>
   <div>
     <div class="prose max-w-none">
-      <div class="whitespace-pre-wrap leading-relaxed wd-chapter-content__body">
-        {{ cleanVersionContent(selectedChapter.content || '') }}
-      </div>
+      <NovelChapterMarkdown
+        :source="chapterText"
+        :blueprint="blueprint"
+        variant="desk"
+      />
     </div>
 
     <!-- 分层优化弹窗 -->
@@ -82,7 +84,7 @@
       aria-label="优化结果预览"
       @close="showOptimizeResult = false"
     >
-      <p class="novel-preview-dialog__text">{{ optimizedContent }}</p>
+      <NovelChapterMarkdown :source="optimizedContent" :blueprint="blueprint" variant="desk" />
 
       <template #footer>
         <button type="button" class="md-btn md-btn-outlined md-ripple" @click="showOptimizeResult = false">
@@ -110,7 +112,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import type { Blueprint } from '@shared/novel/types'
+import { extractChapterPlainText } from '@shared/novel/chapter-content-text'
+import NovelChapterMarkdown from '@renderer/novel/components/shared/NovelChapterMarkdown.vue'
 import NovelPreviewDialog from '@renderer/novel/components/shared/NovelPreviewDialog.vue'
 import NovelModalShell from '@renderer/novel/components/shared/NovelModalShell.vue'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
@@ -120,9 +125,12 @@ import { OptimizerAPI } from '@renderer/services/novel/api'
 interface Props {
   selectedChapter: Chapter
   projectId?: string
+  blueprint?: Blueprint | null
 }
 
 const props = defineProps<Props>()
+
+const chapterText = computed(() => extractChapterPlainText(props.selectedChapter.content))
 
 defineEmits(['showVersionSelector', 'editChapter'])
 
@@ -169,45 +177,6 @@ const optimizeDimensions = [
     description: '优化文字节奏，增强阅读体验'
   }
 ]
-
-const cleanVersionContent = (content: string): string => {
-  if (!content) return ''
-  try {
-    const parsed = JSON.parse(content)
-    const extractContent = (value: any): string | null => {
-      if (!value) return null
-      if (typeof value === 'string') return value
-      if (Array.isArray(value)) {
-        for (const item of value) {
-          const nested = extractContent(item)
-          if (nested) return nested
-        }
-        return null
-      }
-      if (typeof value === 'object') {
-        for (const key of ['content', 'chapter_content', 'chapter_text', 'text', 'body', 'story']) {
-          if (value[key]) {
-            const nested = extractContent(value[key])
-            if (nested) return nested
-          }
-        }
-      }
-      return null
-    }
-    const extracted = extractContent(parsed)
-    if (extracted) {
-      content = extracted
-    }
-  } catch (error) {
-    // not a json
-  }
-  let cleaned = content.replace(/^"|"$/g, '')
-  cleaned = cleaned.replace(/\\n/g, '\n')
-  cleaned = cleaned.replace(/\\"/g, '"')
-  cleaned = cleaned.replace(/\\t/g, '\t')
-  cleaned = cleaned.replace(/\\\\/g, '\\')
-  return cleaned
-}
 
 const startOptimize = async () => {
   if (!selectedDimension.value || !props.projectId) {

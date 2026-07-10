@@ -1,17 +1,22 @@
 import type { ChapterOutline, WritingMode } from './types'
 import { scoreChapterImportance } from './chapter-version-count'
 
+import { stripMarkdownInline } from './chapter-content-text'
+
 export const CHAPTER_WORD_COUNT_TOLERANCE = 0.12
+
+/** 单章绝对下限（不计空白），避免模型输出极短敷衍正文 */
+export const CHAPTER_ABSOLUTE_MIN_CHARS = 800
 
 const BASE_WORD_COUNT: Record<WritingMode, number> = {
   simple: 2800,
   full: 3500,
 }
 
-/** 中文字数：不计空白 */
+/** 中文字数：不计空白与 Markdown 标记 */
 export function countChapterChars(text: string | null | undefined): number {
   if (!text?.trim()) return 0
-  return text.replace(/\s+/g, '').length
+  return stripMarkdownInline(text).replace(/\s+/g, '').length
 }
 
 export function roundWordTarget(value: number): number {
@@ -36,6 +41,18 @@ export function resolveChapterWordCountRange(target: number): { min: number; max
   const min = roundWordTarget(target * (1 - CHAPTER_WORD_COUNT_TOLERANCE))
   const max = roundWordTarget(target * (1 + CHAPTER_WORD_COUNT_TOLERANCE))
   return { min, max }
+}
+
+/** 生成/验收时允许的最低字数（绝对下限与规划下限取较大值） */
+export function resolveChapterMinAcceptableChars(target: number): number {
+  const { min } = resolveChapterWordCountRange(target)
+  return Math.max(CHAPTER_ABSOLUTE_MIN_CHARS, Math.floor(min * 0.9))
+}
+
+export function isChapterContentTooShort(actual: number, target: number): boolean {
+  if (!actual || actual <= 0) return true
+  if (!target) return actual < CHAPTER_ABSOLUTE_MIN_CHARS
+  return actual < resolveChapterMinAcceptableChars(target)
 }
 
 /** 平滑相邻章节规划字数，避免忽长忽短 */

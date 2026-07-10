@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { parseBlueprintFromLlm, parseChapterOutlineFromLlm, pickContentOnlyPayload } from './json-utils'
+import {
+  parseBlueprintFromLlm,
+  parseChapterOutlineFromLlm,
+  pickContentOnlyPayload,
+  resolveChapterStreamPayload,
+  resolveDisplayAiMessage,
+  isUnresolvedPolishAiMessage,
+} from './json-utils'
 
 describe('parseChapterOutlineFromLlm', () => {
   it('解析嵌套 chapter_outline 对象', () => {
@@ -31,6 +38,40 @@ describe('pickContentOnlyPayload', () => {
   it('content 为空时从 reasoning 提取正文', () => {
     const reasoning = '这是推理模型的章节正文，主角走进雨夜，霓虹在积水里碎成一条条冷光。'
     expect(pickContentOnlyPayload('', reasoning)).toContain('雨夜')
+  })
+
+  it('元叙述过滤后为空时回退到原始 reasoning', () => {
+    const reasoning = [
+      '我觉得这一章应该从雨夜开场，制造悬念，让读者想知道接下来会发生什么。',
+      '他推开那扇生锈的铁门，楼道里弥漫着潮湿的霉味。昏黄的灯泡在头顶摇晃，投下摇曳的影子。',
+      '脚步声在空荡的走廊里回响，每一步都像是踩在某种未知的心跳上。',
+    ].join('\n\n')
+    const result = pickContentOnlyPayload('', reasoning)
+    expect(result).toContain('铁门')
+    expect(result).not.toContain('我觉得')
+  })
+})
+
+describe('resolveChapterStreamPayload', () => {
+  it('content 与 reasoning 分散时仍能合并出正文', () => {
+    const reasoning = '这是推理模型的章节正文，主角走进雨夜，霓虹在积水里碎成一条条冷光。'
+    expect(resolveChapterStreamPayload('', reasoning)).toContain('雨夜')
+  })
+})
+
+describe('resolveDisplayAiMessage', () => {
+  it('从不完整 JSON 流中提取 ai_message 片段', () => {
+    const partial = '{"ai_message": "当前角色偏少，建议补充'
+    expect(resolveDisplayAiMessage(partial)).toBe('当前角色偏少，建议补充')
+  })
+
+  it('完整 JSON 正常提取 ai_message', () => {
+    const raw = JSON.stringify({ ai_message: '以下为待确认的修改方案' })
+    expect(resolveDisplayAiMessage(raw)).toBe('以下为待确认的修改方案')
+  })
+
+  it('无法解析时标记为未解析', () => {
+    expect(isUnresolvedPolishAiMessage(resolveDisplayAiMessage('{"broken":'))).toBe(true)
   })
 })
 

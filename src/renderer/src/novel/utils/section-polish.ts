@@ -1,5 +1,11 @@
 import type { AllSectionType } from '@renderer/services/novel/api'
-import type { Blueprint, Character, ChapterOutline, Relationship } from '@shared/novel/types'
+import type { Blueprint, Character, ChapterOutline, ConversationMessage, Relationship, UIControl } from '@shared/novel/types'
+import { getPolishVagueInputHint, sanitizeMaterialCharacters } from '@shared/novel/blueprint-material-schemas'
+import { isUnresolvedPolishAiMessage } from '@renderer/services/novel/json-utils'
+import {
+  buildCharacterBatchMaterializeInstruction,
+  isCharacterBatchContinuationRequest,
+} from '@renderer/novel/utils/section-polish-batch'
 
 export type PolishableSectionKey =
   | 'overview'
@@ -78,13 +84,13 @@ export function isPolishableSection(section: AllSectionType): section is Polisha
 }
 
 export const POLISH_SCOPE_LABELS: Record<PolishScopeMode, string> = {
-  auto: '智能识别',
+  auto: '全书联动',
   entry: '当前板块',
-  global: '全书设定',
+  global: '全书联动',
 }
 
 export const POLISH_WORKFLOW_LABELS: Record<PolishWorkflowMode, string> = {
-  edit: '局部修改',
+  edit: '设定调整',
   reinspiration: '重新过灵感',
 }
 
@@ -103,12 +109,17 @@ export function detectScopeFromUserInput(text: string): PolishScopeMode | null {
 }
 
 export function resolvePolishScopeMode(
-  preferred: PolishScopeMode | undefined,
+  _preferred: PolishScopeMode | undefined,
   userText?: string | null
 ): PolishScopeMode {
   const detected = userText ? detectScopeFromUserInput(userText) : null
-  if (detected) return detected
-  return preferred ?? 'auto'
+  if (detected === 'entry') return 'entry'
+  return 'global'
+}
+
+export function normalizePolishScopeMode(mode?: PolishScopeMode | null): PolishScopeMode {
+  if (mode === 'entry') return 'entry'
+  return 'global'
 }
 
 export function buildUnifiedPolishContext(
@@ -125,7 +136,7 @@ export function buildUnifiedPolishContext(
   return {
     ...base,
     fullBlueprint: blueprint ?? undefined,
-    scopeMode: options?.scopeMode ?? 'auto',
+    scopeMode: normalizePolishScopeMode(options?.scopeMode),
     workflowMode: options?.workflowMode ?? 'edit',
   }
 }
@@ -356,7 +367,9 @@ export function coalescePolishBlueprintUpdates(
   let characterRenames: Map<string, string> | null = null
 
   if (raw.characters !== undefined) {
-    patch.characters = mergeCharactersUpdate(existing.characters, raw.characters)
+    patch.characters = sanitizeMaterialCharacters(
+      mergeCharactersUpdate(existing.characters, raw.characters)
+    )
     characterRenames = detectCharacterRenames(existing.characters ?? [], patch.characters)
     if (characterRenames.size) {
       nextRelationships = syncRelationshipCharacterNames(nextRelationships, characterRenames)
@@ -463,8 +476,11 @@ export function validateBlueprintUpdates(updates: Partial<Blueprint>): Partial<B
   }
   if (updates.characters !== undefined) {
     if (!Array.isArray(updates.characters)) throw new Error('角色数据格式错误')
-    if (!updates.characters.length) throw new Error('角色列表不能为空')
-    patch.characters = updates.characters
+    const sanitized = sanitizeMaterialCharacters(updates.characters)
+    if (!sanitized.length) {
+      throw new Error('角色数据不完整（姓名至少 2 字且需含身份/性格/描述），请补充说明后重试')
+    }
+    patch.characters = sanitized
   }
   if (updates.relationships !== undefined) {
     if (!Array.isArray(updates.relationships)) throw new Error('关系数据格式错误')
@@ -493,6 +509,37 @@ export function resolveAllSectionReloadKeys(sections: PolishableSectionKey[]): P
   return [...keys]
 }
 
+export const POLISH_VAGUE_INPUT_HINT = getPolishVagueInputHint()
+
+export function polishVagueInputHintForSection(section: PolishableSectionKey): string {
+  return getPolishVagueInputHint(section)
+}
+
+export function buildPolishMaterializeChoiceControl(): UIControl {
+  return {
+    type: 'single_choice',
+    options: [
+      {
+        id: 'materialize_apply',
+        label: '生成并确认应用',
+        description: '根据上文描述生成蓝图变更并进入确认页',
+      },
+      {
+        id: 'continue_edit',
+        label: '继续调整',
+        description: '补充或修正修改、新增要求',
+      },
+    ],
+  }
+}
+
+export function shouldShowPolishMaterializeChoice(aiMessage: string): boolean {
+  const text = aiMessage.trim()
+  if (!text) return false
+  if (/生成并确认应用|尚未生成可写入的数据|生成可应用的修改稿/.test(text)) return true
+  return shouldOfferPolishMaterialize(text)
+}
+
 export function looksLikePolishAppliedClaim(aiMessage: string): boolean {
   const text = aiMessage.trim()
   if (!text) return false
@@ -505,9 +552,26 @@ export function looksLikePolishAppliedClaim(aiMessage: string): boolean {
   )
 }
 
+/** 用户只给出方向性反馈、未说明具体改什么时，不应自动 materialize */
+export function isVaguePolishUserRequest(text: string): boolean {
+  const t = text.trim()
+  if (!t) return true
+  if (
+    /(改名|更名为|改为|改成|调整为|删除|移除|替换|把.{1,16}改|增加.{1,8}个|新增.{1,8}(个|名|位)?(角色|人物|关系|章节|地点|场景)|补充.{1,8}(角色|人物|关系|章节|地点)|补齐.{0,8}(角色|人物|关系|章节|地点)|添加.{1,8}(角色|人物|关系|章节|地点))/.test(
+      t
+    )
+  ) {
+    return false
+  }
+  return /(有点|不太|不够|太少|太多|偏少|偏少|不符合|不太符合|不太行|一般|差点|希望.{0,6}(更多|更好|丰富|完善)|再.{0,6}(加|丰富|完善|补充)|能否.{0,6}(增加|补充|丰富))/.test(
+    t
+  )
+}
+
 export function shouldOfferPolishMaterialize(aiMessage: string): boolean {
   const text = aiMessage.trim()
   if (!text) return false
+  if (isUnresolvedPolishAiMessage(text)) return false
   if (/blueprint_updates/i.test(text)) return false
   return (
     looksLikePolishAppliedClaim(text) ||
@@ -525,6 +589,7 @@ export function isPolishClarifyingQuestion(
     return true
   }
   const text = aiMessage.trim()
+  if (isUnresolvedPolishAiMessage(text)) return true
   if (!text) return false
   if ((text.endsWith('？') || text.endsWith('?')) && !looksLikePolishAppliedClaim(text)) {
     return true
@@ -558,6 +623,8 @@ export function shouldAutoMaterializePolish(
   entrySection?: PolishableSectionKey
 ): boolean {
   const userText = userInput?.value?.trim() ?? ''
+  if (isCharacterBatchContinuationRequest(userText)) return true
+
   const userHadSubstantiveInput =
     userText.length >= 2 && userInput?.id !== 'continue_edit' && userInput?.id !== 'materialize_apply'
 
@@ -571,8 +638,73 @@ export function shouldAutoMaterializePolish(
   if (response.ready_to_apply && hasValidUpdates) return false
   if (response.ready_to_apply && !hasValidUpdates) return true
   if (!userHadSubstantiveInput) return false
+  if (isUnresolvedPolishAiMessage(response.ai_message)) return false
+  // 模糊诉求且无有效 updates 时，即使 AI 口头承诺「将修改」，也不自动 materialize
+  if (isVaguePolishUserRequest(userText) && !hasValidUpdates) return false
   if (isPolishClarifyingQuestion(response.ai_message, response.ui_control)) return false
   return true
+}
+
+export function extractLastPolishUserText(history: ConversationMessage[]): string {
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    const item = history[i]
+    if (item.role !== 'user') continue
+    try {
+      const input = JSON.parse(item.content) as { value?: string | null; id?: string | null }
+      if (input.id === 'materialize_apply' || input.id === 'continue_edit') continue
+      return input.value?.trim() ?? ''
+    } catch {
+      return item.content.trim()
+    }
+  }
+  return ''
+}
+
+export function isPolishSystemHintMessage(text: string): boolean {
+  const t = text.trim()
+  if (!t) return true
+  if (isUnresolvedPolishAiMessage(t)) return true
+  if (t === POLISH_VAGUE_INPUT_HINT) return true
+  return /尚未生成可写入的数据|生成并确认应用|生成可应用的修改稿|请补充更具体的修改说明/.test(t)
+}
+
+export function extractPolishAssistantPlanFromHistory(history: ConversationMessage[]): string {
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    const item = history[i]
+    if (item.role !== 'assistant') continue
+    try {
+      const parsed = JSON.parse(item.content) as { ai_message?: string }
+      const msg = parsed.ai_message?.trim()
+      if (msg && !isPolishSystemHintMessage(msg)) return msg
+    } catch {
+      const msg = item.content.trim()
+      if (msg && !isPolishSystemHintMessage(msg)) return msg
+    }
+  }
+  return ''
+}
+
+export function resolvePolishMaterializeMessage(
+  history: ConversationMessage[],
+  pendingSource?: unknown,
+  fallback?: string,
+  existingCharacterCount = 0
+): string {
+  const lastUser = extractLastPolishUserText(history)
+  if (isCharacterBatchContinuationRequest(lastUser)) {
+    return buildCharacterBatchMaterializeInstruction(lastUser, history, existingCharacterCount)
+  }
+
+  const pending = typeof pendingSource === 'string' ? pendingSource.trim() : ''
+  if (pending && !isPolishSystemHintMessage(pending)) return pending
+
+  const fromHistory = extractPolishAssistantPlanFromHistory(history)
+  if (fromHistory && !isPolishSystemHintMessage(fromHistory)) return fromHistory
+
+  const fb = fallback?.trim()
+  if (fb && !isPolishSystemHintMessage(fb)) return fb
+
+  return lastUser
 }
 
 export function isPolishAssistantApplied(parsed: Record<string, unknown> | null | undefined): boolean {

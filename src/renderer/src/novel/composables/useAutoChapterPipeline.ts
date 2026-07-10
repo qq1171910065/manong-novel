@@ -255,7 +255,7 @@ function createAutoChapterPipeline() {
           phase: 'evaluating',
           currentChapter: chapterNumber,
           currentChapterTitle: title,
-          message: `AI 正在评审第 ${chapterNumber} 章的 ${versionCount} 个版本…`,
+          message: `AI 正在评审并润色第 ${chapterNumber} 章的 ${versionCount} 个版本…`,
         })
         try {
           project = await novelStore.evaluateChapter(chapterNumber, { signal })

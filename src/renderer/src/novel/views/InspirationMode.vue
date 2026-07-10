@@ -75,9 +75,7 @@
               <p class="novel-chat-panel__subtitle">
                 <template v-if="isPolishMode">
                   全书共用同一会话 · 当前浏览「{{ polishContext?.sectionLabel }}」
-                  <span v-if="polishScopeMode !== 'auto'" class="novel-chat-panel__scope-tag">
-                    {{ POLISH_SCOPE_LABELS[polishScopeMode] }}
-                  </span>
+                  <span class="novel-chat-panel__scope-tag">{{ POLISH_SCOPE_LABELS.global }}</span>
                   <span v-if="polishWorkflowMode === 'reinspiration'" class="novel-chat-panel__scope-tag is-warn">
                     {{ POLISH_WORKFLOW_LABELS.reinspiration }}
                   </span>
@@ -86,20 +84,9 @@
               </p>
             </div>
           </div>
-          <div v-if="isPolishMode" class="novel-chat-panel__scope-bar">
-            <span class="novel-chat-panel__scope-label">修改范围</span>
-            <button
-              v-for="mode in scopeModeOptions"
-              :key="mode.id"
-              type="button"
-              class="novel-chat-panel__scope-btn"
-              :class="{ 'is-active': polishScopeMode === mode.id }"
-              :disabled="inputDisabled"
-              @click="setPolishScopeMode(mode.id)"
-            >
-              {{ mode.label }}
-            </button>
-          </div>
+          <p v-if="isPolishMode" class="novel-chat-panel__scope-note">
+            设定修改默认全书联动，会同步调整所有相关板块。
+          </p>
           <div class="novel-chat-panel__meta">
             <span
               v-if="isChatRequestInFlight || isPolishMaterializing"
@@ -256,12 +243,25 @@ import { NovelAPI } from '@renderer/services/novel/api'
 import { isAbortError, isBlueprintGenerating } from '@renderer/services/novel/async-task-registry'
 import type { ChatStreamStatus } from '@renderer/services/novel/writing-service'
 import type { SectionPolishContext, PolishableSectionKey, SectionPolishApplyPayload } from '@renderer/novel/utils/section-polish'
+import { sanitizeMaterialCharacters } from '@shared/novel/blueprint-material-schemas'
+import {
+  extractCharacterBatchTargetFromHistory,
+  isCharacterBatchContinuationRequest,
+  resolveEffectiveCharacterCountForBatch,
+  shouldSkipPolishConverseForMaterialize,
+} from '@renderer/novel/utils/section-polish-batch'
 import {
   normalizeAffectedSections,
+  normalizePolishScopeMode,
   POLISH_SECTION_LABELS,
   POLISH_SCOPE_LABELS,
   POLISH_WORKFLOW_LABELS,
+  buildPolishMaterializeChoiceControl,
+  isVaguePolishUserRequest,
+  polishVagueInputHintForSection,
+  resolvePolishMaterializeMessage,
   shouldAutoMaterializePolish,
+  shouldShowPolishMaterializeChoice,
   type PolishScopeMode,
   type PolishWorkflowMode,
 } from '@renderer/novel/utils/section-polish'
@@ -281,7 +281,9 @@ import {
   useBlueprintGeneration,
   LONG_TASK_NO_TOTAL_TIMEOUT,
 } from '@renderer/novel/composables/useBlueprintGeneration'
-import { resolveDisplayAiMessage } from '@renderer/services/novel/json-utils'
+import { getMaterialSchema } from '@shared/novel/blueprint-material-schemas'
+import { isUnresolvedPolishAiMessage, resolveDisplayAiMessage } from '@renderer/services/novel/json-utils'
+import { polishDebug, polishDebugWarn } from '@renderer/novel/utils/section-polish-debug'
 import { normalizeUiControl } from '@renderer/novel/utils/chat-options'
 import { randomUUID } from '@renderer/utils/id'
 import { formatGatewayContentFilterError } from '@renderer/services/gateway-api'
@@ -436,15 +438,9 @@ const pendingAffectedSections = ref<PolishableSectionKey[]>([])
 const isPolishMaterializing = ref(false)
 const isChatRequestInFlight = ref(false)
 const lastPolishAiMessage = ref('')
-const polishScopeMode = ref<PolishScopeMode>('auto')
+const polishScopeMode = ref<PolishScopeMode>('global')
 const polishWorkflowMode = ref<PolishWorkflowMode>('edit')
 const sessionBootstrapped = ref(false)
-
-const scopeModeOptions: { id: PolishScopeMode; label: string }[] = [
-  { id: 'auto', label: POLISH_SCOPE_LABELS.auto },
-  { id: 'entry', label: POLISH_SCOPE_LABELS.entry },
-  { id: 'global', label: POLISH_SCOPE_LABELS.global },
-]
 
 const syncAssistantRuntime = () => {
   if (!isPolishMode.value || !props.projectId) return
@@ -466,7 +462,7 @@ watch(
   (ctx) => {
     if (!isPolishMode.value || !ctx || !sessionBootstrapped.value) return
     if (ctx.workflowMode) polishWorkflowMode.value = ctx.workflowMode
-    if (ctx.scopeMode) polishScopeMode.value = ctx.scopeMode
+    if (ctx.scopeMode) polishScopeMode.value = normalizePolishScopeMode(ctx.scopeMode)
     if (ctx.section) {
       polishConversationState.value = {
         ...polishConversationState.value,
@@ -497,47 +493,31 @@ const restorePolishInputControl = () => {
   }
 }
 
-const setPolishScopeMode = (mode: PolishScopeMode) => {
-  polishScopeMode.value = mode
-  polishConversationState.value = {
-    ...polishConversationState.value,
-    scope_mode: mode,
+const polishMaterializeChoiceControl = buildPolishMaterializeChoiceControl
+
+const resolvePolishDisplayMessage = (rawMessage: string): string => {
+  const display = resolveDisplayAiMessage(rawMessage)
+  if (isUnresolvedPolishAiMessage(display)) {
+    return props.polishContext
+      ? polishVagueInputHintForSection(props.polishContext.section)
+      : display
   }
-  if (props.projectId) {
-    void persistPolishUiState()
-  }
+  return display
 }
 
-const persistPolishUiState = async () => {
-  if (!props.projectId || !novelStore.currentProject) return
-  novelStore.currentProject.section_polish_state = {
-    ...polishConversationState.value,
-    scope_mode: polishScopeMode.value,
-    workflow_mode: polishWorkflowMode.value,
-    entry_section: props.polishContext?.section,
+const getLastPolishUserText = (): string => {
+  for (let i = polishHistory.value.length - 1; i >= 0; i -= 1) {
+    const item = polishHistory.value[i]
+    if (item.role !== 'user') continue
+    try {
+      const input = JSON.parse(item.content) as { value?: string | null }
+      return input.value?.trim() ?? ''
+    } catch {
+      return item.content.trim()
+    }
   }
-  await NovelAPI.saveSectionPolishUiState(props.projectId, {
-    scope_mode: polishScopeMode.value,
-    workflow_mode: polishWorkflowMode.value,
-    entry_section: props.polishContext?.section,
-  })
+  return ''
 }
-
-const polishMaterializeChoiceControl = (): UIControl => ({
-  type: 'single_choice',
-  options: [
-    {
-      id: 'materialize_apply',
-      label: '生成并确认应用',
-      description: '根据上文描述生成蓝图变更并进入确认页',
-    },
-    {
-      id: 'continue_edit',
-      label: '继续调整',
-      description: '补充或修正修改、新增要求',
-    },
-  ],
-})
 
 const abortActiveRequest = () => {
   if (activeAbortController) {
@@ -603,7 +583,7 @@ const resetInspirationMode = (clearProject = true) => {
   isChatRequestInFlight.value = false
   isPolishMaterializing.value = false
   sessionBootstrapped.value = false
-  polishScopeMode.value = 'auto'
+  polishScopeMode.value = 'global'
   polishWorkflowMode.value = 'edit'
 
   if (clearProject && !isPolishMode.value) {
@@ -809,19 +789,17 @@ const restoreConversation = async (projectId: string) => {
 
 const polishInputPlaceholder = (
   context: SectionPolishContext,
-  scope: PolishScopeMode = 'auto',
+  _scope: PolishScopeMode = 'global',
   workflow: PolishWorkflowMode = 'edit'
 ) => {
   if (workflow === 'reinspiration') {
     return '描述你想保留的元素，以及希望整本书改成什么方向…'
   }
-  if (scope === 'global') {
-    return '描述全书层面的修改（类型、世界观、人物体系、大纲等）…'
-  }
-  if (scope === 'entry') {
-    return `描述你想如何修改「${context.sectionLabel}」（仅当前板块，不联动其他）…`
-  }
-  return `描述修改意图；说「全书/框架」则全局改，说「只改这里」则仅改「${context.sectionLabel}」…`
+  const schema = getMaterialSchema(context.section)
+  const example = schema.userExamples[0]
+  return example
+    ? `用自然语言描述想改的${schema.label}，例如：${example}`
+    : `用自然语言描述想改的${schema.label}（全书联动）…`
 }
 
 const initSectionPolishSession = async (projectId: string, context: SectionPolishContext, force = false) => {
@@ -846,13 +824,13 @@ const initSectionPolishSession = async (projectId: string, context: SectionPolis
   const history = project?.section_polish_history ?? []
   const savedState = project?.section_polish_state ?? {}
   if (savedState.scope_mode === 'entry' || savedState.scope_mode === 'global' || savedState.scope_mode === 'auto') {
-    polishScopeMode.value = savedState.scope_mode
+    polishScopeMode.value = normalizePolishScopeMode(savedState.scope_mode)
   }
   if (savedState.workflow_mode === 'edit' || savedState.workflow_mode === 'reinspiration') {
     polishWorkflowMode.value = savedState.workflow_mode
   }
   if (context.workflowMode) polishWorkflowMode.value = context.workflowMode
-  if (context.scopeMode) polishScopeMode.value = context.scopeMode
+  if (context.scopeMode) polishScopeMode.value = normalizePolishScopeMode(context.scopeMode)
   const placeholder = polishInputPlaceholder(context, polishScopeMode.value, polishWorkflowMode.value)
 
   if (history.length) {
@@ -881,6 +859,11 @@ const initSectionPolishSession = async (projectId: string, context: SectionPolis
     } else if (restored.needsAutoMaterialize) {
       lastPolishAiMessage.value = restored.autoMaterializeMessage ?? ''
       await runPolishMaterialize(restored.autoMaterializeMessage)
+    } else if (
+      restored.autoMaterializeMessage &&
+      restored.currentUIControl.type === 'single_choice'
+    ) {
+      lastPolishAiMessage.value = restored.autoMaterializeMessage
     }
     sessionBootstrapped.value = true
     syncAssistantRuntime()
@@ -919,21 +902,47 @@ const showPolishConfirmation = (
   updates: Partial<Blueprint>,
   affected: PolishableSectionKey[]
 ) => {
+  const normalized: Partial<Blueprint> = { ...updates }
+  if (Array.isArray(normalized.characters)) {
+    normalized.characters = sanitizeMaterialCharacters(normalized.characters)
+    if (!normalized.characters.length) {
+      globalAlert.showError(
+        '生成的角色数据不完整（姓名至少 2 字且需含身份/性格/描述），请补充说明后重试。',
+        '无法确认'
+      )
+      restorePolishInputControl()
+      return
+    }
+  }
   confirmationMessage.value = aiMessage
-  pendingBlueprintUpdates.value = updates
+  pendingBlueprintUpdates.value = normalized
   pendingAffectedSections.value = affected
   restorePolishInputControl()
   showSectionPolishConfirmation.value = true
 }
 
+const getPolishExistingCharacterCount = () =>
+  resolveEffectiveCharacterCountForBatch(
+    novelStore.currentProject?.blueprint?.characters,
+    polishHistory.value,
+    extractCharacterBatchTargetFromHistory(polishHistory.value)
+  )
+
 const runPolishMaterialize = async (latestMessage?: string) => {
   if (!props.projectId || !props.polishContext) return false
-  const latestAiMessage =
-    latestMessage?.trim() ||
-    lastPolishAiMessage.value.trim() ||
-    chatMessages.value.filter((m) => m.type === 'ai').pop()?.content ||
-    ''
-  if (!latestAiMessage) return false
+  const materializeMessage = resolvePolishMaterializeMessage(
+    polishHistory.value,
+    polishConversationState.value.pending_materialize_message,
+    latestMessage || lastPolishAiMessage.value || chatMessages.value.filter((m) => m.type === 'ai').pop()?.content,
+    getPolishExistingCharacterCount()
+  )
+  if (!materializeMessage && !getLastPolishUserText()) return false
+
+  polishDebug('ui:materialize-click', {
+    materializeMessage: materializeMessage.slice(0, 240),
+    userText: getLastPolishUserText().slice(0, 240),
+    pendingSource: polishConversationState.value.pending_materialize_message,
+  })
 
   isPolishMaterializing.value = true
   currentUIControl.value = { ...LOADING_UI_CONTROL, placeholder: '正在生成可应用的修改稿…' }
@@ -955,7 +964,7 @@ const runPolishMaterialize = async (latestMessage?: string) => {
       props.projectId,
       effectiveContext,
       polishHistory.value,
-      latestAiMessage,
+      materializeMessage,
       {
         signal,
         stream: {
@@ -1007,24 +1016,46 @@ const runPolishMaterialize = async (latestMessage?: string) => {
     return true
   } catch (error) {
     console.error('生成修改稿失败:', error)
-    globalAlert.showError(
-      error instanceof Error ? error.message : '生成失败，请继续补充修改说明',
-      '生成修改稿失败'
-    )
-    currentUIControl.value = {
-      ...polishMaterializeChoiceControl(),
-      options: [
-        {
-          id: 'materialize_apply',
-          label: '重试生成并确认',
-          description: '再次根据上文描述生成可应用的修改稿',
-        },
-        {
-          id: 'continue_edit',
-          label: '继续调整',
-          description: '补充或修正修改、新增要求',
-        },
-      ],
+    polishDebugWarn('ui:materialize-failed', {
+      message: error instanceof Error ? error.message : String(error),
+    })
+    const draftIdx = chatMessages.value.findIndex((m) => m.id === draftId)
+    if (draftIdx >= 0) {
+      chatMessages.value.splice(draftIdx, 1)
+    }
+
+    const lastUserText = getLastPolishUserText()
+    const vagueRequest = isVaguePolishUserRequest(lastUserText)
+    if (vagueRequest) {
+      chatMessages.value.push({
+        id: randomUUID(),
+        content: props.polishContext
+          ? polishVagueInputHintForSection(props.polishContext.section)
+          : polishVagueInputHintForSection('characters'),
+        type: 'ai',
+        streamStatus: 'done',
+      })
+      restorePolishInputControl()
+    } else {
+      globalAlert.showError(
+        error instanceof Error ? error.message : '生成失败，请继续补充修改说明',
+        '生成修改稿失败'
+      )
+      currentUIControl.value = {
+        ...polishMaterializeChoiceControl(),
+        options: [
+          {
+            id: 'materialize_apply',
+            label: '重试生成并确认',
+            description: '再次根据上文描述生成可应用的修改稿',
+          },
+          {
+            id: 'continue_edit',
+            label: '继续调整',
+            description: '补充或修正修改、新增要求',
+          },
+        ],
+      }
     }
     return false
   } finally {
@@ -1048,7 +1079,31 @@ const handlePolishInput = async (userInput: any) => {
       })
       await scrollToBottom()
     }
-    await runPolishMaterialize(lastPolishAiMessage.value)
+    const pendingSource = polishConversationState.value.pending_materialize_message
+    await runPolishMaterialize(
+      resolvePolishMaterializeMessage(
+        polishHistory.value,
+        pendingSource,
+        lastPolishAiMessage.value || chatMessages.value.filter((m) => m.type === 'ai').slice(-2, -1)[0]?.content,
+        getPolishExistingCharacterCount()
+      )
+    )
+    return
+  }
+
+  const continuationText = userInput?.value?.trim() ?? ''
+  if (continuationText && shouldSkipPolishConverseForMaterialize(continuationText)) {
+    chatMessages.value.push({
+      id: randomUUID(),
+      content: continuationText,
+      type: 'user',
+    })
+    polishHistory.value.push({
+      role: 'user',
+      content: JSON.stringify({ value: continuationText, id: userInput?.id ?? 'text_input' }),
+    })
+    await scrollToBottom()
+    await runPolishMaterialize()
     return
   }
 
@@ -1109,7 +1164,7 @@ const handlePolishInput = async (userInput: any) => {
     const scope = response.conversation_state?.scope_mode
     const workflow = response.conversation_state?.workflow_mode
     if (scope === 'entry' || scope === 'global' || scope === 'auto') {
-      polishScopeMode.value = scope
+      polishScopeMode.value = normalizePolishScopeMode(scope)
     }
     if (workflow === 'edit' || workflow === 'reinspiration') {
       polishWorkflowMode.value = workflow
@@ -1124,10 +1179,11 @@ const handlePolishInput = async (userInput: any) => {
     }
 
     const idx = chatMessages.value.findIndex((m) => m.id === draftId)
+    const displayMessage = resolvePolishDisplayMessage(response.ai_message)
     if (idx >= 0) {
       chatMessages.value[idx] = {
         ...chatMessages.value[idx],
-        content: resolveDisplayAiMessage(response.ai_message),
+        content: displayMessage,
         streamStatus: 'done',
       }
     }
@@ -1137,21 +1193,41 @@ const handlePolishInput = async (userInput: any) => {
 
     if (response.ready_to_apply && response.blueprint_updates) {
       showPolishConfirmation(
-        resolveDisplayAiMessage(response.ai_message),
+        displayMessage,
         response.blueprint_updates,
         normalizeAffectedSections(props.polishContext.section, response)
       )
     } else if (
       shouldAutoMaterializePolish(
-        response,
+        { ...response, ai_message: displayMessage },
         userInput,
         novelStore.currentProject?.blueprint,
         props.polishContext.section
       )
     ) {
-      lastPolishAiMessage.value = resolveDisplayAiMessage(response.ai_message)
+      const pendingSource = response.conversation_state?.pending_materialize_message
+      lastPolishAiMessage.value =
+        typeof pendingSource === 'string' && pendingSource.trim() ? pendingSource.trim() : displayMessage
       await runPolishMaterialize(lastPolishAiMessage.value)
+    } else if (shouldShowPolishMaterializeChoice(displayMessage)) {
+      const pendingSource = response.conversation_state?.pending_materialize_message
+      lastPolishAiMessage.value =
+        typeof pendingSource === 'string' && pendingSource.trim() ? pendingSource.trim() : displayMessage
+      const userText = userInput?.value?.trim() ?? ''
+      if (isCharacterBatchContinuationRequest(userText)) {
+        await runPolishMaterialize(lastPolishAiMessage.value)
+        return
+      }
+      currentUIControl.value = polishMaterializeChoiceControl()
     } else if (response.ui_control) {
+      if (
+        response.ui_control.type === 'single_choice' &&
+        response.ui_control.options?.some((option) => option.id === 'materialize_apply')
+      ) {
+        const pendingSource = response.conversation_state?.pending_materialize_message
+        lastPolishAiMessage.value =
+          typeof pendingSource === 'string' && pendingSource.trim() ? pendingSource.trim() : displayMessage
+      }
       currentUIControl.value = response.ui_control
     } else {
       restorePolishInputControl()
@@ -1398,7 +1474,9 @@ const modalChrome = computed((): InspirationModalChrome => {
     return {
       ariaLabel: '应用设定修改',
       title: reinspiration ? '应用全书框架重构？' : '应用设定修改？',
-      panelClass: isPolishMode.value ? 'novel-modal__panel--polish' : 'novel-modal__panel--lg',
+      modalSize: 'auto',
+      panelClass: 'inspiration-modal__panel--confirm',
+      bodyClass: 'inspiration-modal__body--confirm',
       footerKind: 'section_polish_confirm',
       showShellHeader: true,
       footerPrimaryLabel: reinspiration ? '确认重构' : '应用修改',
@@ -1534,6 +1612,15 @@ onUnmounted(() => {
 
 .mt-3 {
   margin-top: 12px;
+}
+
+.novel-chat-panel__scope-note {
+  margin: 0;
+  padding: 0 16px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-text) 8%, transparent);
 }
 
 .novel-chat-panel__scope-bar {

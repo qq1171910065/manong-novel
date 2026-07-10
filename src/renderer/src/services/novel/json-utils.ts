@@ -262,6 +262,44 @@ export function parseBlueprintFromLlm(rawText: string): Record<string, unknown> 
   return null
 }
 
+export const UNRESOLVED_AI_MESSAGE_PLACEHOLDER = '文思正在整理回复，请稍候再试一次。'
+
+function isLikelyIncompleteJson(text: string): boolean {
+  const trimmed = text.trim()
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return false
+  let depth = 0
+  let inString = false
+  let escape = false
+  for (const ch of trimmed) {
+    if (inString) {
+      if (escape) escape = false
+      else if (ch === '\\') escape = true
+      else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') inString = true
+    else if (ch === '{' || ch === '[') depth += 1
+    else if (ch === '}' || ch === ']') depth -= 1
+  }
+  return depth !== 0 || inString
+}
+
+function extractPartialAiMessage(rawText: string): string | null {
+  const match = rawText.match(/"ai_message"\s*:\s*"((?:\\.|[^"\\])*)(?:"|$)/s)
+  if (!match?.[1]) return null
+  try {
+    return JSON.parse(`"${match[1]}"`).trim()
+  } catch {
+    return match[1]
+      .replace(/\\n/g, '\n')
+      .replace(/\\r/g, '\r')
+      .replace(/\\t/g, '\t')
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, '\\')
+      .trim()
+  }
+}
+
 function extractAiMessageByRegex(rawText: string): string | null {
   const match = rawText.match(/"ai_message"\s*:\s*"((?:\\.|[^"\\])*)"/s)
   if (!match?.[1]) return null
@@ -283,7 +321,9 @@ export function extractAiMessage(rawText: string): string | null {
   if (parsed && typeof parsed.ai_message === 'string' && parsed.ai_message.trim()) {
     return parsed.ai_message.trim()
   }
-  return extractAiMessageByRegex(rawText)
+  const regex = extractAiMessageByRegex(rawText)
+  if (regex) return regex
+  return extractPartialAiMessage(rawText)
 }
 
 /** 聊天气泡展示用：从 assistant 原始内容中提取可读文本 */
@@ -296,12 +336,22 @@ export function resolveDisplayAiMessage(rawText: string): string {
   if (extracted && !trimmed.startsWith('{') && !trimmed.startsWith('[')) return extracted
 
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    if (isLikelyIncompleteJson(trimmed)) {
+      const partial = extractPartialAiMessage(trimmed)
+      if (partial) return partial
+      return ''
+    }
     const nested = extractAiMessage(trimmed)
     if (nested) return nested
-    return '文思正在整理回复，请稍候再试一次。'
+    return UNRESOLVED_AI_MESSAGE_PLACEHOLDER
   }
 
   return extracted || trimmed
+}
+
+export function isUnresolvedPolishAiMessage(text: string): boolean {
+  const trimmed = text.trim()
+  return !trimmed || trimmed === UNRESOLVED_AI_MESSAGE_PLACEHOLDER
 }
 
 export function pickBestLlmPayload(content: string, reasoning: string): string {
@@ -329,7 +379,27 @@ export function pickContentOnlyPayload(content: string, reasoning?: string): str
 
   // 推理模型有时只往 reasoning/thinking 字段输出；尝试提取可用正文
   const cleaned = stripAuthoringMetaCommentary(think)
-  if (!cleaned || /^[{[]/.test(cleaned)) return ''
-  if (countChapterChars(cleaned) >= 20) return cleaned
+  if (cleaned && !/^[{[]/.test(cleaned) && countChapterChars(cleaned) >= 20) return cleaned
+
+  // 元叙述过滤可能误删正文；仅去掉 think 标签后再试一次
+  const rawThink = think
+    .replace(/<think>[\s\S]*?<\/redacted_thinking>/gi, '')
+    .replace(/<thinking>[\s\S]*?<\/thinking>/gi, '')
+    .replace(/[\s\S]*?<\/think>/gi, '')
+    .trim()
+  if (rawThink && !/^[{[]/.test(rawThink) && countChapterChars(rawThink) >= 20) return rawThink
+
+  return ''
+}
+
+/** 章节流式正文：优先 content，必要时从 reasoning 回退，最后尝试合并字段 */
+export function resolveChapterStreamPayload(content: string, reasoning?: string): string {
+  const primary = pickContentOnlyPayload(content, reasoning)
+  if (primary.trim()) return primary
+
+  const merged = pickBestLlmPayload(content, reasoning ?? '')
+  const cleaned = stripAuthoringMetaCommentary(merged)
+  if (cleaned && !/^[{[]/.test(cleaned) && countChapterChars(cleaned) >= 20) return cleaned
+
   return ''
 }

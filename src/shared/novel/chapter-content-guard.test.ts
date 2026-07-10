@@ -4,18 +4,31 @@ import {
   detectContinuityIssues,
   formatArchaicProseRewriteHint,
   formatContinuityRewriteHint,
+  formatWordCountFeedback,
   hasInternalRepetitionNeedingRewrite,
   hasRepeatedSentenceLoop,
   stripAuthoringMetaCommentary,
   truncateChapterToMaxChars,
 } from './chapter-content-guard'
-import { resolveChapterMaxOutputChars, resolveChapterGenerationMaxTokens } from './chapter-length-plan'
+import {
+  isChapterContentTooShort,
+  resolveChapterMaxOutputChars,
+  resolveChapterGenerationMaxTokens,
+  resolveChapterMinAcceptableChars,
+} from './chapter-length-plan'
 
 describe('chapter length limits', () => {
   it('caps generation tokens from target word count', () => {
     expect(resolveChapterMaxOutputChars(3500)).toBe(3900)
     expect(resolveChapterGenerationMaxTokens(3500)).toBeLessThanOrEqual(8192)
     expect(resolveChapterGenerationMaxTokens(3500)).toBeGreaterThan(3000)
+  })
+
+  it('rejects extremely short chapter drafts', () => {
+    expect(isChapterContentTooShort(80, 2800)).toBe(true)
+    expect(resolveChapterMinAcceptableChars(2800)).toBeGreaterThanOrEqual(800)
+    expect(formatWordCountFeedback(80, 2800)).toMatch(/远低于最低要求/)
+    expect(isChapterContentTooShort(2500, 2800)).toBe(false)
   })
 })
 

@@ -21,7 +21,20 @@ function isSseDonePayload(payload: string): boolean {
   }
 }
 
-function ssePayloadHasContent(payload: string): boolean {
+function sseFieldHasText(value: unknown): boolean {
+  if (typeof value === 'string') return value.length > 0
+  if (Array.isArray(value)) {
+    return value.some((item) => typeof item === 'string' && item.length > 0)
+  }
+  return false
+}
+
+/**
+ * 仅检测正文 content 字段（不含 reasoning/thinking）。
+ * 推理模型常在思考结束后停顿数十秒再输出正文；若把 reasoning 当作正文，
+ * 空闲计时会被缩短到 12s，导致正式包长章节生成时流被提前截断。
+ */
+function ssePayloadHasBodyContent(payload: string): boolean {
   if (!payload || payload === '[DONE]') return false
   try {
     const parsed = JSON.parse(payload) as {
@@ -34,20 +47,10 @@ function ssePayloadHasContent(payload: string): boolean {
     const choice = parsed.choices?.[0]
     const delta = choice?.delta
     const message = choice?.message
-    const read = (value: unknown): boolean => {
-      if (typeof value === 'string') return value.length > 0
-      if (Array.isArray(value)) return value.some((item) => typeof item === 'string' && item.length > 0)
-      return false
-    }
     return (
-      read(delta?.content) ||
-      read(delta?.reasoning_content) ||
-      read(delta?.reasoning) ||
-      read(delta?.thinking) ||
-      read(message?.content) ||
-      read(message?.reasoning_content) ||
-      read(message?.reasoning) ||
-      read(choice?.text)
+      sseFieldHasText(delta?.content) ||
+      sseFieldHasText(message?.content) ||
+      sseFieldHasText(choice?.text)
     )
   } catch {
     return false
@@ -109,6 +112,9 @@ export function registerSseHandlers(): void {
 
       resetHardTimeout()
 
+      /** invoke 返回值：避免渲染进程在 invoke 结束前未处理完 sse:chunk 事件 */
+      const collectedLines: string[] = []
+
       try {
         const headers: Record<string, string> = {
           Accept: 'text/event-stream',
@@ -158,7 +164,7 @@ export function registerSseHandlers(): void {
         const decoder = new TextDecoder()
         let buf = ''
         let streamDone = false
-        let sawContent = false
+        let sawBodyContent = false
         let idleTimer: ReturnType<typeof setTimeout> | null = null
 
         resetHardTimeout()
@@ -179,7 +185,7 @@ export function registerSseHandlers(): void {
 
         const resetIdleTimer = () => {
           clearIdleTimer()
-          const idleMs = sawContent ? SSE_IDLE_AFTER_CONTENT_MS : SSE_IDLE_BEFORE_CONTENT_MS
+          const idleMs = sawBodyContent ? SSE_IDLE_AFTER_CONTENT_MS : SSE_IDLE_BEFORE_CONTENT_MS
           idleTimer = setTimeout(() => completeStream(), idleMs)
         }
 
@@ -187,18 +193,21 @@ export function registerSseHandlers(): void {
           const trimmed = line.trim()
           if (!trimmed) return
           if (trimmed === 'data: [DONE]' || trimmed.endsWith('data: [DONE]')) {
+            collectedLines.push(trimmed)
             completeStream()
             return
           }
           if (trimmed.startsWith('data:')) {
             const payload = trimmed.slice(5).trim()
-            if (ssePayloadHasContent(payload)) sawContent = true
+            if (ssePayloadHasBodyContent(payload)) sawBodyContent = true
             if (isSseDonePayload(payload)) {
+              collectedLines.push(trimmed)
               win.webContents.send('sse:chunk', trimmed)
               completeStream()
               return
             }
           }
+          collectedLines.push(trimmed)
           win.webContents.send('sse:chunk', trimmed)
           resetHardTimeout()
           resetIdleTimer()
@@ -225,6 +234,7 @@ export function registerSseHandlers(): void {
         }
 
         win.webContents.send('sse:end')
+        return { lines: collectedLines }
       } catch (err) {
         if ((err as Error).name === 'AbortError') {
           if (sseAbortReason === 'timeout') {
@@ -232,7 +242,7 @@ export function registerSseHandlers(): void {
             win.webContents.send('sse:error', errMsg)
             throw new Error(errMsg)
           }
-          return
+          return { lines: collectedLines }
         }
         const errMsg = formatSseFetchError(err)
         win.webContents.send('sse:error', errMsg)

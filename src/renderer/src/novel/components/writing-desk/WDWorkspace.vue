@@ -107,7 +107,7 @@
             v-model="editingContent"
             class="md-textarea w-full"
             rows="14"
-            placeholder="请输入章节内容..."
+            placeholder="支持 Markdown 着重：**关键词** 加粗，*语气* 斜体。段落之间空一行。"
             :disabled="isSaving"
           />
         </div>
@@ -508,9 +508,10 @@ const currentComponentProps = computed(() => {
     }
   }
   if (selectedChapter.value?.content) {
-    return { 
+    return {
       selectedChapter: selectedChapter.value,
       projectId: props.project?.id,
+      blueprint: props.project?.blueprint ?? null,
       autoWriteLocked: props.autoWriteLocked,
     }
   }

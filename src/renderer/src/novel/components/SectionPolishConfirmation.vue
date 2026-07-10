@@ -17,23 +17,62 @@
     </div>
 
     <div
-      v-if="replaceEntireBlueprint && diffSummary.totalChanges > 0"
+      v-if="showPreviewPanel"
       class="blueprint-diff"
     >
       <div class="blueprint-diff__head">
         <GitCompare :size="16" aria-hidden="true" />
         <div>
-          <p class="blueprint-diff__title">改前 / 改后对比</p>
+          <p class="blueprint-diff__title">变更预览</p>
           <p class="blueprint-diff__meta">
-            共 {{ diffSummary.totalChanges }} 处变更
-            <template v-if="diffSummary.sectionLabels.length">
-              · 涉及 {{ diffSummary.sectionLabels.join('、') }}
+            <template v-if="diffSummary.totalChanges">
+              共 {{ diffSummary.totalChanges }} 处变更
+              <template v-if="diffSummary.sectionLabels.length">
+                · 涉及 {{ diffSummary.sectionLabels.join('、') }}
+              </template>
+            </template>
+            <template v-else-if="characterPreviewItems.length">
+              共 {{ characterPreviewItems.length }} 位角色物料
             </template>
           </p>
+          <p v-if="summaryText" class="blueprint-diff__summary">{{ summaryText }}</p>
+          <p v-if="filteredCharacterNotice" class="blueprint-diff__notice">{{ filteredCharacterNotice }}</p>
         </div>
       </div>
 
-      <div class="blueprint-diff__sections">
+      <div v-if="addedCharacterCards.length" class="material-preview-cards">
+        <p class="material-preview-cards__label">
+          新增角色
+          <span class="material-preview-cards__count">{{ addedCharacterCards.length }}</span>
+        </p>
+        <ul class="material-preview-cards__list">
+          <li v-for="card in addedCharacterCards" :key="`add-${card.name}`" class="material-preview-card">
+            <span class="material-preview-card__name">{{ card.name }}</span>
+            <span v-if="card.identity" class="material-preview-card__tag">{{ card.identity }}</span>
+            <p class="material-preview-card__desc">{{ card.summary }}</p>
+          </li>
+        </ul>
+      </div>
+
+      <div v-if="modifiedCharacterCards.length" class="material-preview-cards">
+        <p class="material-preview-cards__label">
+          修改角色
+          <span class="material-preview-cards__count">{{ modifiedCharacterCards.length }}</span>
+        </p>
+        <ul class="material-preview-cards__list">
+          <li
+            v-for="card in modifiedCharacterCards"
+            :key="`mod-${card.name}`"
+            class="material-preview-card material-preview-card--modified"
+          >
+            <span class="material-preview-card__name">{{ card.name }}</span>
+            <span v-if="card.identity" class="material-preview-card__tag">{{ card.identity }}</span>
+            <p class="material-preview-card__desc">{{ card.summary }}</p>
+          </li>
+        </ul>
+      </div>
+
+      <div v-if="diffGroups.length" class="blueprint-diff__sections">
         <details
           v-for="group in diffGroups"
           :key="group.sectionKey"
@@ -70,13 +109,20 @@
           </ul>
         </details>
       </div>
+
+      <div
+        v-else-if="!addedCharacterCards.length && !modifiedCharacterCards.length"
+        class="blueprint-diff__empty-hint"
+      >
+        暂未解析到可展示的角色详情，请阅读上方说明后确认。
+      </div>
     </div>
 
     <div v-else-if="replaceEntireBlueprint" class="blueprint-diff blueprint-diff--empty">
       暂未检测到可展示的字段级差异，请阅读下方 AI 说明后确认。
     </div>
 
-    <div class="novel-confirm-panel__message prose" v-html="renderedAiMessage" />
+    <div v-else-if="summaryText" class="novel-confirm-panel__message prose" v-html="renderedSummary" />
 
     <p v-if="!hideChrome" class="novel-confirm-panel__hint">
       <template v-if="replaceEntireBlueprint">
@@ -106,6 +152,7 @@ import { marked } from 'marked'
 import type { Blueprint } from '@shared/novel/types'
 import {
   buildBlueprintDiff,
+  buildCharacterMaterialPreview,
   groupBlueprintDiffBySection,
 } from '@renderer/novel/utils/blueprint-diff'
 
@@ -125,16 +172,44 @@ defineEmits<{
   back: []
 }>()
 
-const renderedAiMessage = computed(() => marked.parse(props.aiMessage))
+const renderedSummary = computed(() => marked.parse(summaryText.value))
 
 const diffSummary = computed(() => {
-  if (!props.replaceEntireBlueprint || !props.blueprintUpdates) {
+  if (!props.blueprintUpdates) {
     return { entries: [], sectionLabels: [], totalChanges: 0 }
   }
   return buildBlueprintDiff(props.beforeBlueprint, props.blueprintUpdates)
 })
 
+const characterPreviewItems = computed(() =>
+  buildCharacterMaterialPreview(props.beforeBlueprint, props.blueprintUpdates ?? {})
+)
+
+const addedCharacterCards = computed(() =>
+  characterPreviewItems.value.filter((item) => item.kind === 'added')
+)
+
+const modifiedCharacterCards = computed(() =>
+  characterPreviewItems.value.filter((item) => item.kind === 'modified')
+)
+
+const filteredCharacterNotice = computed(() => {
+  const rawCount = props.blueprintUpdates?.characters?.length ?? 0
+  const previewCount = characterPreviewItems.value.length
+  if (!rawCount || previewCount >= rawCount) return ''
+  return `已过滤 ${rawCount - previewCount} 个不完整角色（姓名为单字或缺少身份/性格/描述）`
+})
+
+const showPreviewPanel = computed(
+  () =>
+    diffSummary.value.totalChanges > 0 ||
+    characterPreviewItems.value.length > 0 ||
+    Boolean(props.blueprintUpdates && Object.keys(props.blueprintUpdates).length)
+)
+
 const diffGroups = computed(() => groupBlueprintDiffBySection(diffSummary.value.entries))
+
+const summaryText = computed(() => props.aiMessage?.trim() ?? '')
 </script>
 
 <style scoped>
@@ -214,6 +289,95 @@ const diffGroups = computed(() => groupBlueprintDiffBySection(diffSummary.value.
   margin: 4px 0 0;
   font-size: 0.75rem;
   color: color-mix(in srgb, var(--color-text) 58%, transparent);
+}
+
+.blueprint-diff__summary {
+  margin: 6px 0 0;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: color-mix(in srgb, var(--color-text) 72%, transparent);
+}
+
+.blueprint-diff__notice {
+  margin: 6px 0 0;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: #c2410c;
+}
+
+.blueprint-diff__empty-hint {
+  padding: 12px 14px;
+  font-size: 0.8125rem;
+  color: color-mix(in srgb, var(--color-text) 58%, transparent);
+}
+
+.material-preview-cards__count {
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--color-text) 8%, transparent);
+}
+
+.material-preview-cards {
+  padding: 12px 14px;
+  border-bottom: 1px solid color-mix(in srgb, #6366f1 14%, transparent);
+}
+
+.material-preview-cards__label {
+  margin: 0 0 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--color-text) 62%, transparent);
+}
+
+.material-preview-cards__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.material-preview-card {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-bg) 88%, #fff);
+  border: 1px solid color-mix(in srgb, var(--color-text) 8%, transparent);
+}
+
+.material-preview-card__name {
+  display: block;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.material-preview-card__tag {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  background: color-mix(in srgb, #e86b24 12%, transparent);
+  color: #c2410c;
+}
+
+.material-preview-card--modified {
+  border-color: color-mix(in srgb, #6366f1 24%, transparent);
+}
+
+.material-preview-card__desc {
+  margin: 8px 0 0;
+  font-size: 0.75rem;
+  line-height: 1.55;
+  color: color-mix(in srgb, var(--color-text) 68%, transparent);
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .blueprint-diff__sections {

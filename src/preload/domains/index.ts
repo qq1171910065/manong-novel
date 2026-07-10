@@ -23,7 +23,7 @@ export const requestDomain = {
     }) as Promise<{ success: boolean; dataUrl?: string; error?: string }>,
 
   fetchSSE: (payload: { url: string; method?: string; body?: string; token?: string; timeoutMs?: number }) =>
-    ipcRenderer.invoke('request:fetch-sse', payload),
+    ipcRenderer.invoke('request:fetch-sse', payload) as Promise<{ lines: string[] } | void>,
 
   cancelSSE: () => ipcRenderer.invoke('request:cancel-sse'),
 

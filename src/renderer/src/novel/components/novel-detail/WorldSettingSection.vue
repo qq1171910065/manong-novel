@@ -68,6 +68,15 @@
         role="tablist"
         :aria-label="listAriaLabel"
       >
+        <button
+          v-if="editable"
+          type="button"
+          class="nd-split-page__list-add md-ripple"
+          @click="openCreateItem(itemKind)"
+        >
+          <Plus :size="16" aria-hidden="true" />
+          <span>{{ panel === 'factions' ? '新增阵营' : '新增地点' }}</span>
+        </button>
         <div class="nd-split-page__list-head">
           <h3 class="nd-split-page__list-title">{{ listTitle }}</h3>
           <span class="nd-split-page__list-count">{{ currentList.length }} 项</span>
@@ -166,6 +175,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { Plus } from 'lucide-vue-next'
 import type { WorldListItem, WorldSetting } from '@shared/novel/types'
 import NovelPreviewDialog from '@renderer/novel/components/shared/NovelPreviewDialog.vue'
 import DetailEditableZone from './DetailEditableZone.vue'

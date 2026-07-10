@@ -8,6 +8,8 @@ import {
   isPolishAssistantApplied,
   normalizeAffectedSections,
   shouldRestorePolishMaterializeChoice,
+  shouldShowPolishMaterializeChoice,
+  buildPolishMaterializeChoiceControl,
   type PolishableSectionKey,
 } from '@renderer/novel/utils/section-polish'
 
@@ -126,14 +128,16 @@ export function restorePolishSession(
         resolveDisplayAiMessage(String(lastParsed.ai_message || '')),
         existingBlueprint,
         entrySection
-      )
+      ) ||
+      shouldShowPolishMaterializeChoice(resolveDisplayAiMessage(String(lastParsed.ai_message || '')))
     ) {
-      autoMaterializeMessage = resolveDisplayAiMessage(String(lastParsed.ai_message || ''))
-      needsAutoMaterialize = true
-      currentUIControl = {
-        type: 'text_input',
-        placeholder: '正在根据上次对话生成可应用的修改稿…',
-      }
+      const savedMaterializeSource = state.pending_materialize_message
+      autoMaterializeMessage =
+        typeof savedMaterializeSource === 'string' && savedMaterializeSource.trim()
+          ? String(savedMaterializeSource).trim()
+          : resolveDisplayAiMessage(String(lastParsed.ai_message || ''))
+      needsAutoMaterialize = false
+      currentUIControl = buildPolishMaterializeChoiceControl()
     } else if (lastParsed.ui_control && typeof lastParsed.ui_control === 'object') {
       currentUIControl =
         normalizeUiControl(

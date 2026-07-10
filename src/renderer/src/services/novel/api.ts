@@ -488,6 +488,15 @@ export class NovelAPI {
     return novelClient.saveProject(project)
   }
 
+  /** 清除全部已写章节正文，保留章节大纲 */
+  static async clearAllWrittenChapterContent(projectId: string): Promise<NovelProject> {
+    const project = await novelClient.getProject(projectId)
+    const { listWrittenChapterNumbers } = await import('@shared/novel/project-writing-guard')
+    const numbers = listWrittenChapterNumbers(project)
+    if (!numbers.length) return project
+    return NovelAPI.clearChapterContent(projectId, numbers)
+  }
+
   static async generateChapterOutline(
     projectId: string,
     startChapter: number,

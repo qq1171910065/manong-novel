@@ -6,6 +6,7 @@ export type PipelineStep =
   | 'chapter_write'
   | 'chapter_constitution'
   | 'chapter_evaluate'
+  | 'chapter_proofread'
   | 'chapter_rewrite'
   | 'section_polish'
   | 'section_polish_materialize'
@@ -46,6 +47,7 @@ export const PIPELINE_STEP_LABELS: Record<PipelineStep, string> = {
   chapter_write: '章节写作',
   chapter_constitution: '宪法合规',
   chapter_evaluate: '章节评审',
+  chapter_proofread: '通篇润色',
   chapter_rewrite: '重复重写',
   section_polish: '设定修改',
   section_polish_materialize: '修改稿生成',

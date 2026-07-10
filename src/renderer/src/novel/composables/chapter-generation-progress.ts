@@ -1,6 +1,13 @@
 import { ref } from 'vue'
 
-export type ChapterGenPhase = 'starting' | 'planning' | 'writing' | 'processing' | 'evaluating' | 'confirming'
+export type ChapterGenPhase =
+  | 'starting'
+  | 'planning'
+  | 'writing'
+  | 'processing'
+  | 'evaluating'
+  | 'proofreading'
+  | 'confirming'
 
 export interface ChapterGenProgress {
   projectId: string
@@ -46,5 +53,6 @@ export const CHAPTER_GEN_PHASE_LABELS: Record<ChapterGenPhase, string> = {
   writing: '撰写正文',
   processing: '整理正文',
   evaluating: '版本评审',
+  proofreading: '通篇润色',
   confirming: '确认入库',
 }

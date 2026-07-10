@@ -5,6 +5,7 @@ import writingPrompt from '@shared/novel/prompts/writing_v2.md?raw'
 import chapterPlanPrompt from '@shared/novel/prompts/chapter_plan.md?raw'
 import constitutionCheckPrompt from '@shared/novel/prompts/constitution_check.md?raw'
 import evaluationPrompt from '@shared/novel/prompts/evaluation.md?raw'
+import chapterProofreadPrompt from '@shared/novel/prompts/chapter_proofread.md?raw'
 import extractionPrompt from '@shared/novel/prompts/extraction.md?raw'
 import optimizeDialoguePrompt from '@shared/novel/prompts/optimize_dialogue.md?raw'
 import optimizeEnvironmentPrompt from '@shared/novel/prompts/optimize_environment.md?raw'
@@ -17,12 +18,15 @@ import type { GatewayTokenUsage } from '@renderer/services/gateway-api'
 import { projectStatsService } from '@renderer/services/project-stats-service'
 import { resolveProjectChatModelId, type ProjectModelPrefs } from './project-model'
 import {
+  extractAllLlmJsonObjects,
   parseBlueprintFromLlm,
   parseChapterOutlineFromLlm,
   parseLlmJsonObject,
   pickBestLlmPayload,
   pickContentOnlyPayload,
+  resolveChapterStreamPayload,
   resolveDisplayAiMessage,
+  isUnresolvedPolishAiMessage,
 } from './json-utils'
 import {
   extractOptionsFromMessage,
@@ -32,6 +36,7 @@ import type {
   Blueprint,
   BlueprintGenerationResponse,
   Chapter,
+  Character,
   ConverseResponse,
   ConversationMessage,
   NovelProject,
@@ -42,10 +47,40 @@ import type {
 } from '@shared/novel/types'
 import type { SectionPolishContext } from '@renderer/novel/utils/section-polish'
 import {
+  applyCharacterBatchResult,
+  buildCharacterBatchMaterializeInstruction,
+  buildCharacterBatchRanges,
+  extractCharactersFromPayload,
+  extractCharacterBatchTargetFromHistory,
+  isCharacterBatchContinuationRequest,
+  parseCharacterBatchIntent,
+  resolveCharacterBatchIntent,
+  resolveBaseCharactersForBatchContinuation,
+  resolveEffectiveCharacterCountForBatch,
+  type CharacterBatchIntent,
+} from '@renderer/novel/utils/section-polish-batch'
+import {
+  CHARACTER_JSON_EXAMPLE,
+  sanitizeMaterialCharacters,
+} from '@shared/novel/blueprint-material-schemas'
+import {
+  buildCharacterBatchSystemPrompt,
+  CHARACTER_MATERIALIZE_JSON_EXAMPLE,
+  parseMaterializePayloadRobust,
+} from '@renderer/novel/utils/section-polish-materialize-parse'
+import { polishDebug, polishDebugWarn } from '@renderer/novel/utils/section-polish-debug'
+import {
+  buildPolishMaterializeChoiceControl,
   coalescePolishBlueprintUpdates,
+  extractLastPolishUserText,
+  extractPolishAssistantPlanFromHistory,
   hasValidPolishBlueprintUpdates,
+  isPolishSystemHintMessage,
+  isVaguePolishUserRequest,
   looksLikePolishAppliedClaim,
   normalizeAffectedSections,
+  polishVagueInputHintForSection,
+  normalizePolishScopeMode,
   POLISH_SCOPE_LABELS,
   POLISH_WORKFLOW_LABELS,
   resolvePolishScopeMode,
@@ -61,11 +96,14 @@ import {
 import { resolveWritingMode, SIMPLE_BLUEPRINT_SUPPLEMENT, SIMPLE_CONCEPT_SUPPLEMENT } from '@shared/novel/writing-mode'
 import {
   applyWordCountPlanToBlueprint,
+  CHAPTER_ABSOLUTE_MIN_CHARS,
   countChapterChars,
   formatRecentWordCountStats,
   formatWordCountPlanHint,
+  isChapterContentTooShort,
   resolveChapterGenerationMaxTokens,
   resolveChapterMaxOutputChars,
+  resolveChapterMinAcceptableChars,
   resolveChapterStreamHardLimitChars,
   resolveChapterTargetWordCount,
 } from '@shared/novel/chapter-length-plan'
@@ -435,10 +473,14 @@ export async function chat(
       projectStatsService.recordAiCall(statsProjectId, usage)
     }
     const result = params?.contentOnly
-      ? pickContentOnlyPayload(content, reasoning)
+      ? resolveChapterStreamPayload(content, reasoning)
       : pickBestLlmPayload(content, reasoning)
     if (params?.contentOnly && !result.trim()) {
-      throw new Error('模型未返回章节正文，请重试或更换模型')
+      const debugHint =
+        content.trim() || reasoning.trim()
+          ? '（已收到模型输出但无法识别为正文，可尝试更换模型）'
+          : '（未收到任何流式数据，请检查网络与网关配置）'
+      throw new Error(`模型未返回章节正文，请重试或更换模型${debugHint}`)
     }
     if (pipelineId) {
       pipelineLogService.finish(pipelineId, { response: result, usage })
@@ -452,7 +494,7 @@ export async function chat(
     }
     if (pipelineId) {
       const partial = params?.contentOnly
-        ? pickContentOnlyPayload(streamCapture.content, streamCapture.reasoning)
+        ? resolveChapterStreamPayload(streamCapture.content, streamCapture.reasoning)
         : pickBestLlmPayload(streamCapture.content, streamCapture.reasoning)
       pipelineLogService.finish(pipelineId, {
         error,
@@ -584,17 +626,20 @@ IMPORTANT: 你的回复必须是合法的 JSON 对象，并严格包含以下字
 `
 
 const MATERIALIZE_POLISH_INSTRUCTION = `
-IMPORTANT: 仅输出合法 JSON 对象：
-{
-  "summary": "一句话说明将修改哪些板块",
-  "affected_sections": ["characters", "relationships"],
-  "blueprint_updates": { }
-}
+IMPORTANT: 仅输出合法 JSON 对象，不要 Markdown 代码块，不要额外解释。
+格式示例（新增角色）：
+${CHARACTER_JSON_EXAMPLE}
+
 规则：
+- blueprint_updates 必须是**对象**，内含 characters / relationships 等字段；禁止写成数组
+- affected_sections 必须是有效板块标识数组，如 ["characters"]，禁止空字符串
+- 用户以自然语言描述意图，你负责填入内置数据结构；**禁止**要求用户提供 JSON 字段名
 - 根据对话中**已确认**的修改或新增意图，基于当前全书蓝图生成 blueprint_updates
 - 修改前通读全书蓝图，带着全局一致性思维处理人物、关系、场景/地点的联动
 - 保留角色 id、未提及字段；角色改名时输出**完整 characters 数组**，并同步输出**完整 relationships 数组**（更新 character_from / character_to 中的姓名）
 - **新增角色/关系/章节/地点**时：在对应数组中追加新条目（可只输出新增项，系统会合并）；保留原有条目不变
+- **分批补齐角色**时：按用户指定批次输出；每批 characters 为非空数组，每项字段简洁（20~80字）避免 JSON 截断
+- 用户从「项目概览」等 Tab 进入时，仍可在 blueprint_updates 中修改 characters / relationships 等任意板块
 - 改地点/场景时联动检查 world_setting.key_locations 与相关 chapter_outline
 - affected_sections 必须列出所有实际变更的板块（含联动项），不可只列入入口 Tab
 - 不要输出 ready_to_apply、ai_message 等对话字段
@@ -887,7 +932,7 @@ function resolvePolishScopeModeForTurn(
     fromState === 'entry' || fromState === 'global' || fromState === 'auto'
       ? fromState
       : context.scopeMode
-  return resolvePolishScopeMode(preferred, userInput?.value)
+  return normalizePolishScopeMode(resolvePolishScopeMode(preferred, userInput?.value))
 }
 
 function buildSectionPolishSystemPrompt(
@@ -901,10 +946,8 @@ function buildSectionPolishSystemPrompt(
   const basePrompt = workflowMode === 'reinspiration' ? blueprintReinspirationPrompt : sectionPolishPrompt
   const scopeHint =
     scopeMode === 'entry'
-      ? '本轮以入口 Tab 为主，除非用户明确要求或一致性必需，否则不要改动其他板块。'
-      : scopeMode === 'global'
-        ? '本轮按全书/global 范围处理，必须通读全书蓝图并输出所有受影响板块。'
-        : '根据用户描述自动判断范围：全局重构类诉求按 global；仅改当前板块按 entry。'
+      ? '用户明确要求仅改当前板块；仍须通读全书蓝图，确保与整体设定不矛盾。'
+      : '本轮按全书范围处理：必须通读全书蓝图，联动输出所有受影响板块（人物、关系、世界观、大纲等）。'
 
   return `${basePrompt}
 ${SECTION_POLISH_JSON_INSTRUCTION}
@@ -955,12 +998,18 @@ export async function converseSectionPolish(
       temperature: 0.72,
       stream: options?.stream,
       signal: options?.signal,
+      pipelineStep: 'section_polish',
+      pipelineLabel: '设定修改对话',
     })
   )
 
   const parsed = parseJsonBlock(raw) || {}
   let aiMessage = resolveAiMessage(raw, parsed)
-  const uiControl = parseUiControl(parsed.ui_control, aiMessage)
+  if (isUnresolvedPolishAiMessage(aiMessage)) {
+    aiMessage = polishVagueInputHintForSection(context.section)
+  }
+  const userText = formattedInput?.value?.trim() ?? ''
+  let uiControl = parseUiControl(parsed.ui_control, aiMessage)
   const safeConversationState = cloneJson(conversationState)
   const nextConversationState: Record<string, unknown> = {
     ...safeConversationState,
@@ -999,6 +1048,17 @@ export async function converseSectionPolish(
     }
   }
 
+  if (
+    isVaguePolishUserRequest(userText) &&
+    !hasValidPolishBlueprintUpdates(project.blueprint, context.section, {
+      blueprint_updates: blueprintUpdates,
+      section_update: sectionUpdate,
+    }) &&
+    looksLikePolishAppliedClaim(aiMessage)
+  ) {
+    aiMessage = polishVagueInputHintForSection(context.section)
+  }
+
   const needsMaterializeFallback =
     !readyToApply &&
     !hasValidPolishBlueprintUpdates(project.blueprint, context.section, {
@@ -1033,14 +1093,38 @@ export async function converseSectionPolish(
       aiMessage = materialized.summary
     } catch (error) {
       console.warn('[section-polish] auto materialize fallback failed:', error)
-      if (looksLikePolishAppliedClaim(aiMessage)) {
+      const materializeSource = aiMessage
+      if (isCharacterBatchContinuationRequest(userText)) {
+        const progressCount = resolveEffectiveCharacterCountForBatch(
+          project.blueprint?.characters,
+          nextHistory,
+          extractCharacterBatchTargetFromHistory(nextHistory)
+        )
+        aiMessage = `未能自动生成剩余角色：${error instanceof Error ? error.message : '请重试'}`
+        nextConversationState.pending_materialize_message = buildCharacterBatchMaterializeInstruction(
+          userText,
+          nextHistory,
+          progressCount
+        )
+        uiControl = buildPolishMaterializeChoiceControl()
+      } else if (isVaguePolishUserRequest(userText)) {
+        aiMessage = polishVagueInputHintForSection(context.section)
+      } else if (looksLikePolishAppliedClaim(aiMessage)) {
         aiMessage =
-          '我已理解你的修改意图，但尚未生成可写入的数据。请补充更具体的修改说明，或描述希望变更的字段与目标值。'
+          '助手已描述修改方向，但尚未生成可写入的数据。你可以点击下方「生成并确认应用」重试，或补充更具体的修改说明。'
+        nextConversationState.pending_materialize_message = materializeSource
+        uiControl = buildPolishMaterializeChoiceControl()
       }
     }
   } else if (!readyToApply && looksLikePolishAppliedClaim(aiMessage)) {
-    aiMessage =
-      '我已理解你的修改意图。请确认具体要改哪些字段，或补充缺失信息，以便生成可应用的修改稿。'
+    const materializeSource = aiMessage
+    aiMessage = isVaguePolishUserRequest(userText)
+      ? polishVagueInputHintForSection(context.section)
+      : '助手已描述修改方向。你可以点击下方「生成并确认应用」，或用自然语言补充更具体的修改说明。'
+    if (!isVaguePolishUserRequest(userText)) {
+      nextConversationState.pending_materialize_message = materializeSource
+      uiControl = buildPolishMaterializeChoiceControl()
+    }
   }
 
   let isComplete = Boolean(parsed.is_complete) || readyToApply
@@ -1072,6 +1156,317 @@ export async function converseSectionPolish(
   }
 }
 
+function parseMaterializePayload(raw: string): Record<string, unknown> {
+  const result = parseMaterializePayloadRobust(raw)
+  if (result.characters.length) {
+    return {
+      summary: result.summary,
+      affected_sections: result.affected_sections ?? ['characters'],
+      blueprint_updates: result.blueprint_updates ?? { characters: result.characters },
+      section_update: result.section_update,
+      _parseSource: result.parseSource,
+    }
+  }
+
+  const parsed = parseJsonBlock(raw) || {}
+  if (parsed.blueprint_updates || parsed.section_update) return parsed
+
+  for (const obj of extractAllLlmJsonObjects(raw)) {
+    if (obj.blueprint_updates || obj.section_update) return obj
+    if (obj.characters || obj.relationships || obj.chapter_outline || obj.world_setting) {
+      return {
+        blueprint_updates: obj,
+        affected_sections: obj.affected_sections,
+        summary: obj.summary,
+      }
+    }
+  }
+
+  const outline = parseChapterOutlineFromLlm(raw)
+  if (outline?.length) {
+    return {
+      blueprint_updates: { chapter_outline: outline },
+      affected_sections: ['chapter_outline'],
+    }
+  }
+
+  return { ...parsed, _parseSource: result.parseSource }
+}
+
+function buildCompactBlueprintContext(blueprint: Blueprint | null | undefined): string {
+  const b = blueprint ?? ({} as Blueprint)
+  return JSON.stringify(
+    {
+      title: b.title,
+      genre: b.genre,
+      tone: b.tone,
+      style: b.style,
+      one_sentence_summary: b.one_sentence_summary,
+      full_synopsis: b.full_synopsis?.slice(0, 900),
+      existing_characters: (b.characters ?? []).map((c) => ({
+        name: c.name,
+        identity: c.identity,
+      })),
+    },
+    null,
+    2
+  )
+}
+
+async function requestCharacterBatchFromModel(
+  project: NovelProject,
+  params: {
+    batchSystemPrompt: string
+    userContent: string
+    strictRetryContent: string
+    batchIndex: number
+    batchTotal: number
+    options?: ConversationRequestOptions
+  }
+): Promise<{ characters: Character[]; parseSource: string; raw: string }> {
+  const { batchSystemPrompt, userContent, strictRetryContent, batchIndex, batchTotal, options } = params
+
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const content = attempt === 1 ? userContent : strictRetryContent
+    const raw = await chat(
+      batchSystemPrompt,
+      [{ role: 'user', content }],
+      projectChatOpts(project, {
+        temperature: attempt === 1 ? 0.2 : 0.1,
+        max_tokens: 8192,
+        stream: options?.stream,
+        signal: options?.signal,
+        pipelineStep: 'section_polish_materialize',
+        pipelineLabel: `生成角色 · 第${batchIndex}/${batchTotal}批${attempt > 1 ? ' · 重试' : ''}`,
+      })
+    )
+
+    const parsed = parseMaterializePayloadRobust(raw)
+    polishDebug('materialize:batch-raw', {
+      batchIndex,
+      attempt,
+      rawLength: raw.length,
+      parseSource: parsed.parseSource,
+      characterCount: parsed.characters.length,
+      raw,
+    })
+
+    if (parsed.characters.length) {
+      return { characters: parsed.characters, parseSource: parsed.parseSource, raw }
+    }
+
+    polishDebugWarn('materialize:batch-parse-failed', {
+      batchIndex,
+      attempt,
+      rawLength: raw.length,
+      rawPreview: raw.slice(0, 1200),
+    })
+  }
+
+  return { characters: [], parseSource: 'failed', raw: '' }
+}
+
+function tryCoalescePolishUpdates(
+  project: NovelProject,
+  context: SectionPolishContext,
+  payload: { blueprint_updates?: unknown; section_update?: unknown },
+  label = 'coalesce'
+): Partial<Blueprint> {
+  try {
+    const result = coalescePolishBlueprintUpdates(project.blueprint, context.section, payload)
+    polishDebug(`materialize:${label}`, {
+      keys: Object.keys(result),
+      characterCount: Array.isArray(result.characters) ? result.characters.length : 0,
+    })
+    return result
+  } catch (error) {
+    polishDebugWarn(`materialize:${label}-error`, {
+      message: error instanceof Error ? error.message : String(error),
+      payloadPreview: JSON.stringify(payload).slice(0, 400),
+    })
+    return {}
+  }
+}
+
+async function materializeCharacterBatches(
+  project: NovelProject,
+  context: SectionPolishContext,
+  params: {
+    lastUserText: string
+    batchIntent: CharacterBatchIntent
+    blueprintJson: string
+    history: ConversationMessage[]
+    options?: ConversationRequestOptions
+  }
+): Promise<SectionPolishMaterializeResponse> {
+  const { lastUserText, batchIntent, blueprintJson, history, options } = params
+  const total = batchIntent.total!
+  const ranges = buildCharacterBatchRanges(total, batchIntent.batchSize)
+  const accumulated: Character[] = []
+  const baseCharacters = batchIntent.continueRemaining
+    ? resolveBaseCharactersForBatchContinuation(project.blueprint?.characters, history)
+    : (project.blueprint?.characters ?? [])
+  const baseNames = baseCharacters.map((c) => c.name?.trim()).filter(Boolean) as string[]
+  const applyTargetTotal = batchIntent.targetTotal ?? total
+
+  polishDebug('materialize:batch-start', {
+    total,
+    batchSize: batchIntent.batchSize,
+    batchCount: ranges.length,
+    mode: batchIntent.mode,
+    continueRemaining: batchIntent.continueRemaining,
+    targetTotal: batchIntent.targetTotal,
+    baseCount: baseNames.length,
+    blueprintCount: project.blueprint?.characters?.length ?? 0,
+  })
+
+  const batchSystemPrompt = `${buildCharacterBatchSystemPrompt()}
+
+## 当前蓝图摘要
+\`\`\`json
+${buildCompactBlueprintContext(project.blueprint ?? context.fullBlueprint)}
+\`\`\``
+
+  for (let i = 0; i < ranges.length; i += 1) {
+    const { start, end } = ranges[i]!
+    const batchIndex = i + 1
+    const batchCount = end - start
+    const generatedNames = accumulated.map((c) => c.name).filter(Boolean).join('、')
+    const skipNames = [...baseNames, ...accumulated.map((c) => c.name?.trim()).filter(Boolean)].join('、')
+
+    const userContent = [
+      `## 用户指令\n${lastUserText}`,
+      '',
+      `## 本批任务（第 ${batchIndex}/${ranges.length} 批）`,
+      batchIntent.continueRemaining
+        ? `补齐剩余角色：本批 ${batchCount} 位（本次共需再生成 ${total} 位${applyTargetTotal ? `，全书目标 ${applyTargetTotal} 位` : ''}）。`
+        : `生成第 ${start + 1} 至 ${end} 位角色（本批 ${batchCount} 位，共 ${total} 位）。`,
+      batchIntent.mode === 'redesign'
+        ? '可重新设计人设，但须符合全书设定。'
+        : '在现有蓝图基础上增补角色，不得覆盖或重复已有角色。',
+      skipNames ? `已有/已生成（勿重复）：${skipNames}` : '',
+      generatedNames && !batchIntent.continueRemaining ? `本批已生成（勿重复）：${generatedNames}` : '',
+      '',
+      `严格按格式输出 JSON。本批 blueprint_updates.characters 长度必须为 ${batchCount}。`,
+    ]
+      .filter(Boolean)
+      .join('\n')
+
+    const strictRetryContent = [
+      userContent,
+      '',
+      '上次输出 JSON 非法或截断。请仅输出完整合法 JSON。',
+      '禁止：Markdown、缺少引号、blueprint_updates 写成数组、affected_sections 含空字符串。',
+      CHARACTER_MATERIALIZE_JSON_EXAMPLE,
+    ].join('\n')
+
+    polishDebug('materialize:batch-request', {
+      batchIndex,
+      range: `${start + 1}-${end}`,
+      batchCount,
+      accumulated: accumulated.length,
+    })
+
+    const batchResult = await requestCharacterBatchFromModel(project, {
+      batchSystemPrompt,
+      userContent,
+      strictRetryContent,
+      batchIndex,
+      batchTotal: ranges.length,
+      options,
+    })
+
+    if (!batchResult.characters.length) {
+      polishDebugWarn('materialize:batch-empty', {
+        batchIndex,
+        parseSource: batchResult.parseSource,
+      })
+      continue
+    }
+    if (batchResult.characters.length < batchCount) {
+      polishDebugWarn('materialize:batch-partial', {
+        batchIndex,
+        expected: batchCount,
+        got: batchResult.characters.length,
+        parseSource: batchResult.parseSource,
+      })
+    }
+    for (const char of sanitizeMaterialCharacters(batchResult.characters)) {
+      const name = char.name?.trim()
+      if (!name || baseNames.includes(name) || accumulated.some((item) => item.name === name)) continue
+      accumulated.push(char)
+    }
+  }
+
+  const sanitizedAccumulated = sanitizeMaterialCharacters(accumulated)
+  if (!sanitizedAccumulated.length) {
+    polishDebugWarn('materialize:batch-failed-all', { total, batchCount: ranges.length })
+    throw new Error('未能从对话生成可写入的修改数据，请补充更具体的修改说明后重试')
+  }
+
+  const finalCharacters = sanitizeMaterialCharacters(
+    applyCharacterBatchResult(
+      baseCharacters,
+      sanitizedAccumulated,
+      batchIntent.mode,
+      applyTargetTotal
+    )
+  )
+
+  polishDebug('materialize:batch-done', {
+    requested: total,
+    generated: sanitizedAccumulated.length,
+    finalCount: finalCharacters.length,
+    names: sanitizedAccumulated.map((c) => c.name).slice(0, 12),
+  })
+
+  const newNames = sanitizedAccumulated.map((c) => c.name).join('、')
+  const namePreview = sanitizedAccumulated
+    .slice(0, 6)
+    .map((c) => c.name)
+    .join('、')
+  const blueprint_updates = { characters: finalCharacters }
+  return {
+    summary: batchIntent.continueRemaining
+      ? [
+          `将再应用 ${sanitizedAccumulated.length} 位角色`,
+          namePreview ? `：${namePreview}${sanitizedAccumulated.length > 6 ? '…' : ''}` : '',
+          `（已有 ${baseNames.length} 位，目标 ${applyTargetTotal} 位，分 ${ranges.length} 批生成）`,
+        ].join('')
+      : [
+          `将应用 ${finalCharacters.length} 位角色`,
+          namePreview ? `：${namePreview}${sanitizedAccumulated.length > 6 ? '…' : ''}` : '',
+          `（分 ${ranges.length} 批生成${total ? `，目标 ${total} 位` : ''}）`,
+        ].join(''),
+    blueprint_updates,
+    affected_sections: normalizeAffectedSections(context.section, { blueprint_updates }),
+  }
+}
+
+function buildMaterializeUserPrompt(
+  historyText: string,
+  lastUserText: string,
+  latestAiMessage: string
+): string {
+  const assistantNote =
+    latestAiMessage.trim() &&
+    !isPolishSystemHintMessage(latestAiMessage) &&
+    latestAiMessage.trim() !== lastUserText
+      ? latestAiMessage.trim()
+      : ''
+
+  return [
+    lastUserText ? `## 用户指令（必须执行）\n${lastUserText}` : '',
+    historyText ? `## 设定修改对话（最近轮次）\n${historyText}` : '',
+    assistantNote ? `## 助手补充说明\n${assistantNote}` : '',
+    '',
+    '请输出 JSON（summary、affected_sections、blueprint_updates）。',
+    '用户以自然语言描述，你负责填入内置数据结构；新增角色时 blueprint_updates.characters 必须是非空数组。',
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
 export async function materializeSectionPolishUpdates(
   project: NovelProject,
   context: SectionPolishContext,
@@ -1081,6 +1476,51 @@ export async function materializeSectionPolishUpdates(
 ): Promise<SectionPolishMaterializeResponse> {
   const blueprintJson = JSON.stringify(project.blueprint ?? context.fullBlueprint ?? {}, null, 2)
   const historyText = formatPolishHistoryForMaterialize(history)
+  const lastUserText = extractLastPolishUserText(history)
+  const existingCharacterCount = resolveEffectiveCharacterCountForBatch(
+    project.blueprint?.characters,
+    history,
+    extractCharacterBatchTargetFromHistory(history)
+  )
+  const materializeUserText = buildCharacterBatchMaterializeInstruction(
+    lastUserText,
+    history,
+    existingCharacterCount
+  )
+  const effectiveAiMessage = isPolishSystemHintMessage(latestAiMessage)
+    ? extractPolishAssistantPlanFromHistory(history) || materializeUserText
+    : latestAiMessage.trim()
+  if (!effectiveAiMessage && !materializeUserText) {
+    throw new Error('未能从对话生成可写入的修改数据，请补充更具体的修改说明后重试')
+  }
+
+  const batchIntent = resolveCharacterBatchIntent(lastUserText, history, existingCharacterCount)
+  polishDebug('materialize:start', {
+    entrySection: context.section,
+    lastUserText: lastUserText.slice(0, 240),
+    materializeUserText: materializeUserText.slice(0, 240),
+    effectiveAiMessage: effectiveAiMessage.slice(0, 240),
+    historyTurns: history.length,
+    batchIntent,
+    existingCharacterCount,
+  })
+
+  if (batchIntent.continueRemaining && batchIntent.total === 0) {
+    throw new Error(
+      `当前进度 ${existingCharacterCount} 位，已达到目标 ${batchIntent.targetTotal} 位。若尚未应用上一批修改，请先点击「应用修改」。`
+    )
+  }
+
+  if (batchIntent.useBatch && batchIntent.total && batchIntent.total > 0) {
+    return materializeCharacterBatches(project, context, {
+      lastUserText: materializeUserText,
+      batchIntent,
+      blueprintJson,
+      history,
+      options,
+    })
+  }
+
   const workflowMode = context.workflowMode ?? 'edit'
   const scopeMode = context.scopeMode ?? 'auto'
   const basePrompt = workflowMode === 'reinspiration' ? blueprintReinspirationPrompt : sectionPolishPrompt
@@ -1114,15 +1554,7 @@ ${blueprintJson}
     [
       {
         role: 'user',
-        content: [
-          '## 设定修改对话（最近轮次）',
-          historyText,
-          '',
-          '## 助手最新说明',
-          latestAiMessage.trim(),
-          '',
-          '请输出 JSON（summary、affected_sections、blueprint_updates）。',
-        ].join('\n'),
+        content: buildMaterializeUserPrompt(historyText, lastUserText, effectiveAiMessage),
       },
     ],
     projectChatOpts(project, {
@@ -1134,12 +1566,123 @@ ${blueprintJson}
     })
   )
 
-  const parsed = parseJsonBlock(raw) || {}
-  const coalesced = coalescePolishBlueprintUpdates(project.blueprint, context.section, {
-    blueprint_updates: parsed.blueprint_updates,
-    section_update: parsed.section_update,
+  const parsed = parseMaterializePayload(raw)
+  polishDebug('materialize:parse', {
+    keys: Object.keys(parsed),
+    rawPreview: raw.slice(0, 400),
   })
+  let coalesced = tryCoalescePolishUpdates(
+    project,
+    context,
+    {
+      blueprint_updates: parsed.blueprint_updates,
+      section_update: parsed.section_update,
+    },
+    'primary'
+  )
+
   if (!Object.keys(coalesced).length) {
+    const retryRaw = await chat(
+      systemPrompt,
+      [
+        {
+          role: 'user',
+          content: [
+            buildMaterializeUserPrompt(historyText, lastUserText, effectiveAiMessage),
+            '',
+            '上次输出未能解析为有效 blueprint_updates。请基于用户指令与全书蓝图，直接输出可写入 JSON。',
+            '用户以自然语言描述，你负责填入内置角色数据结构；blueprint_updates.characters 必须是非空数组。',
+            '若用户要求分批，仅输出本批角色即可。',
+          ].join('\n'),
+        },
+      ],
+      projectChatOpts(project, {
+        temperature: 0.15,
+        stream: options?.stream,
+        signal: options?.signal,
+        pipelineStep: 'section_polish_materialize',
+        pipelineLabel: '重试生成设定修改稿',
+      })
+    )
+    const retryParsed = parseMaterializePayload(retryRaw)
+    coalesced = tryCoalescePolishUpdates(
+      project,
+      context,
+      {
+        blueprint_updates: retryParsed.blueprint_updates,
+        section_update: retryParsed.section_update,
+      },
+      'retry'
+    )
+    if (Object.keys(coalesced).length) {
+      parsed.summary = retryParsed.summary ?? parsed.summary
+      parsed.affected_sections = retryParsed.affected_sections ?? parsed.affected_sections
+    }
+  }
+
+  if (!Object.keys(coalesced).length && lastUserText) {
+    const directRaw = await chat(
+      `${MATERIALIZE_POLISH_INSTRUCTION}
+
+## 任务
+用户已通过 AI 助手确认要应用以下设定修改。请直接生成 blueprint_updates，不要输出解释文字。
+
+## Entry Section
+- ${context.sectionLabel}（${context.section}）
+
+## 当前全书蓝图
+\`\`\`json
+${blueprintJson}
+\`\`\``,
+      [
+        {
+          role: 'user',
+          content: [
+            `## 用户指令\n${lastUserText}`,
+            '',
+            '请输出 JSON（summary、affected_sections、blueprint_updates）。',
+          ].join('\n'),
+        },
+      ],
+      projectChatOpts(project, {
+        temperature: 0.1,
+        stream: options?.stream,
+        signal: options?.signal,
+        pipelineStep: 'section_polish_materialize',
+        pipelineLabel: '直接生成设定修改稿',
+      })
+    )
+    const directParsed = parseMaterializePayload(directRaw)
+    coalesced = tryCoalescePolishUpdates(
+      project,
+      context,
+      {
+        blueprint_updates: directParsed.blueprint_updates,
+        section_update: directParsed.section_update,
+      },
+      'direct'
+    )
+    if (Object.keys(coalesced).length) {
+      parsed.summary = directParsed.summary ?? parsed.summary
+      parsed.affected_sections = directParsed.affected_sections ?? parsed.affected_sections
+    }
+  }
+
+  if (!Object.keys(coalesced).length) {
+    polishDebugWarn('materialize:failed', {
+      lastUserText: lastUserText.slice(0, 240),
+      batchIntent,
+    })
+    if (batchIntent.total && batchIntent.total > 5) {
+      polishDebug('materialize:fallback-to-batch', { total: batchIntent.total })
+      return materializeCharacterBatches(project, context, {
+        lastUserText: materializeUserText,
+        batchIntent: { ...batchIntent, useBatch: true },
+        blueprintJson,
+        history,
+        options,
+      })
+    }
     throw new Error('未能从对话生成可写入的修改数据，请补充更具体的修改说明后重试')
   }
 
@@ -2006,6 +2549,34 @@ async function generatePolishedChapterVersion(input: {
   })
 
   sanitized = truncateChapterToMaxChars(sanitized, input.maxOutputChars)
+
+  let shortRewriteAttempts = 0
+  while (
+    isChapterContentTooShort(countChapterChars(sanitized), input.targetWordCount) &&
+    shortRewriteAttempts < 2
+  ) {
+    shortRewriteAttempts += 1
+    const actual = countChapterChars(sanitized)
+    const minChars = resolveChapterMinAcceptableChars(input.targetWordCount)
+    patchChapterGenProgress({
+      phase: 'writing',
+      chars: actual,
+      streamPreview: undefined,
+      message: `第 ${input.chapterNumber} 章仅 ${actual} 字，低于 ${minChars} 字，正在补全…`,
+    })
+    const shortHint = `上一版正文过短（仅 ${actual} 字），必须写满至少 ${minChars} 字（规划 ${input.targetWordCount} 字）。请完整重写：展开情节推进、人物对话、动作与环境描写，禁止输出不足百字的敷衍短章。`
+    content = await generateChapterDraft(input.project, buildMessage(shortHint), {
+      signal: input.signal,
+      pipelineLabel: `补全第 ${input.chapterNumber} 章（字数不足）`,
+      targetWordCount: input.targetWordCount,
+      temperature: 0.72,
+      onStream: input.onStream,
+    })
+    input.onDraft?.(content)
+    normalized = normalizeGeneratedChapterContent(content, input.chapterNumber, priorContent)
+    sanitized = normalized.content
+  }
+
   return sanitized
 }
 
@@ -2213,6 +2784,15 @@ export async function generateChapterContent(
       message: `第 ${chapterNumber} 章已生成，正在保存…`,
     })
 
+    const targetWordCount = resolveChapterTargetWordCount(outline, totalChapters, writingMode)
+    if (versionCount === 1 && versions[0]?.trim()) {
+      versions[0] = await proofreadChapterContent(project, chapterNumber, versions[0], {
+        signal: options?.signal,
+        chapterTitle: outline?.title || `第${chapterNumber}章`,
+        targetWordCount,
+      })
+    }
+
     const chapter: Chapter = {
       chapter_number: chapterNumber,
       title: outline?.title || `第${chapterNumber}章`,
@@ -2245,6 +2825,79 @@ export async function generateChapterContent(
   } finally {
     setChapterGenProgress(null)
   }
+}
+
+export async function proofreadChapterContent(
+  project: NovelProject,
+  chapterNumber: number,
+  content: string,
+  options?: {
+    signal?: AbortSignal
+    chapterTitle?: string
+    targetWordCount?: number
+  }
+): Promise<string> {
+  const trimmed = content?.trim()
+  if (!trimmed) return content
+
+  const snapshot = getChapterGenProgressSnapshot()
+  if (!snapshot || snapshot.projectId !== project.id || snapshot.chapterNumber !== chapterNumber) {
+    setChapterGenProgress({
+      projectId: project.id,
+      chapterNumber,
+      phase: 'proofreading',
+      versionIndex: snapshot?.versionIndex ?? 1,
+      versionTotal: snapshot?.versionTotal ?? 1,
+      chars: countChapterChars(trimmed),
+      message: `正在通篇检查第 ${chapterNumber} 章错别字与语句通顺…`,
+      updatedAt: Date.now(),
+    })
+  } else {
+    patchChapterGenProgress({
+      phase: 'proofreading',
+      chars: countChapterChars(trimmed),
+      message: `正在通篇检查第 ${chapterNumber} 章错别字与语句通顺…`,
+    })
+  }
+
+  const payload = {
+    chapter_title: options?.chapterTitle || `第${chapterNumber}章`,
+    target_word_count: options?.targetWordCount,
+    content: trimmed,
+  }
+
+  patchChapterGenProgress({
+    phase: 'proofreading',
+    message: `正在优化第 ${chapterNumber} 章正文表达…`,
+  })
+
+  const raw = await chat(
+    chapterProofreadPrompt,
+    [{ role: 'user', content: JSON.stringify(payload, null, 2) }],
+    projectChatOpts(project, {
+      temperature: 0.35,
+      timeoutMs: LONG_STREAM_TIMEOUT_MS,
+      signal: options?.signal,
+      pipelineStep: 'chapter_proofread',
+      pipelineLabel: `润色第 ${chapterNumber} 章`,
+      contentOnly: true,
+    })
+  )
+
+  const polished = stripAuthoringMetaCommentary(raw).trim()
+  if (!polished) return trimmed
+
+  const minAcceptable = options?.targetWordCount
+    ? resolveChapterMinAcceptableChars(options.targetWordCount)
+    : CHAPTER_ABSOLUTE_MIN_CHARS
+  const polishedChars = countChapterChars(polished)
+  const originalChars = countChapterChars(trimmed)
+
+  if (polishedChars < Math.min(originalChars * 0.75, minAcceptable)) {
+    return trimmed
+  }
+
+  return polished
 }
 
 export async function evaluateChapter(
@@ -2289,6 +2942,27 @@ export async function evaluateChapter(
     },
   }
 
+  const targetWordCount = resolveChapterTargetWordCount(outline, totalChapters, writingMode)
+  const snapshot = getChapterGenProgressSnapshot()
+  if (!snapshot || snapshot.projectId !== project.id || snapshot.chapterNumber !== chapterNumber) {
+    setChapterGenProgress({
+      projectId: project.id,
+      chapterNumber,
+      phase: 'evaluating',
+      versionIndex: versions.length,
+      versionTotal: versions.length,
+      chars: 0,
+      targetChars: targetWordCount,
+      message: `AI 正在评审第 ${chapterNumber} 章的 ${versions.length} 个版本…`,
+      updatedAt: Date.now(),
+    })
+  } else {
+    patchChapterGenProgress({
+      phase: 'evaluating',
+      message: `AI 正在评审第 ${chapterNumber} 章的 ${versions.length} 个版本…`,
+    })
+  }
+
   const raw = await chat(
     evaluationPrompt,
     [{ role: 'user', content: JSON.stringify(payload, null, 2) }],
@@ -2304,11 +2978,25 @@ export async function evaluateChapter(
   const parsed = parseJsonBlock(raw)
   chapter.evaluation = parsed ? JSON.stringify(parsed) : raw.trim()
 
+  let bestIndex = -1
   if (parsed && typeof parsed.best_choice === 'number') {
-    const bestIndex = parsed.best_choice - 1
+    bestIndex = parsed.best_choice - 1
     if (bestIndex >= 0 && bestIndex < versions.length) {
       chapter.content = versions[bestIndex]
       chapter.word_count = countChapterChars(chapter.content)
+    }
+  }
+
+  const selectedContent = chapter.content?.trim() || versions[0]?.trim()
+  if (selectedContent) {
+    chapter.content = await proofreadChapterContent(project, chapterNumber, selectedContent, {
+      signal: options?.signal,
+      chapterTitle: outline?.title || chapter.title,
+      targetWordCount,
+    })
+    chapter.word_count = countChapterChars(chapter.content)
+    if (bestIndex >= 0 && bestIndex < (chapter.versions?.length ?? 0)) {
+      chapter.versions![bestIndex] = chapter.content
     }
   }
 

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, nextTick, onMounted, onUnmounted, watch } from 'vue'
+import { getCharacterUiFieldDefs } from '@shared/novel/blueprint-material-schemas'
 import type { Character } from '@shared/novel/types'
 import NovelModalShell from '@renderer/novel/components/shared/NovelModalShell.vue'
 
@@ -14,24 +15,12 @@ export type CharacterFieldKey =
 
 export type CharacterFormScope = CharacterFieldKey | 'all'
 
-const FIELD_DEFS: Array<{
+const FIELD_DEFS = getCharacterUiFieldDefs() as Array<{
   key: CharacterFieldKey
   label: string
   multiline?: boolean
   placeholder: string
-}> = [
-  { key: 'name', label: '姓名', placeholder: '角色姓名' },
-  { key: 'identity', label: '身份', placeholder: '例如：落魄剑客、帝国公主' },
-  { key: 'description', label: '描述', multiline: true, placeholder: '外貌、背景或整体印象' },
-  { key: 'personality', label: '性格', multiline: true, placeholder: '性格特点与行为倾向' },
-  { key: 'goals', label: '目标', multiline: true, placeholder: '角色想要达成的目标' },
-  { key: 'abilities', label: '能力', placeholder: '技能、特长或优势' },
-  {
-    key: 'relationship_to_protagonist',
-    label: '与主角的关系',
-    placeholder: '与主角的关系定位',
-  },
-]
+}>
 
 const props = defineProps<{
   show: boolean

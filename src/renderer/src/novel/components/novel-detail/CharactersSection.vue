@@ -23,6 +23,15 @@
         role="tablist"
         aria-label="角色列表"
       >
+        <button
+          v-if="editable"
+          type="button"
+          class="nd-split-page__list-add md-ripple"
+          @click="openCreateForm"
+        >
+          <Plus :size="16" aria-hidden="true" />
+          <span>新增角色</span>
+        </button>
         <div class="nd-split-page__list-head">
           <h3 class="nd-split-page__list-title">角色</h3>
           <span class="nd-split-page__list-count">{{ characters.length }} 人</span>
@@ -181,6 +190,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { Plus } from 'lucide-vue-next'
 import type { Character, Relationship } from '@shared/novel/types'
 import ImageAssetField from '@renderer/novel/components/shared/ImageAssetField.vue'
 import SubmitToLibraryButton from '@renderer/novel/components/shared/SubmitToLibraryButton.vue'

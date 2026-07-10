@@ -1,4 +1,4 @@
-﻿/* Novel detail — flat section design, minimal borders */
+/* Novel detail — flat section design, minimal borders */
 
 .detail-page.portal-page {
   padding: 12px clamp(24px, 3vw, 48px);
@@ -66,6 +66,17 @@
   border-color: color-mix(in srgb, var(--brand) 34%, transparent);
   background: color-mix(in srgb, var(--brand-soft) 78%, var(--surface));
   color: var(--brand);
+}
+
+.detail-sidebar-create__spinner {
+  flex-shrink: 0;
+  animation: detail-sidebar-spin 0.85s linear infinite;
+}
+
+@keyframes detail-sidebar-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .detail-sidebar-actions {
@@ -214,6 +225,28 @@
   border-color: color-mix(in srgb, var(--brand) 38%, transparent);
 }
 
+.detail-action-btn--ai {
+  border-color: color-mix(in srgb, #e86b24 28%, transparent);
+  background: color-mix(in srgb, #e86b24 8%, transparent);
+  color: #c2410c;
+}
+
+.detail-action-btn--ai:hover:not(:disabled) {
+  background: color-mix(in srgb, #e86b24 14%, transparent);
+  border-color: color-mix(in srgb, #e86b24 38%, transparent);
+  color: #9a3412;
+}
+
+.detail-action-btn__spinner {
+  animation: detail-action-spin 0.8s linear infinite;
+}
+
+@keyframes detail-action-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .detail-icon-action {
   display: inline-grid;
   place-items: center;
@@ -325,6 +358,11 @@
 .detail-page .profile-section__body {
   padding: 18px 22px 22px;
   gap: 0;
+}
+
+/* 分栏页：去掉 Tab 内容区外层边距，右侧详情区内边距保留 */
+.detail-page .profile-section__body.profile-section__body--flush {
+  padding: 0;
 }
 
 .detail-page .profile-section__body:not(.profile-section__body--fill) {
@@ -1024,7 +1062,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 14px 16px;
+  padding: 10px 16px 12px;
   border-bottom: 1px solid color-mix(in srgb, var(--line) 45%, transparent);
 }
 
@@ -1038,6 +1076,34 @@
 .nd-split-page__list-count {
   font-size: var(--text-2xs);
   color: var(--muted);
+}
+
+.nd-split-page__list-add {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  min-height: 48px;
+  padding: 0 16px;
+  border: none;
+  border-bottom: 1px dashed color-mix(in srgb, var(--brand) 32%, transparent);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--brand) 5%, transparent);
+  color: var(--brand);
+  font-size: var(--text-sm);
+  font-weight: 650;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.nd-split-page__list-add:hover {
+  background: color-mix(in srgb, var(--brand) 11%, transparent);
+  border-bottom-color: color-mix(in srgb, var(--brand) 45%, transparent);
 }
 
 .nd-split-page__list-body {
@@ -3220,7 +3286,8 @@
 
 .nd-chapter-body__text {
   margin: 0;
-  font-family: Georgia, 'Noto Serif SC', 'Source Han Serif SC', serif;
+  font-family: var(--font-sans);
+  font-weight: 600;
   font-size: 17px;
   line-height: 2;
   letter-spacing: 0.02em;

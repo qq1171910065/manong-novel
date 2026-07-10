@@ -1,4 +1,9 @@
-import { countChapterChars, resolveChapterWordCountRange } from './chapter-length-plan'
+import {
+  CHAPTER_ABSOLUTE_MIN_CHARS,
+  countChapterChars,
+  resolveChapterMinAcceptableChars,
+  resolveChapterWordCountRange,
+} from './chapter-length-plan'
 
 const SENTENCE_SPLIT = /(?<=[。！？!?…])/
 const MIN_LINE_DEDUPE = 6
@@ -415,13 +420,22 @@ export function formatRepetitionRewriteHint(content: string, priorContent?: stri
 }
 
 export function formatWordCountFeedback(actual: number, target: number): string | null {
-  if (!target) return null
+  if (!target) {
+    if (actual < CHAPTER_ABSOLUTE_MIN_CHARS) {
+      return `上一版仅 ${actual} 字，远低于最低 ${CHAPTER_ABSOLUTE_MIN_CHARS} 字。请完整重写本章，补足情节、对话、动作与环境描写，禁止输出敷衍性短章。`
+    }
+    return null
+  }
   const { max } = resolveChapterWordCountRange(target)
+  const minAcceptable = resolveChapterMinAcceptableChars(target)
   if (actual > max) {
     return `上一版 ${actual} 字，超过硬性上限 ${max} 字。请完全重写，删除所有重复段落，控制在 ${target} 字左右，不得超过 ${max} 字。`
   }
+  if (actual < minAcceptable) {
+    return `上一版仅 ${actual} 字，远低于最低要求 ${minAcceptable} 字（规划 ${target} 字）。请完整重写并补足情节、对话与细节，禁止输出不足百字的敷衍正文。`
+  }
   const ratio = actual / target
-  if (ratio < 0.75) return `上一版仅 ${actual} 字，明显低于规划 ${target} 字，请补足情节与细节。`
+  if (ratio < 0.75) return `上一版 ${actual} 字，明显低于规划 ${target} 字，请补足情节与细节。`
   if (ratio > 1.15) {
     return `上一版 ${actual} 字，超出规划 ${target} 字。请重写并删减重复内容，控制在 ${target} 字左右（上限 ${max} 字）。`
   }

@@ -5,6 +5,10 @@ import type {
   Relationship,
   WorldListItem,
 } from '@shared/novel/types'
+import {
+  formatCharacterPreview,
+  sanitizeMaterialCharacter,
+} from '@shared/novel/blueprint-material-schemas'
 import { POLISH_SECTION_LABELS, type PolishableSectionKey } from '@renderer/novel/utils/section-polish'
 
 export type BlueprintDiffChangeKind = 'added' | 'removed' | 'modified'
@@ -172,9 +176,7 @@ function diffCharacters(before: Blueprint, after: Blueprint, entries: BlueprintD
         sectionLabel: POLISH_SECTION_LABELS.characters,
         label: `角色：${item.name}`,
         kind: 'added',
-        after: truncate(
-          [item.identity, item.personality, item.description].filter(Boolean).join(' · ')
-        ),
+        after: truncate(formatCharacterPreview(item)),
       })
       continue
     }
@@ -270,6 +272,53 @@ function diffChapterOutline(before: Blueprint, after: Blueprint, entries: Bluepr
     pushFieldDiff(entries, 'chapter_outline', `第 ${num} 章标题`, old.title, item.title)
     pushFieldDiff(entries, 'chapter_outline', `第 ${num} 章摘要`, old.summary, item.summary)
   }
+}
+
+export interface CharacterMaterialPreviewItem {
+  name: string
+  identity: string
+  summary: string
+  kind: 'added' | 'modified'
+}
+
+function characterFieldSignature(char: Character): string {
+  return CHARACTER_FIELDS.map(({ key }) => norm(char[key])).join('|')
+}
+
+export function buildCharacterMaterialPreview(
+  before: Blueprint | undefined | null,
+  updates: Partial<Blueprint>
+): CharacterMaterialPreviewItem[] {
+  if (!updates.characters?.length) return []
+
+  const after = previewMergedBlueprint(before, updates)
+  const beforeMap = new Map<string, Character>()
+  for (const item of before?.characters ?? []) {
+    const name = norm(item.name)
+    if (name) beforeMap.set(name, item)
+  }
+
+  const items: CharacterMaterialPreviewItem[] = []
+  const seen = new Set<string>()
+
+  for (const raw of after.characters ?? []) {
+    const sanitized = sanitizeMaterialCharacter(raw)
+    if (!sanitized || seen.has(sanitized.name)) continue
+    seen.add(sanitized.name)
+
+    const old = beforeMap.get(sanitized.name)
+    const kind: CharacterMaterialPreviewItem['kind'] = !old ? 'added' : 'modified'
+    if (old && characterFieldSignature(old) === characterFieldSignature(sanitized)) continue
+
+    items.push({
+      name: sanitized.name,
+      identity: sanitized.identity?.trim() || '',
+      summary: formatCharacterPreview(sanitized),
+      kind,
+    })
+  }
+
+  return items
 }
 
 export function buildBlueprintDiff(
