@@ -20,8 +20,17 @@ export interface UseReadingTtsOptions {
 }
 
 const PRELOAD_AHEAD = 4
+const INITIAL_PRELOAD_AHEAD = 1
 
 export const READING_TTS_PRELOAD_AHEAD = PRELOAD_AHEAD
+
+function yieldToUi(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => resolve())
+    })
+  })
+}
 
 export function useReadingTts(options: UseReadingTtsOptions) {
   const status = ref<ReadingTtsStatus>('idle')
@@ -45,9 +54,8 @@ export function useReadingTts(options: UseReadingTtsOptions) {
   }
 
   function setSegmentElement(index: number, element: HTMLElement | null) {
-    const next = segmentElements.value.slice()
-    next[index] = element
-    segmentElements.value = next
+    if (segmentElements.value[index] === element) return
+    segmentElements.value[index] = element
   }
 
   function rebuildSegments() {
@@ -107,8 +115,8 @@ export function useReadingTts(options: UseReadingTtsOptions) {
     }
   }
 
-  function schedulePreload(fromIndex: number, token: number) {
-    for (let offset = 1; offset <= PRELOAD_AHEAD; offset += 1) {
+  function schedulePreload(fromIndex: number, token: number, ahead = PRELOAD_AHEAD) {
+    for (let offset = 1; offset <= ahead; offset += 1) {
       const target = fromIndex + offset
       if (target >= segments.value.length) break
       if (getPlayer().isReady(target) || pendingLoads.has(target)) continue
@@ -195,6 +203,8 @@ export function useReadingTts(options: UseReadingTtsOptions) {
 
   async function start(fromIndex = 0) {
     resetPlaybackState()
+    await yieldToUi()
+
     rebuildSegments()
     if (!segments.value.length) return
 
@@ -202,9 +212,9 @@ export function useReadingTts(options: UseReadingTtsOptions) {
     const safeIndex = Math.min(Math.max(fromIndex, 0), segments.value.length - 1)
 
     status.value = 'loading'
-    warmPreload(safeIndex, token)
     await loadSegment(safeIndex, token)
     if (token !== generationToken) return
+    schedulePreload(safeIndex, token, INITIAL_PRELOAD_AHEAD)
     await playSegment(safeIndex, token)
   }
 

@@ -1,4 +1,4 @@
-import { paginateChapter, type PaginationInput } from '@renderer/services/reading-pagination'
+import { paginateChapter, type PaginationInput, type PageLayoutMetrics } from '@renderer/services/reading-pagination'
 
 export interface ReadingTtsVoiceOption {
   id: string
@@ -180,12 +180,50 @@ function mapSegmentsToPages(normalized: string, segments: string[], input: Pagin
   })
 }
 
+const layoutCache = new Map<string, TtsChapterLayout>()
+const LAYOUT_CACHE_MAX = 24
+
+function paginationCacheKey(input: PaginationInput): string {
+  if (typeof input === 'number') return `n:${input}`
+  const metrics = input as PageLayoutMetrics
+  return [
+    'm',
+    metrics.contentWidth,
+    metrics.contentHeight,
+    metrics.fontSize,
+    metrics.lineHeight,
+    metrics.fontFamily ?? '',
+  ].join(':')
+}
+
+function rememberLayoutCache(key: string, layout: TtsChapterLayout): TtsChapterLayout {
+  if (layoutCache.size >= LAYOUT_CACHE_MAX) {
+    const oldest = layoutCache.keys().next().value
+    if (oldest) layoutCache.delete(oldest)
+  }
+  layoutCache.set(key, layout)
+  return layout
+}
+
 /** 一次计算 TTS 分段与翻页映射，避免重复 split/paginate */
 export function buildTtsChapterLayout(text: string, input: PaginationInput): TtsChapterLayout {
   const normalized = normalizeChapterText(text)
+  const cacheKey = `${hashChapterText(normalized)}|${paginationCacheKey(input)}`
+  const cached = layoutCache.get(cacheKey)
+  if (cached) return cached
+
   const segments = splitNormalizedIntoTtsSegments(normalized)
   const pageBySegment = mapSegmentsToPages(normalized, segments, input)
-  return { normalized, segments, pageBySegment }
+  return rememberLayoutCache(cacheKey, { normalized, segments, pageBySegment })
+}
+
+function hashChapterText(text: string): string {
+  let hash = 2166136261
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i)
+    hash = Math.imul(hash, 16777619)
+  }
+  return (hash >>> 0).toString(36)
 }
 
 /** 计算每个 TTS 分段对应的翻页页码（0-based） */
@@ -202,15 +240,15 @@ export function resolveStartSegmentIndex(options: {
   scrollHeight: number
   clientHeight: number
 }): number {
-  const layout = buildTtsChapterLayout(options.chapterText, options.paginationInput)
-  if (!layout.segments.length) return 0
+  const normalized = normalizeChapterText(options.chapterText)
+  const segments = splitNormalizedIntoTtsSegments(normalized)
+  if (!segments.length) return 0
 
   if (options.isPageMode) {
-    const index = layout.pageBySegment.findIndex((page) => page === options.pageIndex)
+    const pageBySegment = mapSegmentsToPages(normalized, segments, options.paginationInput)
+    const index = pageBySegment.findIndex((page) => page === options.pageIndex)
     return index >= 0 ? index : 0
   }
-
-  const segments = layout.segments
 
   const scrollable = Math.max(1, options.scrollHeight - options.clientHeight)
   if (scrollable <= 1) return 0

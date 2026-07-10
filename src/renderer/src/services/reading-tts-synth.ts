@@ -8,6 +8,26 @@ import {
 import { normalizeTtsAudioBuffer } from '@renderer/services/reading-tts-audio'
 import { resolveTtsStyleInstruction } from '@renderer/services/reading-tts'
 
+const MAX_CONCURRENT_SYNTH = 2
+let activeSynthCount = 0
+const synthWaiters: Array<() => void> = []
+
+async function withSynthConcurrencyLimit<T>(task: () => Promise<T>): Promise<T> {
+  if (activeSynthCount >= MAX_CONCURRENT_SYNTH) {
+    await new Promise<void>((resolve) => {
+      synthWaiters.push(resolve)
+    })
+  }
+
+  activeSynthCount += 1
+  try {
+    return await task()
+  } finally {
+    activeSynthCount -= 1
+    synthWaiters.shift()?.()
+  }
+}
+
 export interface TtsSynthOptions {
   text: string
   voice: string
@@ -37,12 +57,14 @@ export async function synthesizeTtsSegmentToCache(options: TtsSynthOptions): Pro
     }
   }
 
-  const buffer = await gatewayTtsSynthesize({
-    text,
-    voice: options.voice,
-    styleInstruction: resolveTtsStyleInstruction(options.styleId),
-    model,
-  })
+  const buffer = await withSynthConcurrencyLimit(() =>
+    gatewayTtsSynthesize({
+      text,
+      voice: options.voice,
+      styleInstruction: resolveTtsStyleInstruction(options.styleId),
+      model,
+    })
+  )
   const normalized = normalizeTtsAudioBuffer(buffer)
   setSessionTtsAudio(cacheKey, normalized)
   return normalized

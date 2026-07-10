@@ -31,6 +31,7 @@ import {
   READING_TTS_STYLES,
   buildTtsChapterLayout,
   resolveStartSegmentIndex,
+  splitChapterIntoTtsSegments,
 } from '@renderer/services/reading-tts'
 
 const novelStore = useNovelStore()
@@ -112,7 +113,6 @@ const {
   globalPageIndex,
   bookPages,
   currentPageText,
-  scrollChapterParagraphs,
   scrollBlocks,
   canPrevPage,
   canNextPage,
@@ -155,7 +155,7 @@ const tts = useReadingTts({
     if (chapter) await ensureChapterLoaded(chapter)
     ttsAdvancingChapter = false
   },
-  onSegmentChange: (index, element) => {
+  onSegmentChange: (index) => {
     if (index < 0) return
     if (isPageMode.value) {
       const targetPage = ttsPageBySegment.value[index] ?? 0
@@ -169,7 +169,7 @@ const tts = useReadingTts({
       }
       return
     }
-    scrollToActiveSegment(element)
+    scrollToTtsSegment(index)
   },
   onNearChapterEnd: (remaining) => {
     const next = readableChapters.value[chapterIndex.value + 1]
@@ -388,20 +388,13 @@ const adjacentPageStyle = computed(() => {
   }
 })
 
-const scrollDisplaySegments = computed(() => {
-  const chapter = currentChapter.value
-  if (!chapter?.content) return ['暂无章节内容']
-  if (ttsActive.value && ttsSegments.value.length) return ttsSegments.value
-  return scrollChapterParagraphs.value
-})
-
 const ttsStyleLabel = computed(() => {
   return READING_TTS_STYLES.find((item) => item.id === settings.value.ttsStyle)?.label || '自然朗读'
 })
 
 const ttsChapterLayout = computed(() => {
   const chapter = currentChapter.value
-  if (!chapter?.content) {
+  if (!chapter?.content || !ttsActive.value || !isPageMode.value) {
     return { segments: [] as string[], pageBySegment: [] as number[] }
   }
   const layout = buildTtsChapterLayout(chapter.content, pageLayoutMetrics.value)
@@ -409,7 +402,12 @@ const ttsChapterLayout = computed(() => {
 })
 
 const ttsPageBySegment = computed(() => ttsChapterLayout.value.pageBySegment)
-const ttsFallbackSegmentCount = computed(() => ttsChapterLayout.value.segments.length)
+const ttsFallbackSegmentCount = computed(() => {
+  if (ttsSegments.value.length) return ttsSegments.value.length
+  const chapter = currentChapter.value
+  if (!chapter?.content) return 0
+  return splitChapterIntoTtsSegments(chapter.content).length
+})
 
 const pageTtsEntries = computed(() => {
   if (!ttsActive.value) return []
@@ -433,18 +431,18 @@ const chromeVisible = computed(
   () => showChrome.value || showSettings.value || showChapterPicker.value || loading.value
 )
 
-function scrollToActiveSegment(element: HTMLElement | null) {
+function scrollToTtsSegment(index: number) {
   const viewport = pageViewportRef.value
-  if (!viewport || !element) return
+  if (!viewport) return
 
-  const viewportRect = viewport.getBoundingClientRect()
-  const targetRect = element.getBoundingClientRect()
-  const targetTop = targetRect.top - viewportRect.top + viewport.scrollTop
-  const idealTop = targetTop - viewport.clientHeight * 0.28
+  const total = Math.max(1, ttsSegments.value.length || ttsFallbackSegmentCount.value)
+  if (total <= 1) return
 
+  const scrollable = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+  const ratio = index / Math.max(1, total - 1)
   viewport.scrollTo({
-    top: Math.max(0, idealTop),
-    behavior: ttsActive.value ? 'smooth' : 'auto',
+    top: ratio * scrollable,
+    behavior: 'smooth',
   })
 }
 
@@ -468,7 +466,10 @@ function resolveTtsStartIndex(): number {
 
 function startListening() {
   enterImmersiveReading()
-  void startTts(resolveTtsStartIndex())
+  showSettings.value = false
+  void nextTick(() => {
+    void startTts(resolveTtsStartIndex())
+  })
 }
 
 function stopListening() {
@@ -1061,41 +1062,26 @@ onUnmounted(() => {
             </article>
           </div>
           <article v-else class="reader-page reader-page--scroll">
-            <template v-if="ttsActive">
-              <p
-                v-for="(segment, idx) in scrollDisplaySegments"
-                :key="`${chapterIndex}-${idx}`"
-                :ref="(el) => setSegmentRef(idx, el as Element | null)"
-                :class="{
-                  'reader-segment--active': ttsCurrentSegmentIndex === idx,
-                  'reader-segment--loading': ttsLoading && ttsCurrentSegmentIndex === idx,
-                }"
+            <template v-for="block in scrollBlocks" :key="block.key">
+              <div
+                v-if="block.type === 'chapter-spacer-top'"
+                class="reader-chapter-spacer-top"
+                :data-chapter-marker="block.chapterIndex"
+              />
+              <div
+                v-else-if="block.type === 'chapter-start'"
+                class="reader-chapter-marker"
+                :class="{ 'reader-chapter-marker--hidden': !settings.showChapterDividers }"
               >
-                {{ segment }}
+                {{ settings.showChapterDividers ? block.title : '' }}
+              </div>
+              <div
+                v-else-if="block.type === 'chapter-spacer-bottom'"
+                class="reader-chapter-spacer-bottom"
+              />
+              <p v-else>
+                {{ block.text }}
               </p>
-            </template>
-            <template v-else>
-              <template v-for="block in scrollBlocks" :key="block.key">
-                <div
-                  v-if="block.type === 'chapter-spacer-top'"
-                  class="reader-chapter-spacer-top"
-                  :data-chapter-marker="block.chapterIndex"
-                />
-                <div
-                  v-else-if="block.type === 'chapter-start'"
-                  class="reader-chapter-marker"
-                  :class="{ 'reader-chapter-marker--hidden': !settings.showChapterDividers }"
-                >
-                  {{ settings.showChapterDividers ? block.title : '' }}
-                </div>
-                <div
-                  v-else-if="block.type === 'chapter-spacer-bottom'"
-                  class="reader-chapter-spacer-bottom"
-                />
-                <p v-else>
-                  {{ block.text }}
-                </p>
-              </template>
             </template>
           </article>
         </main>
