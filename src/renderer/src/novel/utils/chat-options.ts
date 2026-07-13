@@ -128,6 +128,32 @@ export function extractOptionsFromMessage(message: string): ParsedChoiceOption[]
   return options
 }
 
+/** 解析 ui_control，并在模型把选项写在正文里时回退提取 */
+export function resolveUiControl(raw: unknown, fallbackMessage: string): UIControl {
+  const normalized = normalizeUiControl(raw, fallbackMessage)
+  if (normalized?.type === 'single_choice' || normalized?.type === 'multiple_choice') {
+    return normalized
+  }
+
+  const fromMessage = extractOptionsFromMessage(fallbackMessage)
+  if (fromMessage.length >= 2) {
+    const rawType = raw && typeof raw === 'object' && !Array.isArray(raw)
+      ? (raw as { type?: string }).type
+      : undefined
+    return {
+      type: rawType === 'multiple_choice' ? 'multiple_choice' : 'single_choice',
+      options: fromMessage,
+    }
+  }
+
+  if (normalized) return normalized
+
+  return {
+    type: 'text_input',
+    placeholder: '请输入你的想法…',
+  }
+}
+
 export function stripChoiceOptionsFromMessage(message: string): string {
   if (!message.trim()) return message
 

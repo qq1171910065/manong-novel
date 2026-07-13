@@ -1,5 +1,8 @@
 import { userInfoRef } from '@renderer/services/auth'
 import { cloneJson } from '@shared/clone-json'
+import { PROJECT_SAVE_CONFLICT } from '@shared/novel/project-persistence'
+import type { NovelProject } from '@shared/novel/types'
+import { ProjectSaveConflictError } from './project-persistence'
 
 export function getNovelUserId(): string {
   const user = userInfoRef.value
@@ -10,6 +13,9 @@ export function getNovelUserId(): string {
 async function unwrap<T>(promise: Promise<{ ok: boolean; data?: T; error?: string }>): Promise<T> {
   const res = await promise
   if (!res.ok || res.data === undefined) {
+    if (res.error?.includes(PROJECT_SAVE_CONFLICT) && res.data) {
+      throw new ProjectSaveConflictError(res.data as unknown as NovelProject)
+    }
     throw new Error(res.error || '请求失败')
   }
   return res.data
@@ -24,8 +30,13 @@ export const novelClient = {
     writingMode?: import('@shared/novel/types').WritingMode
   ) =>
     unwrap(window.api.novelCreateProject(getNovelUserId(), { title, initialPrompt, writingMode })),
-  saveProject: (project: import('@shared/novel/types').NovelProject) =>
-    unwrap(window.api.novelSaveProject(getNovelUserId(), cloneJson(project))),
+  saveProject: (
+    project: NovelProject,
+    options?: { expectedUpdatedAt?: string }
+  ) =>
+    unwrap(
+      window.api.novelSaveProject(getNovelUserId(), cloneJson(project), options?.expectedUpdatedAt)
+    ),
   deleteProjects: (projectIds: string[]) =>
     unwrap(window.api.novelDeleteProjects(getNovelUserId(), projectIds)),
   getChapter: (projectId: string, chapterNumber: number) =>

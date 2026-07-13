@@ -48,6 +48,32 @@ function overlapsRange(start: number, end: number, ranges: Array<[number, number
   return ranges.some(([rangeStart, rangeEnd]) => start < rangeEnd && end > rangeStart)
 }
 
+function findNextEntityMatch(
+  text: string,
+  from: number,
+  entities: BlueprintEntityRef[],
+  protectedRanges: Array<[number, number]>
+): { entity: BlueprintEntityRef; start: number; end: number } | null {
+  for (let pos = from; pos < text.length; pos += 1) {
+    let matched: { entity: BlueprintEntityRef; start: number; end: number } | null = null
+
+    for (const entity of entities) {
+      if (pos + entity.name.length > text.length) continue
+      if (text.slice(pos, pos + entity.name.length) !== entity.name) continue
+      const start = pos
+      const end = pos + entity.name.length
+      if (overlapsRange(start, end, protectedRanges)) continue
+      if (!matched || entity.name.length > matched.entity.name.length) {
+        matched = { entity, start, end }
+      }
+    }
+
+    if (matched) return matched
+  }
+
+  return null
+}
+
 /** 将段落拆分为普通文本与设定实体片段 */
 export function splitParagraphWithEntities(
   text: string,
@@ -63,27 +89,17 @@ export function splitParagraphWithEntities(
   let cursor = 0
 
   while (cursor < text.length) {
-    let matched: { entity: BlueprintEntityRef; start: number; end: number } | null = null
-
-    for (const entity of entities) {
-      if (cursor + entity.name.length > text.length) continue
-      if (text.slice(cursor, cursor + entity.name.length) !== entity.name) continue
-      const start = cursor
-      const end = cursor + entity.name.length
-      if (overlapsRange(start, end, protectedRanges)) continue
-      if (!matched || entity.name.length > matched.entity.name.length) {
-        matched = { entity, start, end }
-      }
-    }
-
+    const matched = findNextEntityMatch(text, cursor, entities, protectedRanges)
     if (!matched) {
-      cursor += 1
-      continue
+      segments.push({ kind: 'html', html: renderChapterInlineMarkdown(text.slice(cursor)) })
+      break
     }
 
     if (matched.start > cursor) {
-      const plain = text.slice(cursor, matched.start)
-      segments.push({ kind: 'html', html: renderChapterInlineMarkdown(plain) })
+      segments.push({
+        kind: 'html',
+        html: renderChapterInlineMarkdown(text.slice(cursor, matched.start)),
+      })
     }
 
     segments.push({
@@ -92,10 +108,6 @@ export function splitParagraphWithEntities(
       html: escapeHtml(matched.entity.name),
     })
     cursor = matched.end
-  }
-
-  if (cursor < text.length) {
-    segments.push({ kind: 'html', html: renderChapterInlineMarkdown(text.slice(cursor)) })
   }
 
   if (!segments.length) {

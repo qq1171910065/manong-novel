@@ -93,7 +93,7 @@ export function useReadingNavigation(options: UseReadingNavigationOptions) {
   const isPageMode = computed(() => options.settings.value.interactionMode === 'page')
 
   const pageLayoutMetrics = computed(() => {
-    viewportLayoutTick.value
+    void viewportLayoutTick.value
     return resolvePageLayoutMetrics(
       options.pageViewportRef.value,
       {

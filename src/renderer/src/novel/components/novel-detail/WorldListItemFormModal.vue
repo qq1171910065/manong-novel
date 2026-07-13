@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import type { WorldListItem } from '@shared/novel/types'
 import NovelModalShell from '@renderer/novel/components/shared/NovelModalShell.vue'
+import { useI18n } from '@renderer/composables/useI18n'
 
 const props = defineProps<{
   show: boolean
@@ -15,16 +16,28 @@ const emit = defineEmits<{
   save: [item: WorldListItem]
 }>()
 
+const { t } = useI18n()
 const draft = ref<WorldListItem>(emptyItem())
 
-const kindLabel = computed(() => (props.kind === 'location' ? '地点' : '阵营'))
-
-const modalTitle = computed(() =>
-  props.mode === 'create' ? `新增关键${kindLabel.value}` : `编辑${kindLabel.value}`
+const kindLabel = computed(() =>
+  props.kind === 'location' ? t('novelDetail.worldSetting.kindLocation') : t('novelDetail.worldSetting.kindFaction')
 )
 
+const modalTitle = computed(() => {
+  if (props.mode === 'create') {
+    return props.kind === 'location'
+      ? t('novelDetail.forms.worldItem.createLocation')
+      : t('novelDetail.forms.worldItem.createFaction')
+  }
+  return props.kind === 'location'
+    ? t('novelDetail.forms.worldItem.editLocation')
+    : t('novelDetail.forms.worldItem.editFaction')
+})
+
 const namePlaceholder = computed(() =>
-  props.kind === 'location' ? '例如：青云宗、帝都' : '例如：天剑盟、帝国军'
+  props.kind === 'location'
+    ? t('novelDetail.forms.worldItem.locationPlaceholder')
+    : t('novelDetail.forms.worldItem.factionPlaceholder')
 )
 
 function emptyItem(): WorldListItem {
@@ -65,13 +78,13 @@ function save() {
     variant="form"
     auto-min-width="md"
     :title="modalTitle"
-    aria-label="世界设定条目表单"
+    :aria-label="t('novelDetail.forms.worldItem.aria')"
     foot-class="novel-modal__foot--form"
     @close="emit('close')"
   >
     <div class="world-item-form novel-modal__compact-form">
       <div class="md-text-field md-text-field-filled">
-        <label class="md-text-field-label" for="world-item-name">{{ kindLabel }}名称</label>
+        <label class="md-text-field-label" for="world-item-name">{{ t('novelDetail.forms.worldItem.nameLabel', { kind: kindLabel }) }}</label>
         <input
           id="world-item-name"
           v-model="draft.name"
@@ -81,20 +94,20 @@ function save() {
         />
       </div>
       <div class="md-text-field md-text-field-filled">
-        <label class="md-text-field-label" for="world-item-desc">描述</label>
+        <label class="md-text-field-label" for="world-item-desc">{{ t('novelDetail.forms.worldItem.description') }}</label>
         <textarea
           id="world-item-desc"
           v-model="draft.description"
           class="md-textarea w-full"
           rows="5"
-          :placeholder="`关于这个${kindLabel}的详细描述…`"
+          :placeholder="t('novelDetail.forms.worldItem.descriptionPlaceholder', { kind: kindLabel })"
         />
       </div>
     </div>
 
     <template #footer>
       <button type="button" class="md-btn md-btn-tonal md-ripple" @click="emit('close')">
-        取消
+        {{ t('novelDetail.addChapterModal.cancel') }}
       </button>
       <button
         type="button"
@@ -102,7 +115,7 @@ function save() {
         :disabled="!canSave"
         @click="save"
       >
-        保存
+        {{ t('novelDetail.addChapterModal.save') }}
       </button>
     </template>
   </NovelModalShell>

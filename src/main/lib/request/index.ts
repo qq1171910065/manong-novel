@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron'
+import { assertPublicHttpUrl } from '../path-safety'
 
 const TIMEOUT_MS = 30_000
 const TIMEOUT_MS_MAX = 1_800_000
@@ -41,6 +42,7 @@ function parseJsonLikeResponseBody(
 }
 
 export function registerRequestHandlers(): void {
+  ipcMain.removeHandler('request:fetch-binary')
   ipcMain.handle(
     'request:fetch-binary',
     async (
@@ -53,6 +55,11 @@ export function registerRequestHandlers(): void {
       const { url, timeoutMs: rawTimeout } = payload
       if (!url || !url.startsWith('http')) {
         return { success: false, error: '请输入合法的 HTTP/HTTPS 地址' }
+      }
+      try {
+        assertPublicHttpUrl(url)
+      } catch (err) {
+        return { success: false, error: (err as Error).message }
       }
 
       const startAt = Date.now()
@@ -102,6 +109,7 @@ export function registerRequestHandlers(): void {
     }
   )
 
+  ipcMain.removeHandler('request:fetch')
   ipcMain.handle(
     'request:fetch',
     async (
@@ -118,6 +126,11 @@ export function registerRequestHandlers(): void {
 
       if (!url || !url.startsWith('http')) {
         return { success: false, error: '请输入合法的 HTTP/HTTPS 地址' }
+      }
+      try {
+        assertPublicHttpUrl(url)
+      } catch (err) {
+        return { success: false, error: (err as Error).message }
       }
 
       const startAt = Date.now()

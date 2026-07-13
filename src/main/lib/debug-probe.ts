@@ -1,4 +1,5 @@
-﻿import { app, type BrowserWindow } from 'electron'
+/** @internal 开发/CI 截图自动化探针 — 生产环境勿注册，无鉴权 */
+import { app, type BrowserWindow } from 'electron'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { URL } from 'node:url'
 

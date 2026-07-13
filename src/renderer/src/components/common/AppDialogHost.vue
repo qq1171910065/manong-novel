@@ -1,19 +1,27 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { AlertTriangle, Info } from 'lucide-vue-next'
+import { AlertTriangle, HelpCircle, Info } from 'lucide-vue-next'
+import NovelDialogShell from '@renderer/components/common/NovelDialogShell.vue'
 import { resolveAppDialog, useAppDialogState } from '@renderer/composables/useAppDialog'
 
 const state = useAppDialogState()
 
 const iconComponent = computed(() => {
+  if (state.mode === 'choose') return HelpCircle
   if (state.tone === 'warning' || state.tone === 'danger') return AlertTriangle
   return Info
 })
 
 const iconClass = computed(() => {
-  if (state.tone === 'danger') return 'app-dialog-icon app-dialog-icon--danger'
-  if (state.tone === 'warning') return 'app-dialog-icon app-dialog-icon--warning'
-  return 'app-dialog-icon app-dialog-icon--default'
+  if (state.tone === 'danger') return 'is-error'
+  if (state.tone === 'warning') return 'is-warning'
+  return ''
+})
+
+const confirmButtonClass = computed(() => {
+  if (state.tone === 'danger') return 'novel-dialog__btn novel-dialog__btn--danger'
+  if (state.tone === 'warning') return 'novel-dialog__btn novel-dialog__btn--danger'
+  return 'novel-dialog__btn novel-dialog__btn--primary'
 })
 
 function dismiss() {
@@ -31,184 +39,105 @@ function confirm() {
 function choose(id: string) {
   resolveAppDialog({ choice: id, remember: state.rememberChecked })
 }
+
+function choiceButtonClass(variant?: 'default' | 'primary' | 'danger') {
+  if (variant === 'primary') return 'novel-dialog__btn novel-dialog__btn--primary'
+  if (variant === 'danger') return 'novel-dialog__btn novel-dialog__btn--danger'
+  return 'novel-dialog__btn'
+}
 </script>
 
 <template>
-  <Teleport to="body">
-    <div v-if="state.open" class="app-dialog-overlay">
-      <section
-        class="app-dialog"
-        role="dialog"
-        aria-modal="true"
-        :aria-labelledby="state.title ? 'app-dialog-title' : undefined"
-      >
-        <div :class="iconClass" aria-hidden="true">
-          <component :is="iconComponent" :size="26" />
-        </div>
-
-        <h2 v-if="state.title" id="app-dialog-title">{{ state.title }}</h2>
-        <p class="app-dialog-message">{{ state.message }}</p>
-        <p v-if="state.detail" class="app-dialog-detail">{{ state.detail }}</p>
-        <component :is="state.content" v-if="state.content" />
-
-        <label v-if="state.mode === 'choose' && state.rememberLabel" class="app-dialog-remember">
-          <input v-model="state.rememberChecked" type="checkbox" />
-          <span>{{ state.rememberLabel }}</span>
-        </label>
-
-        <div
-          v-if="state.mode === 'choose'"
-          :class="[
-            'app-dialog-actions',
-            state.actionsLayout === 'row' ? 'app-dialog-actions--row' : 'app-dialog-actions--stack',
-          ]"
-        >
-          <button
-            v-for="choice in state.choices"
-            :key="choice.id"
-            type="button"
-            :class="[
-              'app-dialog-btn',
-              choice.variant === 'primary'
-                ? 'app-dialog-btn--primary'
-                : choice.variant === 'danger'
-                  ? 'app-dialog-btn--danger'
-                  : 'app-dialog-btn--muted',
-            ]"
-            @click="choose(choice.id)"
-          >
-            {{ choice.label }}
-          </button>
-        </div>
-
-        <div v-else class="app-dialog-actions">
-          <button v-if="state.cancelText" type="button" class="app-dialog-btn app-dialog-btn--muted" @click="dismiss">
-            {{ state.cancelText }}
-          </button>
-          <button
-            type="button"
-            :class="[
-              'app-dialog-btn',
-              state.tone === 'danger'
-                ? 'app-dialog-btn--danger'
-                : state.tone === 'warning'
-                  ? 'app-dialog-btn--warning'
-                  : 'app-dialog-btn--primary',
-            ]"
-            @click="confirm"
-          >
-            {{ state.confirmText }}
-          </button>
-        </div>
-      </section>
+  <NovelDialogShell
+    :model-value="state.open"
+    :title="state.title"
+    variant="form"
+    :mask-closable="false"
+    show-footer
+    :footer-stack="state.mode === 'choose' && state.actionsLayout === 'stack'"
+    @update:model-value="(value) => { if (!value) dismiss() }"
+  >
+    <div class="app-dialog__head">
+      <div class="novel-dialog__icon" :class="iconClass">
+        <component :is="iconComponent" :size="20" />
+      </div>
     </div>
-  </Teleport>
+
+    <p class="app-dialog__message">{{ state.message }}</p>
+    <p v-if="state.detail" class="app-dialog__detail">{{ state.detail }}</p>
+    <component :is="state.content" v-if="state.content" />
+
+    <label v-if="state.mode === 'choose' && state.rememberLabel" class="app-dialog__remember">
+      <input v-model="state.rememberChecked" type="checkbox" />
+      <span>{{ state.rememberLabel }}</span>
+    </label>
+
+    <template #footer-actions>
+      <template v-if="state.mode === 'choose'">
+        <button
+          v-for="choice in state.choices"
+          :key="choice.id"
+          type="button"
+          :class="[
+            choiceButtonClass(choice.variant),
+            state.actionsLayout === 'row' ? 'app-dialog__choice-btn--row' : 'app-dialog__choice-btn--stack',
+          ]"
+          @click="choose(choice.id)"
+        >
+          {{ choice.label }}
+        </button>
+      </template>
+
+      <template v-else>
+        <button
+          v-if="state.cancelText"
+          type="button"
+          class="novel-dialog__btn"
+          @click="dismiss"
+        >
+          {{ state.cancelText }}
+        </button>
+        <button type="button" :class="confirmButtonClass" @click="confirm">
+          {{ state.confirmText }}
+        </button>
+      </template>
+    </template>
+  </NovelDialogShell>
 </template>
 
 <style scoped>
-.app-dialog-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1400;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: rgba(18, 24, 58, 0.42);
-  backdrop-filter: blur(8px);
+.app-dialog__head {
+  margin-bottom: 12px;
 }
 
-.app-dialog {
-  position: relative;
-  width: min(520px, 100%);
-  max-height: min(80vh, 720px);
-  overflow: auto;
-  padding: 28px 28px 24px;
-  border: 1px solid rgba(255, 255, 255, 0.82);
-  border-radius: 22px;
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 28px 64px rgba(53, 45, 110, 0.22);
-}
-
-.app-dialog-icon {
-  width: 52px;
-  height: 52px;
-  display: grid;
-  place-items: center;
-  margin-bottom: 14px;
-  border-radius: 16px;
-}
-
-.app-dialog-icon--default {
-  color: #0f4b44;
-  background: rgba(31, 122, 103, 0.12);
-}
-
-.app-dialog-icon--warning {
-  color: #d97706;
-  background: rgba(245, 158, 11, 0.12);
-}
-
-.app-dialog-icon--danger {
-  color: #dc2626;
-  background: rgba(239, 68, 68, 0.1);
-}
-
-.app-dialog h2 {
-  margin: 0 0 8px;
-  color: #142f2f;
-  font-size: 22px;
-  font-weight: 680;
-}
-
-.app-dialog-message {
+.app-dialog__message {
   margin: 0;
-  color: #142f2f;
-  font-size: 15px;
+  color: #26305e;
+  font-size: 14px;
   line-height: 1.7;
   white-space: pre-wrap;
 }
 
-.app-dialog-detail {
+.app-dialog__detail {
   margin: 10px 0 0;
-  color: #60766f;
+  color: #65709f;
   font-size: 13px;
   line-height: 1.7;
   white-space: pre-wrap;
 }
 
-.app-dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 22px;
-}
-
-.app-dialog-actions--stack {
-  flex-direction: column;
-  align-items: stretch;
-}
-
-.app-dialog-actions--row {
-  flex-direction: row;
-}
-
-.app-dialog-actions--row .app-dialog-btn {
-  flex: 1;
-}
-
-.app-dialog-remember {
+.app-dialog__remember {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 18px;
-  color: #60766f;
+  margin-top: 16px;
+  color: #65709f;
   font-size: 13px;
   cursor: pointer;
   user-select: none;
 }
 
-.app-dialog-remember input {
+.app-dialog__remember input {
   width: 16px;
   height: 16px;
   margin: 0;
@@ -216,33 +145,18 @@ function choose(id: string) {
   cursor: pointer;
 }
 
-.app-dialog-btn {
-  min-height: 40px;
-  padding: 0 16px;
-  border: 0;
-  border-radius: 11px;
-  font: inherit;
-  font-size: 14px;
-  cursor: pointer;
+.app-dialog__choice-btn--stack {
+  width: 100%;
 }
 
-.app-dialog-btn--muted {
-  color: #60766f;
-  background: rgba(31, 122, 103, 0.12);
+.app-dialog__choice-btn--row {
+  flex: 1;
 }
 
-.app-dialog-btn--primary {
-  color: #fff;
-  background: linear-gradient(180deg, var(--brand), var(--brand-strong));
-}
-
-.app-dialog-btn--warning {
-  color: #fff;
-  background: linear-gradient(180deg, #f59e0b, #d97706);
-}
-
-.app-dialog-btn--danger {
-  color: #fff;
-  background: linear-gradient(180deg, #ef4444, #dc2626);
+:deep(.novel-dialog__foot--stack .novel-dialog__actions) {
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  margin-left: 0;
 }
 </style>

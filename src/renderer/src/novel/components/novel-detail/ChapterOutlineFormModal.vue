@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import type { ChapterOutline } from '@shared/novel/types'
 import NovelModalShell from '@renderer/novel/components/shared/NovelModalShell.vue'
+import { useI18n } from '@renderer/composables/useI18n'
 
 const props = defineProps<{
   show: boolean
@@ -14,10 +15,13 @@ const emit = defineEmits<{
   save: [chapter: ChapterOutline]
 }>()
 
+const { t } = useI18n()
 const draft = ref<ChapterOutline>(emptyChapter())
 
 const modalTitle = computed(() =>
-  props.mode === 'create' ? '新增章节大纲' : `编辑第 ${draft.value.chapter_number} 章`
+  props.mode === 'create'
+    ? t('novelDetail.forms.chapterOutline.create')
+    : t('novelDetail.forms.chapterOutline.edit', { n: draft.value.chapter_number })
 )
 
 function emptyChapter(): ChapterOutline {
@@ -54,36 +58,36 @@ function save() {
     variant="form"
     auto-min-width="md"
     :title="modalTitle"
-    aria-label="章节大纲表单"
+    :aria-label="t('novelDetail.forms.chapterOutline.aria')"
     foot-class="novel-modal__foot--form"
     @close="emit('close')"
   >
     <div class="chapter-outline-form novel-modal__compact-form">
       <div class="md-text-field md-text-field-filled">
-        <label class="md-text-field-label" for="chapter-title">章节标题</label>
+        <label class="md-text-field-label" for="chapter-title">{{ t('novelDetail.addChapterModal.chapterTitle') }}</label>
         <input
           id="chapter-title"
           v-model="draft.title"
           type="text"
           class="md-text-field-input w-full"
-          placeholder="例如：意外的相遇"
+          :placeholder="t('novelDetail.addChapterModal.chapterTitlePlaceholder')"
         />
       </div>
       <div class="md-text-field md-text-field-filled">
-        <label class="md-text-field-label" for="chapter-summary">章节摘要</label>
+        <label class="md-text-field-label" for="chapter-summary">{{ t('novelDetail.addChapterModal.summary') }}</label>
         <textarea
           id="chapter-summary"
           v-model="draft.summary"
           class="md-textarea w-full"
           rows="5"
-          placeholder="简要描述本章发生的主要事件"
+          :placeholder="t('novelDetail.addChapterModal.summaryPlaceholder')"
         />
       </div>
     </div>
 
     <template #footer>
       <button type="button" class="md-btn md-btn-tonal md-ripple" @click="emit('close')">
-        取消
+        {{ t('novelDetail.addChapterModal.cancel') }}
       </button>
       <button
         type="button"
@@ -91,7 +95,7 @@ function save() {
         :disabled="!canSave"
         @click="save"
       >
-        保存
+        {{ t('novelDetail.addChapterModal.save') }}
       </button>
     </template>
   </NovelModalShell>

@@ -12,7 +12,7 @@ defineProps<{
   usageLoading: boolean
   usageColumns: DataTableColumns<PortalUsageRecord>
   usagePagination: { page: number; pageSize: number; itemCount: number; showSizePicker?: boolean }
-  usagePageSummary: { records: number; cost: number; tokens: number }
+  usagePageSummary: { records: number; pageRecords: number; cost: number; tokens: number }
   usageChartOption: Record<string, unknown>
 }>()
 
@@ -24,10 +24,14 @@ const emit = defineEmits<{
 
 <template>
   <ProfileSectionLayout title="用量明细" desc="查看模型调用趋势与逐条费用记录。">
-    <section class="profile-usage-summary">
+    <section class="profile-usage-summary profile-usage-summary--quad">
       <div class="profile-usage-stat">
         <span>总记录</span>
         <strong>{{ usagePageSummary.records.toLocaleString() }}</strong>
+      </div>
+      <div class="profile-usage-stat">
+        <span>本页记录</span>
+        <strong>{{ usagePageSummary.pageRecords.toLocaleString() }}</strong>
       </div>
       <div class="profile-usage-stat">
         <span>本页费用</span>
@@ -43,7 +47,7 @@ const emit = defineEmits<{
       <AppChart
         v-if="usage.length"
         :option="usageChartOption"
-        height="260px"
+        height="300px"
         :loading="usageLoading"
       />
       <div v-else class="profile-empty">

@@ -1,4 +1,4 @@
-﻿:root {
+:root {
   --color-primary: #1f7a67;
   --color-primary-deep: #0f4b44;
   --color-accent-cyan: #8eb4a2;
@@ -2028,6 +2028,10 @@ code,
   gap: 12px;
 }
 
+.profile-usage-summary--quad {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .profile-usage-stat {
   display: flex;
   flex-direction: column;
@@ -2060,8 +2064,18 @@ code,
   margin-top: 0;
 }
 
+@media (max-width: 1100px) {
+  .profile-usage-summary--quad {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 760px) {
   .profile-usage-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .profile-usage-summary--quad {
     grid-template-columns: 1fr;
   }
 
@@ -2213,8 +2227,7 @@ code,
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
-  margin-top: 0;
-  margin-bottom: 4px;
+  margin: 0;
 }
 
 .profile-stats--quad {

@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, ref, nextTick, onMounted, onUnmounted, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { getCharacterUiFieldDefs } from '@shared/novel/blueprint-material-schemas'
 import type { Character } from '@shared/novel/types'
 import NovelModalShell from '@renderer/novel/components/shared/NovelModalShell.vue'
+import { useI18n } from '@renderer/composables/useI18n'
 
 export type CharacterFieldKey =
   | 'name'
@@ -34,20 +35,63 @@ const emit = defineEmits<{
   save: [character: Character]
 }>()
 
+const { t } = useI18n()
 const draft = ref<Character>(emptyCharacter())
 
 const activeScope = computed(() => props.scope ?? 'all')
 
+const FIELD_I18N: Record<CharacterFieldKey, { labelKey?: string; placeholderKey: string }> = {
+  name: {
+    labelKey: 'novelDetail.forms.character.fields.name.label',
+    placeholderKey: 'novelDetail.forms.character.fields.name.placeholder',
+  },
+  identity: {
+    labelKey: 'novelDetail.forms.character.fields.identity.label',
+    placeholderKey: 'novelDetail.forms.character.fields.identity.placeholder',
+  },
+  description: {
+    labelKey: 'novelDetail.forms.character.fields.description.label',
+    placeholderKey: 'novelDetail.forms.character.fields.description.placeholder',
+  },
+  personality: {
+    labelKey: 'novelDetail.characters.fields.personality',
+    placeholderKey: 'novelDetail.forms.character.fields.personality.placeholder',
+  },
+  goals: {
+    labelKey: 'novelDetail.characters.fields.goals',
+    placeholderKey: 'novelDetail.forms.character.fields.goals.placeholder',
+  },
+  abilities: {
+    labelKey: 'novelDetail.characters.fields.abilities',
+    placeholderKey: 'novelDetail.forms.character.fields.abilities.placeholder',
+  },
+  relationship_to_protagonist: {
+    labelKey: 'novelDetail.characters.fields.relationshipToProtagonist',
+    placeholderKey: 'novelDetail.forms.character.fields.relationshipToProtagonist.placeholder',
+  },
+}
+
+const localizedFields = computed(() =>
+  FIELD_DEFS.map((field) => {
+    const keys = FIELD_I18N[field.key]
+    return {
+      ...field,
+      label: keys.labelKey ? t(keys.labelKey) : field.label,
+      placeholder: t(keys.placeholderKey),
+    }
+  })
+)
+
 const visibleFields = computed(() => {
-  if (activeScope.value === 'all') return FIELD_DEFS
-  return FIELD_DEFS.filter((field) => field.key === activeScope.value)
+  if (activeScope.value === 'all') return localizedFields.value
+  return localizedFields.value.filter((field) => field.key === activeScope.value)
 })
 
 const modalTitle = computed(() => {
-  if (props.mode === 'create') return '新增角色'
-  if (activeScope.value === 'all') return '编辑角色'
-  const field = FIELD_DEFS.find((item) => item.key === activeScope.value)
-  return `编辑${field?.label ?? '角色'}`
+  if (props.mode === 'create') return t('novelDetail.forms.character.create')
+  if (activeScope.value === 'all') return t('novelDetail.forms.character.edit')
+  const field = localizedFields.value.find((item) => item.key === activeScope.value)
+  return t('novelDetail.forms.character.editField', { label: field?.label ?? t('novelDetail.characters.listTitle') })
 })
 
 function emptyCharacter(): Character {
@@ -78,7 +122,7 @@ function save() {
   if (!draft.value.name?.trim() && (activeScope.value === 'all' || activeScope.value === 'name')) {
     return
   }
-  emit('save', { ...draft.value, name: draft.value.name?.trim() || '未命名角色' })
+  emit('save', { ...draft.value, name: draft.value.name?.trim() || t('novelDetail.common.unnamedCharacter') })
 }
 
 const canSave = computed(() => {
@@ -95,7 +139,7 @@ const canSave = computed(() => {
     variant="form"
     auto-min-width="md"
     :title="modalTitle"
-    aria-label="角色表单"
+    :aria-label="t('novelDetail.forms.character.aria')"
     foot-class="novel-modal__foot--form"
     @close="emit('close')"
   >
@@ -127,7 +171,7 @@ const canSave = computed(() => {
 
     <template #footer>
       <button type="button" class="md-btn md-btn-tonal md-ripple" @click="emit('close')">
-        取消
+        {{ t('novelDetail.addChapterModal.cancel') }}
       </button>
       <button
         type="button"
@@ -135,7 +179,7 @@ const canSave = computed(() => {
         :disabled="!canSave"
         @click="save"
       >
-        保存
+        {{ t('novelDetail.addChapterModal.save') }}
       </button>
     </template>
   </NovelModalShell>

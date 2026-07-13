@@ -60,8 +60,6 @@ export function useCreateNovelProject() {
       await options?.onCreated?.(project)
       showModeModal.value = false
       return project
-    } catch (error) {
-      throw error
     } finally {
       isCreating.value = false
     }

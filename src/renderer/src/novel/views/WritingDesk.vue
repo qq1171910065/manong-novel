@@ -26,7 +26,7 @@
       <div v-if="novelStore.isLoading" class="h-full flex justify-center items-center">
         <div class="text-center">
           <div class="md-spinner mx-auto mb-4"></div>
-          <p class="md-body-medium md-on-surface-variant">正在加载项目数据...</p>
+          <p class="md-body-medium md-on-surface-variant">{{ t('writingDesk.loading') }}</p>
         </div>
       </div>
 
@@ -38,9 +38,9 @@
               <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path>
             </svg>
           </div>
-          <h3 class="md-title-large mb-2" style="color: var(--md-on-surface);">加载失败</h3>
+          <h3 class="md-title-large mb-2" style="color: var(--md-on-surface);">{{ t('writingDesk.loadFailed') }}</h3>
           <p class="md-body-medium mb-4" style="color: var(--md-error);">{{ novelStore.error }}</p>
-          <button @click="loadProject" class="md-btn md-btn-tonal md-ripple">重新加载</button>
+          <button @click="loadProject" class="md-btn md-btn-tonal md-ripple">{{ t('writingDesk.reload') }}</button>
         </div>
       </div>
 
@@ -139,7 +139,7 @@
                 :disabled="button.disabled || button.loading"
                 @click="handleFooterAction(button.action)"
               >
-                {{ button.loading ? '处理中...' : button.label }}
+                {{ button.loading ? t('writingDesk.processing') : button.label }}
               </button>
             </div>
           </footer>
@@ -189,6 +189,11 @@ import {
   getActiveChapterEvaluation,
 } from '@renderer/services/novel/async-task-registry'
 import { useChapterGenProgress } from '@renderer/novel/composables/chapter-generation-progress'
+import { useI18n } from '@renderer/composables/useI18n'
+import {
+  cleanVersionContent,
+  parseChapterVersionStrings,
+} from '@shared/novel/chapter-content-utils'
 import WDHeader from '@renderer/novel/components/writing-desk/WDHeader.vue'
 import WDSidebar from '@renderer/novel/components/writing-desk/WDSidebar.vue'
 import WDWorkspace from '@renderer/novel/components/writing-desk/WDWorkspace.vue'
@@ -222,6 +227,7 @@ const emit = defineEmits<{
 const router = useRouter()
 const route = useRoute()
 const novelStore = useNovelStore()
+const { t } = useI18n()
 
 const resolvedProjectId = computed(() => props.projectId || route.params.id || '')
 const { activeProgress: chapterGenProgress } = useChapterGenProgress()
@@ -333,53 +339,6 @@ const isCurrentVersion = (versionIndex: number) => {
   return isContentMatch(versionIndex)
 }
 
-const cleanVersionContent = (content: string): string => {
-  if (!content) return ''
-
-  // 尝试解析JSON，看是否是完整的章节对象
-  try {
-    const parsed = JSON.parse(content)
-    const extractContent = (value: any): string | null => {
-      if (!value) return null
-      if (typeof value === 'string') return value
-      if (Array.isArray(value)) {
-        for (const item of value) {
-          const nested = extractContent(item)
-          if (nested) return nested
-        }
-        return null
-      }
-      if (typeof value === 'object') {
-        for (const key of ['content', 'chapter_content', 'chapter_text', 'text', 'body', 'story']) {
-          if (value[key]) {
-            const nested = extractContent(value[key])
-            if (nested) return nested
-          }
-        }
-      }
-      return null
-    }
-    const extracted = extractContent(parsed)
-    if (extracted) {
-      // 如果是章节对象/数组，提取正文
-      content = extracted
-    }
-  } catch (error) {
-    // 如果不是JSON，继续处理字符串
-  }
-
-  // 去掉开头和结尾的引号
-  let cleaned = content.replace(/^"|"$/g, '')
-
-  // 处理转义字符
-  cleaned = cleaned.replace(/\\n/g, '\n')  // 换行符
-  cleaned = cleaned.replace(/\\"/g, '"')   // 引号
-  cleaned = cleaned.replace(/\\t/g, '\t')  // 制表符
-  cleaned = cleaned.replace(/\\\\/g, '\\') // 反斜杠
-
-  return cleaned
-}
-
 const canGenerateChapter = (chapterNumber: number) => {
   if (!project.value?.blueprint?.chapter_outline) return false
 
@@ -419,49 +378,14 @@ const hasChapterInProgress = (chapterNumber: number) => {
 
 // 可用版本列表 (合并生成结果和已有版本)
 const availableVersions = computed(() => {
-  // 优先使用新生成的版本（对象数组格式）
   if (chapterGenerationResult.value?.versions) {
-    console.log('使用生成结果版本:', chapterGenerationResult.value.versions)
     return chapterGenerationResult.value.versions
   }
 
-  // 使用章节已有的版本（字符串数组格式，需要转换为对象数组）
   if (selectedChapter.value?.versions && Array.isArray(selectedChapter.value.versions)) {
-    console.log('原始章节版本 (字符串数组):', selectedChapter.value.versions)
-
-    // 将字符串数组转换为ChapterVersion对象数组
-    const convertedVersions = selectedChapter.value.versions.map((versionString, index) => {
-      console.log(`版本 ${index} 原始字符串:`, versionString)
-
-      try {
-        // 解析JSON字符串
-        const versionObj = JSON.parse(versionString)
-        console.log(`版本 ${index} 解析后的对象:`, versionObj)
-
-        // 提取content字段作为实际内容
-        const actualContent = versionObj.content || versionString
-
-        console.log(`版本 ${index} 实际内容:`, actualContent.substring(0, 100) + '...')
-
-        return {
-          content: actualContent,
-          style: '标准' // 默认风格
-        }
-      } catch (error) {
-        // 如果JSON解析失败，直接使用原始字符串
-        console.log(`版本 ${index} JSON解析失败，使用原始字符串:`, error)
-        return {
-          content: versionString,
-          style: '标准'
-        }
-      }
-    })
-
-    console.log('转换后的版本对象:', convertedVersions)
-    return convertedVersions
+    return parseChapterVersionStrings(selectedChapter.value.versions)
   }
 
-  console.log('没有可用版本，selectedChapter:', selectedChapter.value)
   return []
 })
 
@@ -498,7 +422,10 @@ const loadProject = async () => {
   try {
     await novelStore.loadProject(resolvedProjectId.value)
   } catch (error) {
-    console.error('加载项目失败:', error)
+    globalAlert.showError(
+      error instanceof Error ? error.message : t('common.unknownError'),
+      t('writingDesk.loadFailed')
+    )
   }
 }
 
@@ -508,10 +435,11 @@ const fetchChapterStatus = async () => {
   }
   try {
     await novelStore.loadChapter(selectedChapterNumber.value)
-    console.log('Chapter status polled and updated.')
   } catch (error) {
-    console.error('轮询章节状态失败:', error)
-    // 在这里可以决定是否要通知用户轮询失败
+    globalAlert.showError(
+      error instanceof Error ? error.message : t('writingDesk.pollFailed'),
+      t('writingDesk.pollFailed')
+    )
   }
 }
 
@@ -935,7 +863,6 @@ watch(
   () => [
     props.embedded,
     selectedChapterNumber.value,
-    project.value,
     generatingChapter.value,
     evaluatingChapter.value,
     isConfirmingVersion.value,
@@ -944,13 +871,15 @@ watch(
     selectedChapter.value?.content,
     selectedVersionIndex.value,
     availableVersions.value.length,
+    project.value?.id,
+    project.value?.chapters?.length,
   ],
   () => {
     footerState.value = buildEmbeddedFooterState()
     emit('footer-state', footerState.value)
     closeDangerMenu()
   },
-  { immediate: true, deep: true }
+  { immediate: true }
 )
 
 async function handleFooterAction(action: WritingDeskFooterAction) {

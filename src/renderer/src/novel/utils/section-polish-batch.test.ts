@@ -69,7 +69,7 @@ describe('resolveEffectiveCharacterCountForBatch', () => {
         }),
       },
     ]
-    const blueprint = Array.from({ length: 18 }, (_, i) => ({ name: `旧${i + 1}` }))
+    const blueprint = Array.from({ length: 18 }, (_, i) => ({ name: `旧${i + 1}`, description: '' }))
     expect(resolveEffectiveCharacterCountForBatch(blueprint, history, 18)).toBe(8)
   })
 })

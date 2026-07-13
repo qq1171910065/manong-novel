@@ -83,7 +83,7 @@ manong-novel/
 **发布流程** — 更新 `package.json` 中的 `version` 后：
 
 ```bash
-git tag v0.2.0
+git tag v0.3.0
 pnpm publish:github
 ```
 

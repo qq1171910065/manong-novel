@@ -19,6 +19,8 @@ export interface ActivityLogEntry {
   id: string
   kind: ActivityKind
   message: string
+  i18nKey?: string
+  i18nParams?: Record<string, string | number>
   detail?: string
   meta?: Record<string, unknown>
   targetId?: string
@@ -90,6 +92,8 @@ export const activityLogService = {
     return append({
       kind: 'project.create',
       message: `创建了作品「${title}」`,
+      i18nKey: 'novelDetail.activity.messages.projectCreated',
+      i18nParams: { title },
       targetId: projectId,
       targetPath: `/detail/${projectId}`,
     })
@@ -100,6 +104,8 @@ export const activityLogService = {
     return append({
       kind: 'project.open',
       message: `打开了作品「${title}」`,
+      i18nKey: 'novelDetail.activity.messages.projectOpened',
+      i18nParams: { title },
       targetId: projectId,
       targetPath: `/detail/${projectId}`,
     })
@@ -109,6 +115,8 @@ export const activityLogService = {
     return append({
       kind: 'project.delete',
       message: count > 1 ? `删除了 ${count} 部作品` : `删除了作品「${title}」`,
+      i18nKey: count > 1 ? 'novelDetail.activity.messages.projectsDeleted' : 'novelDetail.activity.messages.projectDeleted',
+      i18nParams: count > 1 ? { count } : { title },
     })
   },
 
@@ -123,6 +131,10 @@ export const activityLogService = {
     return append({
       kind: 'chapter.generate',
       message: `生成了章节「${chapterLabel}」`,
+      i18nKey: chapterTitle?.trim()
+        ? 'novelDetail.activity.messages.chapterGeneratedTitled'
+        : 'novelDetail.activity.messages.chapterGenerated',
+      i18nParams: chapterTitle?.trim() ? { chapter: chapterLabel } : { n: chapterNumber },
       detail: projectTitle,
       meta,
       targetId: projectId,
@@ -135,6 +147,8 @@ export const activityLogService = {
     return append({
       kind: 'material.create',
       message: `创建了${label}「${title}」`,
+      i18nKey: `novelDetail.activity.messages.materialCreated.${type}`,
+      i18nParams: { title },
       detail,
       targetPath: MATERIAL_TYPE_PATH[type],
     })
@@ -145,6 +159,8 @@ export const activityLogService = {
     return append({
       kind: 'material.update',
       message: `更新了${label}「${title}」`,
+      i18nKey: `novelDetail.activity.messages.materialUpdated.${type}`,
+      i18nParams: { title },
       targetId: materialId,
       targetPath: MATERIAL_TYPE_PATH[type],
     })
@@ -154,6 +170,8 @@ export const activityLogService = {
     return append({
       kind: 'blueprint.edit',
       message: `修改了「${fieldLabel}」`,
+      i18nKey: 'novelDetail.activity.messages.blueprintEdited',
+      i18nParams: { field: fieldLabel },
       detail: projectTitle,
       targetId: projectId,
       targetPath: `/detail/${projectId}`,
@@ -164,6 +182,7 @@ export const activityLogService = {
     return append({
       kind: 'blueprint.generate',
       message: '生成了创作蓝图',
+      i18nKey: 'novelDetail.activity.messages.blueprintGenerated',
       detail: projectTitle,
       targetId: projectId,
       targetPath: `/detail/${projectId}`,
@@ -175,6 +194,10 @@ export const activityLogService = {
     return append({
       kind: 'chapter.edit',
       message: `编辑了章节「${chapterLabel}」`,
+      i18nKey: chapterTitle?.trim()
+        ? 'novelDetail.activity.messages.chapterEditedTitled'
+        : 'novelDetail.activity.messages.chapterEdited',
+      i18nParams: chapterTitle?.trim() ? { chapter: chapterLabel } : { n: chapterNumber },
       detail: projectTitle,
       targetId: projectId,
       targetPath: `/detail/${projectId}`,
@@ -192,6 +215,10 @@ export const activityLogService = {
     return append({
       kind: 'chapter.evaluate',
       message: `评审了章节「${chapterLabel}」`,
+      i18nKey: chapterTitle?.trim()
+        ? 'novelDetail.activity.messages.chapterEvaluatedTitled'
+        : 'novelDetail.activity.messages.chapterEvaluated',
+      i18nParams: chapterTitle?.trim() ? { chapter: chapterLabel } : { n: chapterNumber },
       detail: projectTitle,
       meta,
       targetId: projectId,
@@ -203,6 +230,9 @@ export const activityLogService = {
     return append({
       kind: generated ? 'image.generate' : 'cover.update',
       message: generated ? 'AI 绘制了书籍封面' : '更新了书籍封面',
+      i18nKey: generated
+        ? 'novelDetail.activity.messages.coverAiGenerated'
+        : 'novelDetail.activity.messages.coverUpdated',
       detail: projectTitle,
       targetId: projectId,
       targetPath: `/detail/${projectId}`,
@@ -213,6 +243,10 @@ export const activityLogService = {
     return append({
       kind: generated ? 'image.generate' : 'portrait.update',
       message: generated ? `AI 绘制了「${characterName}」立绘` : `更新了「${characterName}」立绘`,
+      i18nKey: generated
+        ? 'novelDetail.activity.messages.portraitAiGenerated'
+        : 'novelDetail.activity.messages.portraitUpdated',
+      i18nParams: { name: characterName },
       detail: projectTitle,
       targetId: projectId,
       targetPath: `/detail/${projectId}`,

@@ -1,28 +1,33 @@
 import { ipcMain } from 'electron'
 
-let db: any = null
+/** @deprecated SQLite 未启用；保留 IPC 占位以便未来迁移，当前调用将抛出明确错误 */
+let db: unknown = null
 
-export function registerDatabaseHandlers(appId: string): void {
+export function registerDatabaseHandlers(_appId: string): void {
   ipcMain.removeHandler('database:query')
-  ipcMain.handle('database:query', async (_event, sql: string, params?: any[]): Promise<any> => {
+  ipcMain.handle('database:query', async (_event, sql: string, params?: unknown[]): Promise<unknown> => {
     if (!db) {
       throw new Error('Database not initialized')
     }
-    return db.prepare(sql).all(...(params || []))
+    return (db as { prepare: (sql: string) => { all: (...args: unknown[]) => unknown } })
+      .prepare(sql)
+      .all(...(params || []))
   })
 
   ipcMain.removeHandler('database:execute')
-  ipcMain.handle('database:execute', async (_event, sql: string, params?: any[]): Promise<void> => {
+  ipcMain.handle('database:execute', async (_event, sql: string, params?: unknown[]): Promise<void> => {
     if (!db) {
       throw new Error('Database not initialized')
     }
-    db.prepare(sql).run(...(params || []))
+    ;(db as { prepare: (sql: string) => { run: (...args: unknown[]) => void } })
+      .prepare(sql)
+      .run(...(params || []))
   })
 }
 
 export function closeDatabase(): void {
-  if (db) {
-    db.close()
+  if (db && typeof (db as { close?: () => void }).close === 'function') {
+    ;(db as { close: () => void }).close()
     db = null
   }
 }

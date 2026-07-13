@@ -16,6 +16,8 @@ const LOADING_MESSAGES = [
 export interface BlueprintGenerationRunOptions {
   /** null 表示不设总超时（适合智能解析等长任务） */
   totalTimeoutMs?: number | null
+  /** 使用服务端上报的真实进度，禁用假进度动画 */
+  useRealProgress?: boolean
 }
 
 export function useBlueprintGeneration() {
@@ -75,17 +77,19 @@ export function useBlueprintGeneration() {
   async function run<T>(task: () => Promise<T>, options?: BlueprintGenerationRunOptions): Promise<T> {
     clearTimers()
     isGenerating.value = true
-    useExternalProgress.value = false
-    progress.value = 0
+    useExternalProgress.value = options?.useRealProgress === true
+    progress.value = options?.useRealProgress ? 4 : 0
 
     const totalTimeoutMs = options?.totalTimeoutMs === undefined
       ? BLUEPRINT_STREAM_TIMEOUT_MS
       : options.totalTimeoutMs
 
-    if (totalTimeoutMs === null) {
-      startLongTaskProgressAnimation()
-    } else {
-      startProgressAnimation(totalTimeoutMs)
+    if (!useExternalProgress.value) {
+      if (totalTimeoutMs === null) {
+        startLongTaskProgressAnimation()
+      } else {
+        startProgressAnimation(totalTimeoutMs)
+      }
     }
 
     const runners: Array<Promise<T>> = [task()]
@@ -131,6 +135,9 @@ export function useBlueprintGeneration() {
 
 export function formatBlueprintGenerationError(error: unknown): string {
   const message = error instanceof Error ? error.message : '未知错误'
+  if (/章节大纲/.test(message)) {
+    return message
+  }
   if (/流式响应超时|timeout|超时/i.test(message)) {
     if (/300|补全章节|outline/i.test(message)) {
       return `章节大纲补全超时：${message}。可在蓝图预览中手动编辑章节，或稍后重试。`

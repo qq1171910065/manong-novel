@@ -29,13 +29,16 @@ import { registerUpdaterHandlers } from './updater'
 import { registerDeeplinkHandlers, initDeeplinkProtocol } from './deeplink'
 import { appIconOptions } from './app-icon'
 import { clearNovelSession, registerNovelHandlers } from './novel/ipc'
+import { registerAgentLockHandlers } from './agent-lock/ipc'
+import { registerNovelGenerationHandlers } from './novel/generation/ipc'
+import { registerGatewaySecretHandlers } from './gateway-secrets'
 import { registerReadingWindowHandlers, getReadingWindow, closeReadingWindow } from './reading-window'
 import {
   isScreenshotMode,
   prepareScreenshotMode,
   registerScreenshotProbe,
 } from './screenshot-mode'
-import type { MntoolsAppConfig, MntoolsModuleId, PortalSession } from '../shared/types'
+import type { MntoolsAppConfig, MntoolsModuleId, PortalSession } from '../../shared/types'
 
 export type WindowPhase = 'login' | 'main' | 'reading'
 
@@ -299,9 +302,12 @@ export function registerModules(config: MntoolsAppConfig): void {
   registerWindowControls()
   registerAppSettingsHandlers(config.appId)
   registerNovelHandlers(config.appId)
+  registerAgentLockHandlers()
+  registerNovelGenerationHandlers(config.appId)
+  registerGatewaySecretHandlers()
   registerReadingWindowHandlers()
 
-  if (modules.has('request') || modules.has('sse') || true) {
+  if (modules.has('request') || modules.has('sse')) {
     registerRequestHandlers()
   }
   if (modules.has('sse')) {

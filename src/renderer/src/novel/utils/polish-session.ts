@@ -100,7 +100,7 @@ export function restorePolishSession(
         type: 'text_input',
         placeholder,
       }
-    } else if (Boolean(lastParsed.ready_to_apply)) {
+    } else if (lastParsed.ready_to_apply) {
       const updates = coalescePolishBlueprintUpdates(existingBlueprint, entrySection, {
         blueprint_updates: lastParsed.blueprint_updates,
         section_update: lastParsed.section_update,

@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { Sparkles } from 'lucide-vue-next'
+import { useI18n } from '@renderer/composables/useI18n'
 import DetailEmptyState from './DetailEmptyState.vue'
+
+const { t } = useI18n()
 </script>
 
 <template>
   <div class="blueprint-setup-empty">
     <DetailEmptyState
-      title="设定尚未完成"
-      description="请先在左侧点击「完善设定」，与 AI 对话并生成蓝图与章节大纲。完成后各板块内容将在此展示。"
+      :title="t('novelDetail.blueprintSetupEmpty.title')"
+      :description="t('novelDetail.blueprintSetupEmpty.description')"
       :icon="Sparkles"
     />
   </div>

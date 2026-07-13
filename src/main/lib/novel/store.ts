@@ -1,8 +1,10 @@
-﻿import { randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs'
 import { join } from 'node:path'
 import { getAppHomeDir } from '../app-home'
 import { NOVEL_STORE_KEY, NOVEL_STORE_VERSION } from '@shared/novel/constants'
+import { PROJECT_SAVE_CONFLICT } from '@shared/novel/project-persistence'
+import { reconcileStaleChapterStatuses } from '@shared/novel/stale-chapter-recovery'
 import type {
   NovelResult,
   Chapter,
@@ -99,8 +101,13 @@ export class NovelStore {
   }
 
   getProject(projectId: string): NovelResult<NovelProject> {
-    const project = this.read().projects[projectId]
+    const store = this.read()
+    const project = store.projects[projectId]
     if (!project) return { ok: false, error: '项目不存在' }
+    if (reconcileStaleChapterStatuses(project)) {
+      store.projects[projectId] = project
+      this.write(store)
+    }
     return { ok: true, data: project }
   }
 
@@ -125,8 +132,17 @@ export class NovelStore {
     return { ok: true, data: project }
   }
 
-  saveProject(project: NovelProject): NovelResult<NovelProject> {
+  saveProject(project: NovelProject, expectedUpdatedAt?: string): NovelResult<NovelProject> {
     const store = this.read()
+    const existing = store.projects[project.id]
+    if (!existing) return { ok: false, error: '项目不存在' }
+    if (
+      expectedUpdatedAt &&
+      existing.updated_at &&
+      existing.updated_at !== expectedUpdatedAt
+    ) {
+      return { ok: false, error: PROJECT_SAVE_CONFLICT, data: existing }
+    }
     project.updated_at = new Date().toISOString()
     store.projects[project.id] = project
     this.write(store)
@@ -166,6 +182,32 @@ export class NovelStore {
     return structuredClone(this.read())
   }
 
+  mergeImportStore(imported: NovelStoreData): NovelResult<{ imported: number; skipped: number }> {
+    const store = this.read()
+    let importedCount = 0
+    let skipped = 0
+    for (const [id, project] of Object.entries(imported.projects ?? {})) {
+      if (!project || typeof project !== 'object') {
+        skipped += 1
+        continue
+      }
+      if (store.projects[id]) {
+        const newId = randomUUID()
+        store.projects[newId] = {
+          ...structuredClone(project),
+          id: newId,
+          updated_at: new Date().toISOString(),
+        }
+        importedCount += 1
+        continue
+      }
+      store.projects[id] = structuredClone(project)
+      importedCount += 1
+    }
+    this.write(store)
+    return { ok: true, data: { imported: importedCount, skipped } }
+  }
+
   clearProjects(): void {
     const store = this.read()
     store.projects = {}
@@ -178,7 +220,9 @@ export class NovelStore {
 
   getChapter(projectId: string, chapterNumber: number): NovelResult<Chapter> {
     const projectResult = this.getProject(projectId)
-    if (!projectResult.ok) return projectResult
+    if (!projectResult.ok) {
+      return { ok: false, error: projectResult.error }
+    }
     const chapter = ensureChapter(projectResult.data, chapterNumber)
     this.saveProject(projectResult.data)
     return { ok: true, data: chapter }
@@ -186,7 +230,9 @@ export class NovelStore {
 
   getSection(projectId: string, section: string): NovelResult<{ section: string; data: Record<string, unknown> }> {
     const projectResult = this.getProject(projectId)
-    if (!projectResult.ok) return projectResult
+    if (!projectResult.ok) {
+      return { ok: false, error: projectResult.error }
+    }
     const project = projectResult.data
     const blueprint = project.blueprint ?? {}
     const map: Record<string, Record<string, unknown>> = {

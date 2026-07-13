@@ -5,7 +5,7 @@
       <aside class="material-library-sidebar list-flow-layout__sidebar" aria-label="书架筛选">
         <label class="sidebar-search">
           <Search :size="16" />
-          <input v-model="query" type="search" placeholder="搜索作品..." />
+          <input v-model="query" type="search" :placeholder="t('bookshelf.searchPlaceholder')" />
         </label>
 
         <nav class="sidebar-nav">
@@ -28,16 +28,16 @@
         <header class="material-library-toolbar list-flow-layout__toolbar">
           <div class="toolbar-filters">
             <SlidersHorizontal :size="16" />
-            <NovelSelect v-model="sortBy" :options="sortOptions" aria-label="排序方式" />
+            <NovelSelect v-model="sortBy" :options="sortOptions" :aria-label="t('bookshelf.sortLabel')" />
           </div>
           <div class="toolbar-actions">
             <button type="button" class="novel-btn novel-btn--ghost" :disabled="isImporting" @click="showImportModal = true">
               <Upload :size="16" />
-              {{ isImporting ? '导入中...' : '导入' }}
+              {{ isImporting ? t('bookshelf.importing') : t('bookshelf.importProject') }}
             </button>
             <button type="button" class="novel-btn novel-btn--primary" :disabled="isCreating" @click="openCreateModal">
               <Plus :size="16" />
-              {{ isCreating ? '创建中...' : '新建作品' }}
+              {{ isCreating ? t('bookshelf.creating') : t('bookshelf.createProject') }}
             </button>
           </div>
         </header>
@@ -45,18 +45,18 @@
         <div class="list-flow-layout__scroll">
           <div v-if="novelStore.isLoading" class="bookshelf-state">
             <div class="md-spinner"></div>
-            <p>正在加载书架...</p>
+            <p>{{ t('bookshelf.loading') }}</p>
           </div>
 
           <div v-else-if="novelStore.error" class="bookshelf-state">
-            <h3>加载失败</h3>
+            <h3>{{ t('bookshelf.loadFailed') }}</h3>
             <p>{{ novelStore.error }}</p>
-            <button type="button" class="novel-btn novel-btn--primary" @click="loadProjects">重试</button>
+            <button type="button" class="novel-btn novel-btn--primary" @click="loadProjects">{{ t('common.retry') }}</button>
           </div>
 
           <div v-else-if="filteredProjects.length === 0" class="material-library-empty">
-            <h3>{{ query.trim() ? '没有匹配的作品' : '书架还是空的' }}</h3>
-            <p>开笔写第一部小说，或从 TXT / 项目文件导入已有草稿。</p>
+            <h3>{{ query.trim() ? t('bookshelf.emptyFiltered') : t('bookshelf.empty') }}</h3>
+            <p>{{ t('bookshelf.emptyHint') }}</p>
           </div>
 
           <div v-else class="material-library-grid">
@@ -131,10 +131,13 @@ import { NovelAPI } from '@renderer/services/novel/api'
 import { resolveAccent } from '@renderer/services/novel/home-mapper'
 import type { WritingMode } from '@shared/novel/types'
 import type { CreateProjectMaterialSelection } from '@renderer/novel/composables/useCreateNovelProject'
-import { WRITING_MODE_LABELS } from '@shared/novel/writing-mode'
+import { resolveLocaleDateString } from '@renderer/i18n/log-labels'
+import { useI18n } from '@renderer/composables/useI18n'
 
 const router = useRouter()
 const novelStore = useNovelStore()
+const { t, currentLocale } = useI18n()
+const dateLocale = computed(() => resolveLocaleDateString(currentLocale.value))
 const { showModeModal, isCreating, openCreateModal, closeCreateModal, createWithMode } = useCreateNovelProject()
 
 const query = ref('')
@@ -144,39 +147,39 @@ const isImporting = ref(false)
 const showImportModal = ref(false)
 const isDeleting = ref(false)
 
-const filters = [
-  { id: 'all', label: '全部', icon: Layers, match: () => true },
+const filters = computed(() => [
+  { id: 'all', label: t('bookshelf.filters.all'), icon: Layers, match: () => true },
   {
     id: 'writing',
-    label: '创作中',
+    label: t('bookshelf.filters.writing'),
     icon: Clock3,
     match: (p: NovelProjectSummary) =>
       p.total_chapters > 0 && p.completed_chapters > 0 && p.completed_chapters < p.total_chapters,
   },
   {
     id: 'draft',
-    label: '待开写',
+    label: t('bookshelf.filters.draft'),
     icon: BookOpen,
     match: (p: NovelProjectSummary) => p.total_chapters > 0 && p.completed_chapters <= 0,
   },
   {
     id: 'done',
-    label: '已完成',
+    label: t('bookshelf.filters.done'),
     icon: CheckCircle2,
     match: (p: NovelProjectSummary) =>
       p.total_chapters > 0 && p.completed_chapters >= p.total_chapters,
   },
-]
+])
 
-const sortOptions = [
-  { label: '最近更新', value: 'updated' },
-  { label: '名称排序', value: 'name' },
-  { label: '完成进度', value: 'progress' },
-]
+const sortOptions = computed(() => [
+  { label: t('bookshelf.sort.updated'), value: 'updated' },
+  { label: t('bookshelf.sort.name'), value: 'name' },
+  { label: t('bookshelf.sort.progress'), value: 'progress' },
+])
 
 const filterCounts = computed(() => {
   const counts: Record<string, number> = {}
-  for (const filter of filters) {
+  for (const filter of filters.value) {
     counts[filter.id] = novelStore.projects.filter((project) => {
       if (!matchesQuery(project)) return false
       return filter.match(project)
@@ -195,12 +198,12 @@ function matchesQuery(project: NovelProjectSummary): boolean {
 }
 
 const filteredProjects = computed(() => {
-  const filter = filters.find((entry) => entry.id === activeFilter.value) ?? filters[0]
-  let list = novelStore.projects.filter((project) => matchesQuery(project) && filter.match(project))
+  const filter = filters.value.find((entry) => entry.id === activeFilter.value) ?? filters.value[0]
+  const list = novelStore.projects.filter((project) => matchesQuery(project) && filter.match(project))
 
   switch (sortBy.value) {
     case 'name':
-      return list.sort((a, b) => a.title.localeCompare(b.title, 'zh-CN'))
+      return list.sort((a, b) => a.title.localeCompare(b.title, dateLocale.value))
     case 'progress':
       return list.sort((a, b) => progressPercent(b) - progressPercent(a))
     case 'updated':
@@ -217,9 +220,12 @@ function progressPercent(project: NovelProjectSummary): number {
 }
 
 function projectMeta(project: NovelProjectSummary): string {
-  const genre = project.genre || '未分类'
-  const modeLabel = project.writing_mode ? WRITING_MODE_LABELS[project.writing_mode] : ''
-  const chapterPart = project.total_chapters > 0 ? `${project.total_chapters} 章` : '待开写'
+  const genre = project.genre || t('bookshelf.uncategorized')
+  const modeLabel = project.writing_mode ? t(`bookshelf.writingModes.${project.writing_mode}`) : ''
+  const chapterPart =
+    project.total_chapters > 0
+      ? t('bookshelf.chaptersCount', { count: project.total_chapters })
+      : t('bookshelf.awaitingStart')
   const modePart = modeLabel ? `${modeLabel} · ` : ''
   return `${modePart}${genre} · ${chapterPart} · ${progressPercent(project)}%`
 }
@@ -233,7 +239,7 @@ async function handleCreateWithMode(mode: WritingMode, materials: CreateProjectM
     const project = await createWithMode(mode, { materials, onCreated: loadProjects })
     if (project) router.push(`/detail/${project.id}`)
   } catch (error) {
-    alert(error instanceof Error ? error.message : '创建项目失败，请重试')
+    alert(error instanceof Error ? error.message : t('bookshelf.createFailed'))
   }
 }
 
@@ -254,7 +260,7 @@ async function handleImport(kind: 'txt' | 'project', file: File) {
     await loadProjects()
     router.push(`/detail/${response.id}`)
   } catch (error) {
-    alert(error instanceof Error ? error.message : '导入失败，请重试')
+    alert(error instanceof Error ? error.message : t('bookshelf.importFailed'))
   } finally {
     isImporting.value = false
   }
@@ -265,10 +271,10 @@ async function handleDeleteProject(projectId: string) {
   if (!project || isDeleting.value) return
 
   const accepted = await confirm({
-    title: '确认删除',
-    message: `确定要删除「${project.title}」吗？所有相关数据将被永久删除。`,
-    detail: '此操作无法撤销',
-    confirmText: '确认删除',
+    title: t('bookshelf.deleteConfirmTitle'),
+    message: t('bookshelf.deleteConfirmMessage', { title: project.title }),
+    detail: t('bookshelf.deleteConfirmDetail'),
+    confirmText: t('bookshelf.deleteConfirmBtn'),
     tone: 'danger',
   })
   if (!accepted) return
@@ -277,7 +283,7 @@ async function handleDeleteProject(projectId: string) {
   try {
     await novelStore.deleteProjects([project.id])
   } catch (error) {
-    alert(error instanceof Error ? error.message : '删除失败，请重试')
+    alert(error instanceof Error ? error.message : t('bookshelf.deleteFailed'))
   } finally {
     isDeleting.value = false
   }

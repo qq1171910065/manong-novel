@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { formatDateTime } from '@renderer/novel/utils/date'
 import { formatTokenCount, type ProjectStats } from '@renderer/services/project-stats-service'
+import { useI18n } from '@renderer/composables/useI18n'
 import DetailEmptyState from './DetailEmptyState.vue'
 
 interface ChapterSummary {
@@ -16,6 +17,8 @@ const props = defineProps<{
   chapters?: ChapterSummary[]
   updatedAt?: string | null
 }>()
+
+const { t } = useI18n()
 
 const totalWords = computed(() => {
   const list = props.chapters || []
@@ -32,22 +35,38 @@ const totalChapters = computed(() => props.chapters?.length || 0)
 const summaryCards = computed(() => {
   const s = props.stats
   return [
-    { label: '总字数', value: totalWords.value > 0 ? `${totalWords.value.toLocaleString()} 字` : '—', hint: '已生成章节合计' },
-    { label: '章节进度', value: totalChapters.value > 0 ? `${completedChapters.value} / ${totalChapters.value}` : '—', hint: '已完成 / 总章节' },
-    { label: '打开次数', value: s ? String(s.openCount) : '0', hint: '进入详情页次数' },
-    { label: '修改次数', value: s ? String(s.editCount) : '0', hint: '蓝图与章节编辑' },
+    {
+      label: t('novelDetail.stats.totalWords'),
+      value: totalWords.value > 0 ? t('novelDetail.common.words', { count: totalWords.value.toLocaleString() }) : '—',
+      hint: t('novelDetail.stats.totalWordsHint'),
+    },
+    {
+      label: t('novelDetail.stats.chapterProgress'),
+      value: totalChapters.value > 0 ? `${completedChapters.value} / ${totalChapters.value}` : '—',
+      hint: t('novelDetail.stats.chapterProgressHint'),
+    },
+    {
+      label: t('novelDetail.stats.openCount'),
+      value: s ? String(s.openCount) : '0',
+      hint: t('novelDetail.stats.openCountHint'),
+    },
+    {
+      label: t('novelDetail.stats.editCount'),
+      value: s ? String(s.editCount) : '0',
+      hint: t('novelDetail.stats.editCountHint'),
+    },
   ]
 })
 
 const tokenCards = computed(() => {
   const s = props.stats
   return [
-    { label: 'Token 总计', value: s?.totalTokens ? formatTokenCount(s.totalTokens) : '0', accent: true },
-    { label: '输入 Token', value: s?.promptTokens ? formatTokenCount(s.promptTokens) : '0' },
-    { label: '输出 Token', value: s?.completionTokens ? formatTokenCount(s.completionTokens) : '0' },
-    { label: 'AI 调用', value: s ? String(s.aiCallCount) : '0' },
-    { label: '章节生成', value: s ? String(s.chapterGenerations) : '0' },
-    { label: '图片生成', value: s ? String(s.imageGenerations) : '0' },
+    { label: t('novelDetail.stats.totalTokens'), value: s?.totalTokens ? formatTokenCount(s.totalTokens) : '0', accent: true },
+    { label: t('novelDetail.stats.promptTokens'), value: s?.promptTokens ? formatTokenCount(s.promptTokens) : '0' },
+    { label: t('novelDetail.stats.completionTokens'), value: s?.completionTokens ? formatTokenCount(s.completionTokens) : '0' },
+    { label: t('novelDetail.stats.aiCalls'), value: s ? String(s.aiCallCount) : '0' },
+    { label: t('novelDetail.stats.chapterGenerations'), value: s ? String(s.chapterGenerations) : '0' },
+    { label: t('novelDetail.stats.imageGenerations'), value: s ? String(s.imageGenerations) : '0' },
   ]
 })
 
@@ -55,13 +74,13 @@ const timeline = computed(() => {
   const s = props.stats
   const items: Array<{ label: string; value: string }> = []
   if (s?.lastOpenedAt) {
-    items.push({ label: '最近打开', value: formatDateTime(s.lastOpenedAt) })
+    items.push({ label: t('novelDetail.stats.lastOpened'), value: formatDateTime(s.lastOpenedAt) })
   }
   if (s?.lastEditedAt) {
-    items.push({ label: '最近修改', value: formatDateTime(s.lastEditedAt) })
+    items.push({ label: t('novelDetail.stats.lastEdited'), value: formatDateTime(s.lastEditedAt) })
   }
   if (props.updatedAt) {
-    items.push({ label: '作品更新', value: formatDateTime(props.updatedAt) })
+    items.push({ label: t('novelDetail.stats.projectUpdated'), value: formatDateTime(props.updatedAt) })
   }
   return items
 })
@@ -82,16 +101,16 @@ const hasAnyData = computed(() => {
     <DetailEmptyState
       v-if="!hasAnyData"
       class="nd-split-page__empty"
-      title="暂无统计数据"
-      description="开始创作、生成章节或使用 AI 功能后，统计信息会在这里汇总"
+      :title="t('novelDetail.stats.emptyTitle')"
+      :description="t('novelDetail.stats.emptyDesc')"
     />
 
     <div v-else class="nd-split-page__scroll nd-section">
       <section class="nd-block">
         <div class="nd-block__head">
           <div>
-            <h3 class="nd-block__title">创作概览</h3>
-            <p class="nd-block__subtitle">作品内容与使用频率</p>
+            <h3 class="nd-block__title">{{ t('novelDetail.stats.overviewTitle') }}</h3>
+            <p class="nd-block__subtitle">{{ t('novelDetail.stats.overviewSubtitle') }}</p>
           </div>
         </div>
         <div class="nd-stats-grid">
@@ -106,8 +125,8 @@ const hasAnyData = computed(() => {
       <section class="nd-block">
         <div class="nd-block__head">
           <div>
-            <h3 class="nd-block__title">Token 消耗</h3>
-            <p class="nd-block__subtitle">本书 AI 调用累计用量（本地统计）</p>
+            <h3 class="nd-block__title">{{ t('novelDetail.stats.tokenTitle') }}</h3>
+            <p class="nd-block__subtitle">{{ t('novelDetail.stats.tokenSubtitle') }}</p>
           </div>
         </div>
         <div class="nd-stats-grid nd-stats-grid--compact">
@@ -125,7 +144,7 @@ const hasAnyData = computed(() => {
 
       <section v-if="timeline.length" class="nd-block">
         <div class="nd-block__head">
-          <h3 class="nd-block__title">时间线</h3>
+          <h3 class="nd-block__title">{{ t('novelDetail.stats.timelineTitle') }}</h3>
         </div>
         <ul class="nd-timeline nd-timeline--stats">
           <li v-for="item in timeline" :key="item.label" class="nd-timeline__item">

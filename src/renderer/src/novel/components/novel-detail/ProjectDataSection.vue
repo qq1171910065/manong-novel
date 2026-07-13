@@ -12,9 +12,9 @@ import { formatDateTimeCompact } from '@renderer/novel/utils/date'
 import { confirm } from '@renderer/composables/useAppDialog'
 import { useRouter } from '@renderer/novel/composables/useNovelRouter'
 import { useNovelStore } from '@renderer/stores/novel'
+import { useI18n } from '@renderer/composables/useI18n'
 import {
   listWrittenChapterNumbers,
-  SETTING_EDIT_REQUIRES_CLEAR_CHAPTERS_MESSAGE,
 } from '@shared/novel/project-writing-guard'
 
 const props = defineProps<{
@@ -26,6 +26,7 @@ const emit = defineEmits<{
   chaptersCleared: []
 }>()
 
+const { t } = useI18n()
 const router = useRouter()
 const novelStore = useNovelStore()
 
@@ -46,35 +47,40 @@ const writtenChapterCount = computed(() => writtenChapterNumbers.value.length)
 const summaryCards = computed(() => {
   const project = props.project
   const stats = storage.value
+  const empty = (labelKey: string, hintKey: string) => ({
+    label: t(`novelDetail.projectData.cards.${labelKey}.label`),
+    value: '—',
+    hint: t(`novelDetail.projectData.cards.${hintKey}.hint`),
+  })
   if (!project || !stats) {
     return [
-      { label: '占用空间', value: '—', hint: '本地 JSON 估算' },
-      { label: '章节', value: '—', hint: '大纲与正文' },
-      { label: '对话记录', value: '—', hint: '灵感与设定修改' },
-      { label: '最后更新', value: '—', hint: '项目保存时间', compact: true },
+      empty('storage', 'storage'),
+      empty('chapters', 'chapters'),
+      empty('conversations', 'conversations'),
+      { ...empty('updated', 'updated'), compact: true },
     ]
   }
   return [
     {
-      label: '占用空间',
+      label: t('novelDetail.projectData.cards.storage.label'),
       value: formatBytes(stats.totalBytes),
-      hint: '本地 JSON 估算',
+      hint: t('novelDetail.projectData.cards.storage.hint'),
       accent: true,
     },
     {
-      label: '章节',
+      label: t('novelDetail.projectData.cards.chapters.label'),
       value: String(project.chapters?.length ?? 0),
-      hint: '大纲与正文',
+      hint: t('novelDetail.projectData.cards.chapters.hint'),
     },
     {
-      label: '对话记录',
+      label: t('novelDetail.projectData.cards.conversations.label'),
       value: String(countConversationMessages(project)),
-      hint: '灵感与设定修改',
+      hint: t('novelDetail.projectData.cards.conversations.hint'),
     },
     {
-      label: '最后更新',
+      label: t('novelDetail.projectData.cards.updated.label'),
       value: project.updated_at ? formatDateTimeCompact(project.updated_at) : '—',
-      hint: '项目保存时间',
+      hint: t('novelDetail.projectData.cards.updated.hint'),
       compact: true,
     },
   ]
@@ -84,36 +90,36 @@ const breakdownItems = computed(() => {
   const stats = storage.value
   if (!stats) return []
   const items = [
-    { label: '章节正文', value: formatBytes(stats.chaptersBytes) },
-    { label: '蓝图设定', value: formatBytes(stats.blueprintBytes) },
-    { label: '对话记录', value: formatBytes(stats.conversationBytes) },
+    { label: t('novelDetail.projectData.breakdown.chapters'), value: formatBytes(stats.chaptersBytes) },
+    { label: t('novelDetail.projectData.breakdown.blueprint'), value: formatBytes(stats.blueprintBytes) },
+    { label: t('novelDetail.projectData.breakdown.conversations'), value: formatBytes(stats.conversationBytes) },
   ]
   if (stats.importRawBytes > 0) {
-    items.push({ label: '导入原文', value: formatBytes(stats.importRawBytes) })
+    items.push({ label: t('novelDetail.projectData.breakdown.importRaw'), value: formatBytes(stats.importRawBytes) })
   }
   if (stats.coverBytes > 0) {
-    items.push({ label: '封面图片', value: formatBytes(stats.coverBytes) })
+    items.push({ label: t('novelDetail.projectData.breakdown.cover'), value: formatBytes(stats.coverBytes) })
   }
   if (stats.otherBytes > 0) {
-    items.push({ label: '其他字段', value: formatBytes(stats.otherBytes) })
+    items.push({ label: t('novelDetail.projectData.breakdown.other'), value: formatBytes(stats.otherBytes) })
   }
   return items
 })
 
-const exportActions = [
+const exportActions = computed(() => [
   {
     key: 'txt' as const,
-    title: '导出 TXT 正文',
-    desc: '按章节顺序导出已生成正文，适合阅读或二次编辑。',
+    title: t('novelDetail.projectData.export.txtTitle'),
+    desc: t('novelDetail.projectData.export.txtDesc'),
     primary: false,
   },
   {
     key: 'project' as const,
-    title: '导出完整项目',
-    desc: '包含蓝图、章节、对话与模型设置，可在书架重新导入。',
+    title: t('novelDetail.projectData.export.projectTitle'),
+    desc: t('novelDetail.projectData.export.projectDesc'),
     primary: true,
   },
-]
+])
 
 async function runExport(kind: 'txt' | 'project') {
   if (busy.value) return
@@ -126,10 +132,13 @@ async function runExport(kind: 'txt' | 'project') {
         ? await NovelAPI.exportNovelTxt(props.projectId)
         : await NovelAPI.exportNovelProject(props.projectId)
     if (saved) {
-      message.value = kind === 'txt' ? '正文已导出为 TXT。' : '完整项目已导出为 JSON。'
+      message.value =
+        kind === 'txt'
+          ? t('novelDetail.projectData.messages.txtExported')
+          : t('novelDetail.projectData.messages.projectExported')
     }
   } catch (err) {
-    error.value = err instanceof Error ? err.message : '导出失败，请重试'
+    error.value = err instanceof Error ? err.message : t('novelDetail.projectData.messages.exportFailed')
   } finally {
     busy.value = null
   }
@@ -141,12 +150,11 @@ async function clearAllChapterContent() {
   if (!count) return
 
   const ok = await confirm({
-    title: '清除全部章节正文',
-    message: `确定清除 ${count} 章正文吗？`,
-    detail:
-      '章节大纲会保留，正文删除后可通过写作台重新生成。清除后可在各 Tab 使用 AI 助手调整设定。',
+    title: t('novelDetail.projectData.confirm.clearTitle'),
+    message: t('novelDetail.projectData.confirm.clearMessage', { count }),
+    detail: t('novelDetail.projectData.confirm.clearDetail'),
     tone: 'danger',
-    confirmText: '清除正文',
+    confirmText: t('novelDetail.projectData.confirm.clearConfirm'),
   })
   if (!ok) return
 
@@ -157,9 +165,9 @@ async function clearAllChapterContent() {
     await NovelAPI.clearAllWrittenChapterContent(props.projectId)
     await novelStore.loadProject(props.projectId, true)
     emit('chaptersCleared')
-    message.value = '已清除全部章节正文，现在可以使用 AI 调整设定。'
+    message.value = t('novelDetail.projectData.messages.chaptersCleared')
   } catch (err) {
-    error.value = err instanceof Error ? err.message : '清除失败，请重试'
+    error.value = err instanceof Error ? err.message : t('novelDetail.projectData.messages.clearFailed')
   } finally {
     busy.value = null
   }
@@ -167,13 +175,13 @@ async function clearAllChapterContent() {
 
 async function deleteProject() {
   if (busy.value || !props.project) return
-  const title = props.project.title || '未命名作品'
+  const title = props.project.title || t('novelDetail.common.unnamedProject')
   const ok = await confirm({
-    title: '删除项目',
-    message: `确定要删除「${title}」吗？`,
-    detail: '所有章节、蓝图与对话记录将被永久删除，此操作不可撤销。',
+    title: t('novelDetail.projectData.confirm.deleteTitle'),
+    message: t('novelDetail.projectData.confirm.deleteMessage', { name: title }),
+    detail: t('novelDetail.projectData.confirm.deleteDetail'),
     tone: 'danger',
-    confirmText: '删除',
+    confirmText: t('novelDetail.projectData.confirm.deleteConfirm'),
   })
   if (!ok) return
 
@@ -184,7 +192,7 @@ async function deleteProject() {
     await novelStore.deleteProjects([props.projectId])
     router.push('/bookshelf')
   } catch (err) {
-    error.value = err instanceof Error ? err.message : '删除失败，请重试'
+    error.value = err instanceof Error ? err.message : t('novelDetail.projectData.messages.deleteFailed')
   } finally {
     busy.value = null
   }
@@ -197,8 +205,8 @@ async function deleteProject() {
       <section class="nd-block">
         <div class="nd-block__head">
           <div>
-            <h3 class="nd-block__title">存储概览</h3>
-            <p class="nd-block__subtitle">本书在本地占用的数据量（估算值）</p>
+            <h3 class="nd-block__title">{{ t('novelDetail.projectData.storageTitle') }}</h3>
+            <p class="nd-block__subtitle">{{ t('novelDetail.projectData.storageSubtitle') }}</p>
           </div>
         </div>
         <div class="nd-stats-grid">
@@ -221,8 +229,8 @@ async function deleteProject() {
       <section v-if="breakdownItems.length" class="nd-block">
         <div class="nd-block__head">
           <div>
-            <h3 class="nd-block__title">占用明细</h3>
-            <p class="nd-block__subtitle">按内容类型拆分</p>
+            <h3 class="nd-block__title">{{ t('novelDetail.projectData.breakdownTitle') }}</h3>
+            <p class="nd-block__subtitle">{{ t('novelDetail.projectData.breakdownSubtitle') }}</p>
           </div>
         </div>
         <ul class="nd-timeline nd-timeline--stats">
@@ -236,14 +244,14 @@ async function deleteProject() {
       <section v-if="writtenChapterCount > 0" class="nd-block">
         <div class="nd-block__head">
           <div>
-            <h3 class="nd-block__title">设定修改</h3>
-            <p class="nd-block__subtitle">写作开始后需先清除正文，才能用 AI 调整蓝图</p>
+            <h3 class="nd-block__title">{{ t('novelDetail.projectData.settingLockTitle') }}</h3>
+            <p class="nd-block__subtitle">{{ t('novelDetail.projectData.settingLockSubtitle') }}</p>
           </div>
         </div>
         <div class="project-data-setting-lock">
           <div class="project-data-setting-lock__body">
-            <strong>已写 {{ writtenChapterCount }} 章正文</strong>
-            <p>{{ SETTING_EDIT_REQUIRES_CLEAR_CHAPTERS_MESSAGE }}</p>
+            <strong>{{ t('novelDetail.projectData.writtenChapters', { count: writtenChapterCount }) }}</strong>
+            <p>{{ t('novelDetail.projectData.settingLockMessage') }}</p>
           </div>
           <button
             type="button"
@@ -252,7 +260,7 @@ async function deleteProject() {
             @click="clearAllChapterContent"
           >
             <Eraser :size="15" />
-            {{ busy === 'clearChapters' ? '清除中...' : '清除全部章节正文' }}
+            {{ busy === 'clearChapters' ? t('novelDetail.projectData.clearing') : t('novelDetail.projectData.clearChapters') }}
           </button>
         </div>
       </section>
@@ -260,8 +268,8 @@ async function deleteProject() {
       <section class="nd-block">
         <div class="nd-block__head">
           <div>
-            <h3 class="nd-block__title">导出备份</h3>
-            <p class="nd-block__subtitle">将项目保存到本地文件</p>
+            <h3 class="nd-block__title">{{ t('novelDetail.projectData.exportTitle') }}</h3>
+            <p class="nd-block__subtitle">{{ t('novelDetail.projectData.exportSubtitle') }}</p>
           </div>
         </div>
         <ul class="nd-entity-list">
@@ -282,10 +290,10 @@ async function deleteProject() {
               <Download :size="15" />
               {{
                 busy === action.key
-                  ? '导出中...'
+                  ? t('novelDetail.projectData.exporting')
                   : action.key === 'txt'
-                    ? '导出 TXT'
-                    : '导出项目'
+                    ? t('novelDetail.projectData.exportTxt')
+                    : t('novelDetail.projectData.exportProject')
               }}
             </button>
           </li>
@@ -295,14 +303,14 @@ async function deleteProject() {
       <section class="nd-block">
         <div class="nd-block__head">
           <div>
-            <h3 class="nd-block__title">危险操作</h3>
-            <p class="nd-block__subtitle">不可撤销，请谨慎操作</p>
+            <h3 class="nd-block__title">{{ t('novelDetail.projectData.dangerTitle') }}</h3>
+            <p class="nd-block__subtitle">{{ t('novelDetail.projectData.dangerSubtitle') }}</p>
           </div>
         </div>
         <div class="project-data-danger">
           <div class="project-data-danger__body">
-            <strong>删除本项目</strong>
-            <p>从书架移除「{{ project?.title || '当前作品' }}」及全部关联数据。</p>
+            <strong>{{ t('novelDetail.projectData.deleteProject') }}</strong>
+            <p>{{ t('novelDetail.projectData.deleteProjectDesc', { title: project?.title || t('novelDetail.projectData.currentProject') }) }}</p>
           </div>
           <button
             type="button"
@@ -311,7 +319,7 @@ async function deleteProject() {
             @click="deleteProject"
           >
             <Trash2 :size="15" />
-            {{ busy === 'delete' ? '删除中...' : '删除项目' }}
+            {{ busy === 'delete' ? t('novelDetail.projectData.deleting') : t('novelDetail.projectData.deleteProjectBtn') }}
           </button>
         </div>
       </section>

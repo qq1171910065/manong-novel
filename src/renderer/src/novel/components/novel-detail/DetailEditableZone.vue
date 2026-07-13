@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { useI18n } from '@renderer/composables/useI18n'
+
+const { t } = useI18n()
 
 export interface DetailMenuAction {
   id: string
@@ -47,7 +50,7 @@ const menuItems = computed(() => {
   if (props.includeEditMenu) {
     items.push({
       id: 'edit',
-      label: '编辑',
+      label: t('novelDetail.common.edit'),
       onClick: () => {
         closeMenu()
         emit('edit')

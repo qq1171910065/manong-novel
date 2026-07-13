@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ChevronRight, Feather, Plus, Sparkles } from 'lucide-vue-next'
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { navigate } from '@renderer/router'
 import { useNovelStore } from '@renderer/stores/novel'
 import {
@@ -12,10 +12,15 @@ import {
 } from '@renderer/services/novel/home-mapper'
 import {
   activityLogService,
-  activityKindLabel,
-  formatActivityTime,
   type ActivityLogEntry,
 } from '@renderer/services/activity-log-service'
+import {
+  formatActivityMessage,
+  formatRelativeActivityTime,
+  resolveLocaleDateString,
+  translateActivityKind,
+} from '@renderer/i18n/log-labels'
+import { useI18n } from '@renderer/composables/useI18n'
 import { useListPagination } from '@renderer/composables/useListPagination'
 import ListPagination from '@renderer/components/shared/ListPagination.vue'
 import { openReadingWindow } from '@renderer/services/reading-service'
@@ -25,6 +30,8 @@ import type { WritingMode } from '@shared/novel/types'
 import type { CreateProjectMaterialSelection } from '@renderer/novel/composables/useCreateNovelProject'
 
 const novelStore = useNovelStore()
+const { t, currentLocale } = useI18n()
+const activityDateLocale = computed(() => resolveLocaleDateString(currentLocale.value))
 const { showModeModal, isCreating, openCreateModal, closeCreateModal, createWithMode } = useCreateNovelProject()
 
 const novels = ref<HomeNovelCard[]>([])
@@ -36,27 +43,25 @@ const { page, pageSize, pageSizes, itemCount, paginatedItems } = useListPaginati
 const resumableProjectId = ref('')
 const homeLoading = ref(true)
 
-const sloganLines = [
-  { lead: '每一位', highlight: '小说家', mark: '✦' },
-  { lead: '下一章', highlight: '等你落笔', mark: '✦' },
-  { lead: '故事正在', highlight: '徐徐展开', mark: '✦' },
-]
+const SLOGAN_COUNT = 3
+const TYPING_LINE_COUNT = 4
+const BUBBLE_LINE_COUNT = 6
 
-const typingLines = [
-  '与 AI 并肩写作，把零散灵感写成完整章节',
-  '从蓝图到正文，小说家的每一步都有智能辅助',
-  '角色库与文风库触手可及，落笔更从容',
-  '准备好后，就在写作台开启你的下一部小说',
-]
+const sloganLines = computed(() =>
+  Array.from({ length: SLOGAN_COUNT }, (_, index) => ({
+    lead: t(`home.slogans.${index}.lead`),
+    highlight: t(`home.slogans.${index}.highlight`),
+    mark: t(`home.slogans.${index}.mark`),
+  }))
+)
 
-const bubbleLines = [
-  '这一章的转折可以再大胆一点。',
-  '角色的动机还需要再铺垫一下。',
-  '世界观设定已经很有画面感了。',
-  '接下来可以推进主线冲突了。',
-  '这段对白的节奏很顺，很有小说感。',
-  '伏笔埋得不错，后面记得回收。',
-]
+const typingLines = computed(() =>
+  Array.from({ length: TYPING_LINE_COUNT }, (_, index) => t(`home.typingLines.${index}`))
+)
+
+const bubbleLines = computed(() =>
+  Array.from({ length: BUBBLE_LINE_COUNT }, (_, index) => t(`home.bubbleLines.${index}`))
+)
 
 const sloganIndex = ref(0)
 const typingIndex = ref(0)
@@ -77,7 +82,7 @@ let bubbleRevealTimer: number | undefined
 let bubbleTypingTimer: number | undefined
 let carouselTimer: number | undefined
 
-const activeSlogan = computed(() => sloganLines[sloganIndex.value])
+const activeSlogan = computed(() => sloganLines.value[sloganIndex.value] ?? sloganLines.value[0])
 const hasResumeProject = computed(() => Boolean(resumableProjectId.value))
 
 function getCardRelativeIndex(index: number, count = novels.value.length): number {
@@ -137,8 +142,8 @@ async function loadDashboard() {
   homeLoading.value = true
   try {
     await novelStore.loadProjects()
-    novels.value = mapNovelsForHome(novelStore.projects)
-    bookshelfNovels.value = mapNovelsForHomeList(novelStore.projects)
+    novels.value = mapNovelsForHome(novelStore.projects, t, activityDateLocale.value)
+    bookshelfNovels.value = mapNovelsForHomeList(novelStore.projects, t, activityDateLocale.value)
     const resumable = findResumableProject(novelStore.projects)
     resumableProjectId.value = resumable?.id ?? ''
     carouselIndex.value = 0
@@ -146,7 +151,7 @@ async function loadDashboard() {
     if (novels.value.length) scheduleNovelBubble(900)
     activityLogs.value = activityLogService.list(12)
   } catch {
-    novels.value = mapNovelsForHome([])
+    novels.value = mapNovelsForHome([], t, activityDateLocale.value)
     bookshelfNovels.value = []
   } finally {
     homeLoading.value = false
@@ -176,7 +181,7 @@ async function handleCreateWithMode(mode: WritingMode, materials: CreateProjectM
     })
     if (project) navigate(`/detail/${project.id}`)
   } catch (error) {
-    alert(error instanceof Error ? error.message : '创建项目失败，请重试')
+    alert(error instanceof Error ? error.message : t('home.createFailed'))
   }
 }
 
@@ -198,7 +203,8 @@ function openBookshelfNovel(id: string) {
 }
 
 function tickTyping() {
-  const line = typingLines[typingIndex.value]
+  const lines = typingLines.value
+  const line = lines[typingIndex.value] ?? ''
   if (typingCursor.value <= line.length) {
     typedText.value = line.slice(0, typingCursor.value)
     typingCursor.value += 1
@@ -207,7 +213,7 @@ function tickTyping() {
 
   window.clearInterval(typingTimer)
   typingTimer = window.setTimeout(() => {
-    typingIndex.value = (typingIndex.value + 1) % typingLines.length
+    typingIndex.value = lines.length ? (typingIndex.value + 1) % lines.length : 0
     typingCursor.value = 0
     typedText.value = ''
     typingTimer = window.setInterval(tickTyping, 52)
@@ -236,8 +242,9 @@ function startNovelBubble() {
   const count = novels.value.length
   const speakIndex = ((carouselIndex.value % count) + count) % count
   const novel = novels.value[speakIndex]
+  const bubbles = bubbleLines.value
   const nextText =
-    Math.random() > 0.34 ? novel.speech : bubbleLines[Math.floor(Math.random() * bubbleLines.length)]
+    Math.random() > 0.34 ? novel.speech : bubbles[Math.floor(Math.random() * bubbles.length)] ?? novel.speech
   speakingNovelIndex.value = speakIndex
   activeBubbleIndex.value = null
   activeBubbleTyped.value = ''
@@ -267,7 +274,9 @@ onMounted(() => {
   void loadDashboard()
   refreshActivityLogs()
   sloganTimer = window.setInterval(() => {
-    sloganIndex.value = (sloganIndex.value + 1) % sloganLines.length
+    const count = sloganLines.value.length
+    if (!count) return
+    sloganIndex.value = (sloganIndex.value + 1) % count
   }, 4200)
   typingTimer = window.setInterval(tickTyping, 52)
   scheduleNovelBubble(1400)
@@ -280,17 +289,21 @@ onUnmounted(() => {
   if (carouselTimer) window.clearInterval(carouselTimer)
   clearBubbleTimers()
 })
+
+watch(currentLocale, () => {
+  void loadDashboard()
+})
 </script>
 
 <template>
   <div class="home page--viewport-lock">
     <div v-if="homeLoading" class="home-loading">
       <div class="md-spinner"></div>
-      <span>正在准备首页...</span>
+      <span>{{ t('home.loading') }}</span>
     </div>
 
     <main v-else class="home-main">
-      <section class="hero" aria-label="首页">
+      <section class="hero" :aria-label="t('home.heroAria')">
         <div class="hero-copy">
           <h1>
             <span class="slogan-lead">{{ activeSlogan.lead }}</span>
@@ -304,7 +317,7 @@ onUnmounted(() => {
           <div class="hero-actions">
             <button type="button" class="primary-action" @click="openCreateNovel">
               <Sparkles :size="25" />
-              <span>新建作品</span>
+              <span>{{ t('home.actions.create') }}</span>
             </button>
             <button
               v-if="hasResumeProject"
@@ -313,11 +326,11 @@ onUnmounted(() => {
               @click="openResumeProject"
             >
               <Feather :size="21" />
-              <span>继续最近作品</span>
+              <span>{{ t('home.actions.resume') }}</span>
             </button>
             <button v-else type="button" class="secondary-action" @click="navigate('/bookshelf')">
               <Plus :size="21" />
-              <span>打开书架</span>
+              <span>{{ t('home.actions.openBookshelf') }}</span>
             </button>
           </div>
         </div>
@@ -325,7 +338,7 @@ onUnmounted(() => {
         <div
           class="novel-stage"
           :class="{ 'novel-stage--paused': deckHovered }"
-          aria-label="最近作品"
+          :aria-label="t('home.recentProjectsAria')"
           @mouseenter="deckHovered = true"
           @mouseleave="deckHovered = false"
         >
@@ -392,16 +405,16 @@ onUnmounted(() => {
       <section class="content-grid">
         <div class="panel bookshelf-panel">
           <header class="panel__header">
-            <h2>书架</h2>
+            <h2>{{ t('home.bookshelfPanel.title') }}</h2>
             <button type="button" @click="navigate('/bookshelf')">
-              管理书架
+              {{ t('home.bookshelfPanel.manage') }}
               <ChevronRight :size="20" />
             </button>
           </header>
 
           <div v-if="!bookshelfNovels.length" class="panel-slot-empty">
-            <strong>书架还是空的</strong>
-            <span>开笔写第一部小说，完成后可在这里继续编辑与创作。</span>
+            <strong>{{ t('home.bookshelfPanel.emptyTitle') }}</strong>
+            <span>{{ t('home.bookshelfPanel.emptyDesc') }}</span>
           </div>
           <div v-else class="home-bookshelf">
             <button
@@ -414,7 +427,7 @@ onUnmounted(() => {
             >
               <span class="home-book__cover" aria-hidden="true">
                 <img v-if="novel.coverUrl" :src="novel.coverUrl" :alt="novel.title" />
-                <span v-else class="home-book__cover-fallback">{{ novel.title.charAt(0) || '书' }}</span>
+                <span v-else class="home-book__cover-fallback">{{ novel.title.charAt(0) || t('home.bookshelfPanel.coverFallback') }}</span>
               </span>
               <span class="home-book__meta">
                 <strong>{{ novel.title }}</strong>
@@ -427,12 +440,12 @@ onUnmounted(() => {
 
         <div class="panel activity-panel">
           <header class="panel__header">
-            <h2>操作记录</h2>
+            <h2>{{ t('home.activityPanel.title') }}</h2>
           </header>
 
           <div v-if="!activityLogs.length" class="panel-slot-empty">
-            <strong>暂无记录</strong>
-            <span>开笔写作、阅读章节或整理物料后，操作会显示在这里。</span>
+            <strong>{{ t('home.activityPanel.emptyTitle') }}</strong>
+            <span>{{ t('home.activityPanel.emptyDesc') }}</span>
           </div>
           <ul v-else class="simple-list activity-log-list">
             <li v-for="entry in paginatedItems" :key="entry.id">
@@ -443,12 +456,12 @@ onUnmounted(() => {
                 @click="openActivity(entry)"
               >
                 <span class="simple-line__main">
-                  <span class="activity-badge" :data-kind="entry.kind">{{ activityKindLabel(entry.kind) }}</span>
-                  <strong>{{ entry.message }}</strong>
+                  <span class="activity-badge" :data-kind="entry.kind">{{ translateActivityKind(t, entry.kind) }}</span>
+                  <strong>{{ formatActivityMessage(t, entry) }}</strong>
                   <span v-if="entry.detail" class="simple-line__muted">{{ entry.detail }}</span>
                 </span>
                 <span class="simple-line__meta">
-                  <time>{{ formatActivityTime(entry.createdAt) }}</time>
+                  <time>{{ formatRelativeActivityTime(t, entry.createdAt, activityDateLocale) }}</time>
                 </span>
               </button>
             </li>

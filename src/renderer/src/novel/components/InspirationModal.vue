@@ -8,6 +8,7 @@ import {
   DEFAULT_INSPIRATION_MODAL_CHROME,
   type InspirationModalChrome,
 } from '@renderer/novel/composables/inspiration-modal-chrome'
+import type { TaskViewPhase } from '@renderer/services/task-navigation-service'
 
 const props = withDefaults(
   defineProps<{
@@ -44,6 +45,14 @@ const shouldRenderAssistant = computed(
 function onModalChrome(next: InspirationModalChrome) {
   chrome.value = next
 }
+
+function restoreTaskView(phase?: TaskViewPhase) {
+  modeRef.value?.restoreTaskView(phase)
+}
+
+defineExpose({
+  restoreTaskView,
+})
 </script>
 
 <template>

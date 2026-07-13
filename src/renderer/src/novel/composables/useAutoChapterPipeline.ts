@@ -12,7 +12,9 @@ import { activityLogService } from '@renderer/services/activity-log-service'
 import { getCreationWorkflowPrefs } from '@renderer/services/creation-workflow-prefs'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
 import { upsertBackgroundTask, getBackgroundTask } from '@renderer/services/background-task-service'
+import { runAgentWorkflow, getProjectActiveAgentRun, type AgentWorkflowContext } from '@renderer/services/agent-orchestration-service'
 import { useChapterGenProgress } from '@renderer/novel/composables/chapter-generation-progress'
+import { isProjectSaveConflictError } from '@shared/novel/project-persistence'
 import {
   countSuccessfulChapters,
   getNextAutoWriteChapter,
@@ -27,6 +29,27 @@ import {
 export type AutoWriteRunResult = 'completed' | 'cancelled' | 'paused' | 'failed'
 export type AutoWritePauseReason = 'user' | 'chapter_confirm' | null
 
+async function withProjectSaveRetry<T>(
+  _projectId: string,
+  run: () => Promise<T>,
+  reload: () => Promise<void>
+): Promise<T> {
+  try {
+    return await run()
+  } catch (error) {
+    if (!isProjectSaveConflictError(error)) throw error
+    await reload()
+    return run()
+  }
+}
+
+function resolveAutoWriteFailureMessage(error: unknown): string {
+  if (isProjectSaveConflictError(error)) {
+    return '作品保存冲突：后台创作与手动操作同时更新了作品，请刷新页面后重试连写'
+  }
+  return error instanceof Error ? error.message : 'AI 接管创作失败'
+}
+
 function createAutoChapterPipeline() {
   const novelStore = useNovelStore()
   const { activeProgress: chapterGenProgress } = useChapterGenProgress()
@@ -37,6 +60,8 @@ function createAutoChapterPipeline() {
   let abortController: AbortController | null = null
   let activeProjectId = ''
   let activeProjectTitle = ''
+  let agentRunId = ''
+  let agentCtx: AgentWorkflowContext | null = null
 
   const progressPercent = computed(() => {
     const base = resolveAutoWriteProgressPercent(progress.value)
@@ -63,6 +88,7 @@ function createAutoChapterPipeline() {
   function syncBackgroundTask(status: 'running' | 'paused' | 'completed' | 'failed' | 'cancelled') {
     if (!activeProjectId) return
     upsertBackgroundTask({
+      id: agentRunId || undefined,
       kind: 'auto_write',
       projectId: activeProjectId,
       projectTitle: activeProjectTitle,
@@ -72,11 +98,17 @@ function createAutoChapterPipeline() {
       completedCount: progress.value.completedCount,
       totalCount: progress.value.totalCount,
       currentChapter: progress.value.currentChapter,
+      workflowId: 'auto_write',
+      workflowLabel: 'AI 接管创作',
+      agentLabel: '协调员',
     })
   }
 
   function setProgress(patch: Partial<AutoWriteProgress>) {
     progress.value = { ...progress.value, ...patch }
+    if (agentCtx && patch.message) {
+      agentCtx.updateMessage(patch.message)
+    }
     if (activeProjectId && (isRunning.value || isPaused.value)) {
       syncBackgroundTask(isPaused.value ? 'paused' : 'running')
     }
@@ -128,6 +160,7 @@ function createAutoChapterPipeline() {
         cancelAsyncTask({ kind: 'chapter_evaluate', projectId: activeProjectId, chapterNumber: current })
       }
       upsertBackgroundTask({
+        id: agentRunId || undefined,
         kind: 'auto_write',
         projectId: activeProjectId,
         projectTitle: activeProjectTitle,
@@ -137,12 +170,16 @@ function createAutoChapterPipeline() {
         completedCount: progress.value.completedCount,
         totalCount: progress.value.totalCount,
         currentChapter: progress.value.currentChapter,
+        workflowId: 'auto_write',
+        workflowLabel: 'AI 接管创作',
       })
     }
   }
 
   function isProjectActive(projectId: string): boolean {
     if (activeProjectId === projectId && isRunning.value) return true
+    const agentRun = getProjectActiveAgentRun(projectId)
+    if (agentRun?.workflowId === 'auto_write' && agentRun.status === 'running') return true
     return getBackgroundTask('auto_write', projectId)?.status === 'running'
   }
 
@@ -195,7 +232,13 @@ function createAutoChapterPipeline() {
       message: `正在确认第 ${chapterNumber} 章并继续下一章…`,
     })
 
-    const confirmed = await NovelAPI.confirmChapter(projectId, chapterNumber)
+    const confirmed = await withProjectSaveRetry(
+      projectId,
+      () => NovelAPI.confirmChapter(projectId, chapterNumber),
+      async () => {
+        await novelStore.loadProject(projectId, true)
+      }
+    )
     novelStore.setCurrentProject(confirmed)
     activityLogService.logChapterGenerated(
       projectId,
@@ -234,10 +277,17 @@ function createAutoChapterPipeline() {
         currentChapterTitle: title,
         message: `正在生成第 ${chapterNumber} 章「${title}」…`,
       })
-      project = await novelStore.generateChapter(chapterNumber, {
-        signal,
-        fastMode: !prefs.autoWriteMultiVersion,
-      })
+      project = await withProjectSaveRetry(
+        projectId,
+        () =>
+          novelStore.generateChapter(chapterNumber, {
+            signal,
+            fastMode: !prefs.autoWriteMultiVersion,
+          }),
+        async () => {
+          await novelStore.loadProject(projectId, true)
+        }
+      )
       chapter = project.chapters?.find((item) => item.chapter_number === chapterNumber)
     }
 
@@ -258,7 +308,13 @@ function createAutoChapterPipeline() {
           message: `AI 正在评审并润色第 ${chapterNumber} 章的 ${versionCount} 个版本…`,
         })
         try {
-          project = await novelStore.evaluateChapter(chapterNumber, { signal })
+          project = await withProjectSaveRetry(
+            projectId,
+            () => novelStore.evaluateChapter(chapterNumber, { signal }),
+            async () => {
+              await novelStore.loadProject(projectId, true)
+            }
+          )
           activityLogService.logChapterEvaluate(
             projectId,
             project.title || activeProjectTitle || '未命名作品',
@@ -303,6 +359,101 @@ function createAutoChapterPipeline() {
     return 'confirmed'
   }
 
+  async function executeAutoWriteLoop(
+    projectId: string,
+    projectTitle: string,
+    resuming: boolean,
+    resumeAfterChapterConfirm: boolean
+  ): Promise<AutoWriteRunResult> {
+    if (resumeAfterChapterConfirm && progress.value.currentChapter !== null) {
+      const chapterNumber = progress.value.currentChapter
+      const title =
+        progress.value.currentChapterTitle ||
+        resolveChapterTitle(novelStore.currentProject!, chapterNumber)
+      await confirmPendingChapter(projectId, chapterNumber, title)
+      ensureNotAborted()
+    }
+
+    await novelStore.loadProject(projectId, true)
+    await novelStore.reconcileStaleChapterTasks(projectId)
+    let project = novelStore.currentProject
+    if (!project || project.id !== projectId) {
+      await novelStore.loadProject(projectId, true)
+      project = novelStore.currentProject
+    }
+
+    activeProjectTitle = project?.title || activeProjectTitle || projectTitle
+
+    const outlines = listChapterOutlines(project!)
+    if (!outlines.length) {
+      throw new Error('请先完善章节大纲后再开始创作')
+    }
+
+    const totalCount = outlines.length
+    if (!resuming) {
+      setProgress({
+        phase: 'generating',
+        totalCount,
+        completedCount: countSuccessfulChapters(project!),
+        currentChapter: null,
+        currentChapterTitle: '',
+        message: 'AI 接管创作已启动…',
+      })
+    } else {
+      setProgress({
+        totalCount,
+        completedCount: countSuccessfulChapters(project!),
+        message: '继续 AI 接管创作…',
+      })
+    }
+
+    while (abortController && !abortController.signal.aborted) {
+      await novelStore.loadProject(projectId, true)
+      project = novelStore.currentProject
+      if (!project) throw new Error('项目加载失败')
+
+      const nextChapter = getNextAutoWriteChapter(project)
+      if (nextChapter === null) {
+        setProgress({
+          phase: 'done',
+          currentChapter: null,
+          currentChapterTitle: '',
+          completedCount: totalCount,
+          totalCount,
+          message: '全部章节已完成',
+        })
+        syncBackgroundTask('completed')
+        return 'completed'
+      }
+
+      agentCtx?.updateMessage(`协调员调度第 ${nextChapter} 章创作…`)
+
+      const approval = await ensureChapterApproved(projectId, nextChapter)
+      if (approval === 'waiting_confirm') {
+        pause('chapter_confirm')
+        throw new DOMException('The operation was paused.', 'AbortError')
+      }
+
+      ensureNotAborted()
+
+      await novelStore.loadProject(projectId, true)
+      project = novelStore.currentProject
+      if (!project) throw new Error('项目加载失败')
+      setProgress({
+        completedCount: countSuccessfulChapters(project!),
+        totalCount,
+      })
+    }
+
+    if (isPaused.value) {
+      syncBackgroundTask('paused')
+      throw new DOMException('The operation was paused.', 'AbortError')
+    }
+
+    syncBackgroundTask('cancelled')
+    return 'cancelled'
+  }
+
   async function run(projectId: string, projectTitle = '未命名作品'): Promise<AutoWriteRunResult> {
     if (isRunning.value && activeProjectId === projectId && !isPaused.value) {
       return 'failed'
@@ -320,106 +471,29 @@ function createAutoChapterPipeline() {
     isRunning.value = true
     registerAsyncTask({ kind: 'auto_write', projectId })
 
-    upsertBackgroundTask({
-      kind: 'auto_write',
-      projectId,
-      projectTitle: activeProjectTitle || projectTitle,
-      status: 'running',
-      message: resuming ? '继续 AI 接管创作…' : 'AI 接管创作已启动…',
-      progressPercent: progressPercent.value,
-      completedCount: progress.value.completedCount,
-      totalCount: progress.value.totalCount,
-      currentChapter: progress.value.currentChapter,
-    })
-
     try {
-      if (resumeAfterChapterConfirm && progress.value.currentChapter !== null) {
-        const chapterNumber = progress.value.currentChapter
-        const title = progress.value.currentChapterTitle || resolveChapterTitle(
-          novelStore.currentProject!,
-          chapterNumber
-        )
-        await confirmPendingChapter(projectId, chapterNumber, title)
-        ensureNotAborted()
-      }
-
-      await novelStore.loadProject(projectId, true)
-      await novelStore.reconcileStaleChapterTasks(projectId)
-      let project = novelStore.currentProject
-      if (!project || project.id !== projectId) {
-        await novelStore.loadProject(projectId, true)
-        project = novelStore.currentProject
-      }
-
-      activeProjectTitle = project?.title || activeProjectTitle || projectTitle
-
-      const outlines = listChapterOutlines(project!)
-      if (!outlines.length) {
-        throw new Error('请先完善章节大纲后再开始创作')
-      }
-
-      const totalCount = outlines.length
-      if (!resuming) {
-        setProgress({
-          phase: 'generating',
-          totalCount,
-          completedCount: countSuccessfulChapters(project!),
-          currentChapter: null,
-          currentChapterTitle: '',
-          message: 'AI 接管创作已启动…',
-        })
-      } else {
-        setProgress({
-          totalCount,
-          completedCount: countSuccessfulChapters(project!),
-          message: '继续 AI 接管创作…',
-        })
-      }
-
-      while (!abortController.signal.aborted) {
-        await novelStore.loadProject(projectId, true)
-        project = novelStore.currentProject
-        if (!project) throw new Error('项目加载失败')
-
-        const nextChapter = getNextAutoWriteChapter(project)
-        if (nextChapter === null) {
-          setProgress({
-            phase: 'done',
-            currentChapter: null,
-            currentChapterTitle: '',
-            completedCount: totalCount,
-            totalCount,
-            message: '全部章节已完成',
-          })
-          syncBackgroundTask('completed')
-          return 'completed'
+      return await runAgentWorkflow(
+        {
+          workflowId: 'auto_write',
+          projectId,
+          projectTitle: activeProjectTitle || projectTitle,
+          signal: abortController.signal,
+        },
+        async (ctx) => {
+          agentCtx = ctx
+          agentRunId = ctx.runId
+          return ctx.runStep(
+            {
+              stepId: 'orchestrate',
+              agentId: 'orchestrator',
+              label: '协调连写循环',
+              resources: [],
+              message: resuming ? '继续 AI 接管创作…' : 'AI 接管创作已启动…',
+            },
+            async () => executeAutoWriteLoop(projectId, projectTitle, resuming, resumeAfterChapterConfirm)
+          )
         }
-
-        const approval = await ensureChapterApproved(projectId, nextChapter)
-        if (approval === 'waiting_confirm') {
-          pause('chapter_confirm')
-          syncBackgroundTask('paused')
-          return 'paused'
-        }
-
-        ensureNotAborted()
-
-        await novelStore.loadProject(projectId, true)
-        project = novelStore.currentProject
-        if (!project) throw new Error('项目加载失败')
-        setProgress({
-          completedCount: countSuccessfulChapters(project!),
-          totalCount,
-        })
-      }
-
-      if (isPaused.value) {
-        syncBackgroundTask('paused')
-        return 'paused'
-      }
-
-      syncBackgroundTask('cancelled')
-      return 'cancelled'
+      )
     } catch (error) {
       if (isAbortError(error)) {
         if (isPaused.value) {
@@ -432,11 +506,13 @@ function createAutoChapterPipeline() {
       console.error('[auto-write] pipeline failed:', error)
       setProgress({
         phase: 'failed',
-        message: error instanceof Error ? error.message : 'AI 接管创作失败',
+        message: resolveAutoWriteFailureMessage(error),
       })
       syncBackgroundTask('failed')
       return 'failed'
     } finally {
+      agentCtx = null
+      agentRunId = ''
       isRunning.value = false
       if (!isPaused.value) {
         abortController = null

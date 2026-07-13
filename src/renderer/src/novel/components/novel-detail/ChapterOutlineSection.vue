@@ -4,8 +4,8 @@
     <DetailEmptyState
       v-if="!outline.length"
       class="nd-split-page__empty"
-      title="还没有章节大纲"
-      description="点击此处规划第一章节大纲"
+      :title="t('novelDetail.chapterOutline.emptyTitle')"
+      :description="t('novelDetail.chapterOutline.emptyDesc')"
       :clickable="editable"
       @activate="$emit('add')"
     />
@@ -28,14 +28,17 @@
         >
           <div class="nd-timeline__card">
             <div class="nd-timeline__head">
-              <h3 class="nd-timeline__title nd-item-title">{{ chapter.title || `第${chapter.chapter_number}章` }}</h3>
+              <div class="nd-timeline__head-main">
+                <h3 class="nd-timeline__title nd-item-title">{{ chapter.title || t('novelDetail.common.chapterN', { n: chapter.chapter_number }) }}</h3>
+                <span v-if="isPlaceholderChapter(chapter)" class="nd-timeline__placeholder-badge">{{ t('novelDetail.common.placeholder') }}</span>
+              </div>
               <span class="nd-timeline__index">#{{ chapter.chapter_number }}</span>
             </div>
             <DetailEmptyState
               v-if="!chapter.summary"
               compact
-              title="本章摘要待填写"
-              description="左键编辑 · 右键更多操作"
+              :title="t('novelDetail.chapterOutline.summaryEmpty')"
+              :description="t('novelDetail.chapterOutline.summaryHint')"
             />
             <p v-else class="nd-timeline__summary">{{ chapter.summary }}</p>
           </div>
@@ -60,14 +63,14 @@
 
     <NovelPreviewDialog
       :show="showPreview"
-      :title="previewChapter?.title || '章节预览'"
-      :badge="previewChapter ? `第 ${previewChapter.chapter_number} 章` : undefined"
+      :title="previewChapter?.title || t('novelDetail.chapterOutline.previewTitle')"
+      :badge="previewChapter ? t('novelDetail.common.chapterNTitle', { n: previewChapter.chapter_number }) : undefined"
       :show-hero="false"
-      aria-label="章节大纲预览"
+      :aria-label="t('novelDetail.chapterOutline.previewAria')"
       @close="showPreview = false"
     >
       <p v-if="previewChapter?.summary" class="nd-preview-text">{{ previewChapter.summary }}</p>
-      <p v-else class="nd-preview-text nd-preview-text--empty">暂无摘要</p>
+      <p v-else class="nd-preview-text nd-preview-text--empty">{{ t('novelDetail.common.noSummary') }}</p>
     </NovelPreviewDialog>
   </div>
 </template>
@@ -84,8 +87,11 @@ import ListPagination from '@renderer/components/shared/ListPagination.vue'
 import { useListPagination } from '@renderer/composables/useListPagination'
 import { NovelAPI } from '@renderer/services/novel/api'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
-
+import { useI18n } from '@renderer/composables/useI18n'
+import { isSubstantiveChapterOutline } from '@shared/novel/chapter-outline-quality'
 import type { ProjectModelPrefs } from '@renderer/services/novel/project-model'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   outline: ChapterOutline[]
@@ -131,13 +137,17 @@ const previewChapter = computed(() => {
   return props.outline[previewIndex.value] ?? null
 })
 
+function isPlaceholderChapter(chapter: ChapterOutline): boolean {
+  return !isSubstantiveChapterOutline(chapter, props.projectTitle)
+}
+
 function chapterMenuActions(chapter: ChapterOutline): DetailMenuAction[] {
   if (!props.editable) return []
   const index = chapterIndex(chapter)
   return [
-    { id: 'preview', label: '预览', onClick: () => openPreview(index) },
-    { id: 'edit', label: '编辑', onClick: () => openEdit(chapter) },
-    { id: 'delete', label: '删除', onClick: () => void deleteChapter(index) },
+    { id: 'preview', label: t('novelDetail.common.preview'), onClick: () => openPreview(index) },
+    { id: 'edit', label: t('novelDetail.common.edit'), onClick: () => openEdit(chapter) },
+    { id: 'delete', label: t('novelDetail.common.delete'), onClick: () => void deleteChapter(index) },
   ]
 }
 
@@ -171,15 +181,15 @@ async function onFormSave(chapter: ChapterOutline) {
     emit('asset-saved', 'chapter_outline')
     showForm.value = false
   } catch (error) {
-    globalAlert.showError(error instanceof Error ? error.message : '保存失败', '章节保存失败')
+    globalAlert.showError(error instanceof Error ? error.message : t('novelDetail.common.saveFailed'), t('novelDetail.chapterOutline.saveFailed'))
   }
 }
 
 async function deleteChapter(index: number) {
   if (!props.editable || !props.projectId) return
   const chapter = props.outline[index]
-  const label = chapter?.title || `第 ${chapter?.chapter_number} 章`
-  const confirmed = await globalAlert.showConfirm(`确定删除「${label}」吗？此操作不可撤销。`, '删除章节')
+  const label = chapter?.title || t('novelDetail.common.chapterNTitle', { n: chapter?.chapter_number ?? 0 })
+  const confirmed = await globalAlert.showConfirm(t('novelDetail.common.confirmDelete', { name: label }), t('novelDetail.chapterOutline.deleteTitle'))
   if (!confirmed) return
 
   const list = props.outline
@@ -190,7 +200,7 @@ async function deleteChapter(index: number) {
     await NovelAPI.updateBlueprint(props.projectId, { chapter_outline: list })
     emit('asset-saved', 'chapter_outline')
   } catch (error) {
-    globalAlert.showError(error instanceof Error ? error.message : '删除失败', '删除章节失败')
+    globalAlert.showError(error instanceof Error ? error.message : t('novelDetail.common.deleteFailed'), t('novelDetail.chapterOutline.deleteFailed'))
   }
 }
 
@@ -212,6 +222,25 @@ export default defineComponent({
   display: inline-flex;
   align-items: center;
   gap: 8px;
+}
+
+.nd-timeline__head-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.nd-timeline__placeholder-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #9a3412;
+  background: color-mix(in srgb, #e86b24 12%, transparent);
+  border: 1px solid color-mix(in srgb, #e86b24 24%, transparent);
 }
 
 .nd-preview-text {

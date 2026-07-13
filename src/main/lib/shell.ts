@@ -4,6 +4,16 @@ export function registerShellHandlers(): void {
   ipcMain.removeHandler('shell:open-external')
   ipcMain.handle('shell:open-external', async (_event, url: string) => {
     try {
+      let parsed: URL
+      try {
+        parsed = new URL(url)
+      } catch {
+        return { ok: false, error: 'Invalid URL' }
+      }
+      const allowed = new Set(['http:', 'https:', 'mailto:'])
+      if (!allowed.has(parsed.protocol)) {
+        return { ok: false, error: 'Unsupported URL scheme' }
+      }
       await shell.openExternal(url)
       return { ok: true }
     } catch (error) {

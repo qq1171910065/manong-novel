@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 import { join } from 'node:path'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { getAppStorageDir } from './app-home'
+import { sanitizeStorageKey } from './path-safety'
 
 function getStoragePath(appId: string): string {
   const dir = getAppStorageDir(appId)
@@ -14,20 +15,23 @@ export function registerStorageHandlers(appId: string): void {
 
   ipcMain.removeHandler('storage:get')
   ipcMain.handle('storage:get', (_event, key: string): string | null => {
-    const file = join(storagePath, `${key}.json`)
+    const safeKey = sanitizeStorageKey(key)
+    const file = join(storagePath, `${safeKey}.json`)
     if (!existsSync(file)) return null
     return readFileSync(file, 'utf-8')
   })
 
   ipcMain.removeHandler('storage:set')
   ipcMain.handle('storage:set', (_event, key: string, value: string): void => {
-    const file = join(storagePath, `${key}.json`)
+    const safeKey = sanitizeStorageKey(key)
+    const file = join(storagePath, `${safeKey}.json`)
     writeFileSync(file, value, 'utf-8')
   })
 
   ipcMain.removeHandler('storage:delete')
   ipcMain.handle('storage:delete', (_event, key: string): void => {
-    const file = join(storagePath, `${key}.json`)
+    const safeKey = sanitizeStorageKey(key)
+    const file = join(storagePath, `${safeKey}.json`)
     if (existsSync(file)) {
       const { unlinkSync } = require('node:fs')
       unlinkSync(file)

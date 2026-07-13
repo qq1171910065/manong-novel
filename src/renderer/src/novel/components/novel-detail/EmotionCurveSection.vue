@@ -2,19 +2,19 @@
   <div class="nd-split-page nd-list-with-pagination">
     <div v-if="isLoading" class="nd-split-page__state">
       <div class="md-spinner"></div>
-      <p>分析情感数据中...</p>
+      <p>{{ t('novelDetail.emotionCurve.loading') }}</p>
     </div>
 
     <div v-else-if="error" class="nd-split-page__state">
       <p>{{ error }}</p>
-      <button type="button" class="md-btn md-btn-filled md-ripple" @click="refreshData">重试</button>
+      <button type="button" class="md-btn md-btn-filled md-ripple" @click="refreshData">{{ t('novelDetail.retry') }}</button>
     </div>
 
     <DetailEmptyState
       v-else-if="!emotionPoints.length"
       class="nd-split-page__empty"
-      title="暂无情感数据"
-      description="生成章节正文后，可在此查看或 AI 分析情感曲线"
+      :title="t('novelDetail.emotionCurve.emptyTitle')"
+      :description="t('novelDetail.emotionCurve.emptyDesc')"
     />
 
     <template v-else>
@@ -22,32 +22,32 @@
         <section class="nd-block">
           <div class="nd-block__head">
             <div>
-              <h3 class="nd-block__title">情感概览</h3>
-              <p class="nd-block__subtitle">全书章节情感分布与强度</p>
+              <h3 class="nd-block__title">{{ t('novelDetail.emotionCurve.overviewTitle') }}</h3>
+              <p class="nd-block__subtitle">{{ t('novelDetail.emotionCurve.overviewSubtitle') }}</p>
             </div>
           </div>
           <div class="nd-stats-grid nd-stats-grid--compact">
             <div class="nd-stat-card nd-stat-card--accent">
-              <span class="nd-stat-card__label">总章节</span>
+              <span class="nd-stat-card__label">{{ t('novelDetail.emotionCurve.totalChapters') }}</span>
               <strong class="nd-stat-card__value">{{ totalChapters }}</strong>
             </div>
             <div class="nd-stat-card">
-              <span class="nd-stat-card__label">平均强度</span>
+              <span class="nd-stat-card__label">{{ t('novelDetail.emotionCurve.avgIntensity') }}</span>
               <strong class="nd-stat-card__value">{{ averageIntensity }}</strong>
             </div>
             <div class="nd-stat-card">
-              <span class="nd-stat-card__label">主导情感</span>
+              <span class="nd-stat-card__label">{{ t('novelDetail.emotionCurve.dominantEmotion') }}</span>
               <strong class="nd-stat-card__value">{{ dominantEmotion }}</strong>
             </div>
             <div class="nd-stat-card">
-              <span class="nd-stat-card__label">情感类型</span>
+              <span class="nd-stat-card__label">{{ t('novelDetail.emotionCurve.emotionTypes') }}</span>
               <strong class="nd-stat-card__value">{{ emotionTypeCount }}</strong>
             </div>
           </div>
         </section>
 
         <section class="nd-block">
-          <div class="nd-segment-bar" role="group" aria-label="情感类型筛选">
+          <div class="nd-segment-bar" role="group" :aria-label="t('novelDetail.emotionCurve.filterAria')">
             <button
               v-for="emotion in emotionTypes"
               :key="emotion.key"
@@ -62,8 +62,8 @@
                 aria-hidden="true"
               />
               {{ emotion.label }}
-              <span v-if="emotionDistribution[emotion.label]" class="nd-segment-btn__count">
-                {{ emotionDistribution[emotion.label] }}
+              <span v-if="emotionDistributionCount(emotion.key)" class="nd-segment-btn__count">
+                {{ emotionDistributionCount(emotion.key) }}
               </span>
             </button>
           </div>
@@ -78,8 +78,8 @@
         <section class="nd-block">
           <div class="nd-block__head">
             <div>
-              <h3 class="nd-block__title">章节情感详情</h3>
-              <p class="nd-block__subtitle">共 {{ emotionPoints.length }} 章</p>
+              <h3 class="nd-block__title">{{ t('novelDetail.emotionCurve.detailTitle') }}</h3>
+              <p class="nd-block__subtitle">{{ t('novelDetail.emotionCurve.detailSubtitle', { count: emotionPoints.length }) }}</p>
             </div>
           </div>
 
@@ -94,7 +94,7 @@
                 <strong>{{ point.title }}</strong>
                 <p>{{ point.description }}</p>
               </div>
-              <span class="nd-badge" :data-emotion="point.emotion_type">{{ point.emotion_type }}</span>
+              <span class="nd-badge" :data-emotion="point.emotion_type">{{ formatEmotionType(point.emotion_type) }}</span>
               <span class="nd-record-item__intensity">{{ point.intensity }}/10</span>
             </li>
           </ul>
@@ -117,9 +117,11 @@ import { useRoute } from '@renderer/novel/composables/useNovelRouter'
 import { NovelAPI, type EmotionCurveResponse, type EmotionPoint } from '@renderer/services/novel/api'
 import { useListPagination } from '@renderer/composables/useListPagination'
 import ListPagination from '@renderer/components/shared/ListPagination.vue'
+import { useI18n } from '@renderer/composables/useI18n'
 import DetailEmptyState from './DetailEmptyState.vue'
 import Chart from 'chart.js/auto'
 
+const { t } = useI18n()
 const route = useRoute()
 const projectId = route.params.id as string
 
@@ -132,23 +134,30 @@ const averageIntensity = ref(0)
 const emotionDistribution = ref<Record<string, number>>({})
 let chartInstance: Chart | null = null
 
-const EMOTION_KEY_MAP: Record<string, string> = {
-  joy: '喜悦',
-  sadness: '悲伤',
-  anger: '愤怒',
-  fear: '恐惧',
-  surprise: '惊讶',
-  calm: '平静',
+const API_EMOTION_TO_KEY: Record<string, string> = {
+  喜悦: 'joy',
+  悲伤: 'sadness',
+  愤怒: 'anger',
+  恐惧: 'fear',
+  惊讶: 'surprise',
+  平静: 'calm',
 }
 
-const emotionTypes = [
-  { key: 'joy', label: '喜悦', color: '#1a9a58' },
-  { key: 'sadness', label: '悲伤', color: '#3b82f6' },
-  { key: 'anger', label: '愤怒', color: '#dc2626' },
-  { key: 'fear', label: '恐惧', color: '#9333ea' },
-  { key: 'surprise', label: '惊讶', color: '#d97706' },
-  { key: 'calm', label: '平静', color: '#6b7280' },
+const EMOTION_TYPE_DEFS = [
+  { key: 'joy', color: '#1a9a58' },
+  { key: 'sadness', color: '#3b82f6' },
+  { key: 'anger', color: '#dc2626' },
+  { key: 'fear', color: '#9333ea' },
+  { key: 'surprise', color: '#d97706' },
+  { key: 'calm', color: '#6b7280' },
 ]
+
+const emotionTypes = computed(() =>
+  EMOTION_TYPE_DEFS.map((item) => ({
+    ...item,
+    label: t(`novelDetail.emotionCurve.emotions.${item.key}`),
+  }))
+)
 
 const selectedEmotions = ref(['joy', 'sadness', 'anger'])
 
@@ -160,10 +169,23 @@ const { page, pageSize, pageSizes, itemCount, paginatedItems, resetPage } = useL
 const dominantEmotion = computed(() => {
   if (Object.keys(emotionDistribution.value).length === 0) return '—'
   const sorted = Object.entries(emotionDistribution.value).sort((a, b) => b[1] - a[1])
-  return sorted[0]?.[0] || '—'
+  const label = sorted[0]?.[0]
+  if (!label) return '—'
+  const key = API_EMOTION_TO_KEY[label]
+  return key ? t(`novelDetail.emotionCurve.emotions.${key}`) : label
 })
 
 const emotionTypeCount = computed(() => Object.keys(emotionDistribution.value).length)
+
+const emotionDistributionCount = (emotionKey: string) => {
+  const apiLabel = Object.entries(API_EMOTION_TO_KEY).find(([, key]) => key === emotionKey)?.[0]
+  return apiLabel ? emotionDistribution.value[apiLabel] : undefined
+}
+
+const formatEmotionType = (type: string) => {
+  const key = API_EMOTION_TO_KEY[type]
+  return key ? t(`novelDetail.emotionCurve.emotions.${key}`) : type
+}
 
 const toggleEmotion = (key: string) => {
   const index = selectedEmotions.value.indexOf(key)
@@ -178,12 +200,12 @@ const toggleEmotion = (key: string) => {
 }
 
 const buildDatasets = () =>
-  emotionTypes
+  emotionTypes.value
     .filter((et) => selectedEmotions.value.includes(et.key))
     .map((emotionType) => ({
       label: emotionType.label,
       data: emotionPoints.value.map((p) => {
-        const key = Object.keys(EMOTION_KEY_MAP).find((k) => EMOTION_KEY_MAP[k] === p.emotion_type)
+        const key = API_EMOTION_TO_KEY[p.emotion_type]
         return key === emotionType.key ? p.intensity : null
       }),
       borderColor: emotionType.color,
@@ -212,7 +234,7 @@ const fetchEmotionData = async (useAI = false) => {
       else initChart()
     })
   } catch (err: unknown) {
-    error.value = err instanceof Error ? err.message : '加载情感数据时发生错误'
+    error.value = err instanceof Error ? err.message : t('novelDetail.emotionCurve.loadFailed')
     console.error('Failed to fetch emotion data:', err)
   } finally {
     isLoading.value = false
@@ -225,7 +247,7 @@ const updateChart = () => {
     return
   }
 
-  chartInstance.data.labels = emotionPoints.value.map((p) => `第${p.chapter_number}章`)
+  chartInstance.data.labels = emotionPoints.value.map((p) => t('novelDetail.common.chapterN', { n: p.chapter_number }))
   chartInstance.data.datasets = buildDatasets()
   chartInstance.update()
 }
@@ -244,7 +266,7 @@ const initChart = () => {
   chartInstance = new Chart(ctx, {
     type: 'line',
     data: {
-      labels: emotionPoints.value.map((p) => `第${p.chapter_number}章`),
+      labels: emotionPoints.value.map((p) => t('novelDetail.common.chapterN', { n: p.chapter_number })),
       datasets: buildDatasets(),
     },
     options: {
@@ -254,25 +276,27 @@ const initChart = () => {
         y: {
           beginAtZero: true,
           max: 10,
-          title: { display: true, text: '情感强度' },
+          title: { display: true, text: t('novelDetail.emotionCurve.axisIntensity') },
         },
         x: {
-          title: { display: true, text: '章节' },
+          title: { display: true, text: t('novelDetail.emotionCurve.axisChapter') },
         },
       },
       plugins: {
         tooltip: {
           callbacks: {
             label(context) {
-              const emotionType = emotionTypes.find((et) => et.label === context.dataset.label)
+              const emotionType = emotionTypes.value.find((et) => et.label === context.dataset.label)
               const point = emotionPoints.value[context.dataIndex]
               if (
                 point &&
                 emotionType &&
-                Object.keys(EMOTION_KEY_MAP).find((k) => EMOTION_KEY_MAP[k] === point.emotion_type) ===
-                  emotionType.key
+                API_EMOTION_TO_KEY[point.emotion_type] === emotionType.key
               ) {
-                return `${point.emotion_type}: ${point.intensity}/10`
+                const emotionLabel = API_EMOTION_TO_KEY[point.emotion_type]
+                  ? t(`novelDetail.emotionCurve.emotions.${API_EMOTION_TO_KEY[point.emotion_type]}`)
+                  : point.emotion_type
+                return `${emotionLabel}: ${point.intensity}/10`
               }
               return ''
             },

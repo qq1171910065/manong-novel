@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { BarChart3, BookOpen, Sparkles } from 'lucide-vue-next'
+import { BarChart3, BookOpen, Coins, Sparkles } from 'lucide-vue-next'
 import ProfileSectionLayout from './ProfileSectionLayout.vue'
 import SettingsBlock from './SettingsBlock.vue'
 import SettingsInfoRow from './SettingsInfoRow.vue'
@@ -35,6 +35,14 @@ const statCards = computed(() => [
     hint: `约 ${usageTokens.value.toLocaleString()} Token`,
     icon: BarChart3,
     tone: 'usage',
+  },
+  {
+    id: 'cost',
+    label: '累计消费',
+    value: `${totalCostYuan.value.toFixed(2)} 元`,
+    hint: `充值 ${totalRechargedYuan.value.toFixed(2)} 元`,
+    icon: Coins,
+    tone: 'cost',
   },
   {
     id: 'balance',
@@ -78,39 +86,58 @@ onMounted(() => {
 </script>
 
 <template>
-  <ProfileSectionLayout title="用户统计" desc="写作项目、模型调用与消费数据。">
-    <NSpin :show="loading">
-      <div class="profile-stats profile-stats--quad" role="list" aria-label="用户统计概览">
-        <div
-          v-for="item in statCards"
-          :key="item.id"
-          class="profile-stat"
-          :class="`profile-stat--${item.tone}`"
-          role="listitem"
-        >
-          <span class="profile-stat__icon" aria-hidden="true">
-            <component :is="item.icon" :size="18" />
-          </span>
-          <span class="profile-stat__body">
-            <span class="profile-stat__label">{{ item.label }}</span>
-            <strong class="profile-stat__value">{{ item.value }}</strong>
-            <span class="profile-stat__hint" :title="item.hint">{{ item.hint }}</span>
-          </span>
+  <ProfileSectionLayout title="数据统计" desc="写作项目、模型调用与消费数据。">
+    <div class="user-stats-section">
+      <NSpin :show="loading">
+        <div class="user-stats-stack">
+        <div class="profile-stats profile-stats--quad" role="list" aria-label="数据统计概览">
+          <div
+            v-for="item in statCards"
+            :key="item.id"
+            class="profile-stat"
+            :class="`profile-stat--${item.tone}`"
+            role="listitem"
+          >
+            <span class="profile-stat__icon" aria-hidden="true">
+              <component :is="item.icon" :size="18" />
+            </span>
+            <span class="profile-stat__body">
+              <span class="profile-stat__label">{{ item.label }}</span>
+              <strong class="profile-stat__value">{{ item.value }}</strong>
+              <span class="profile-stat__hint" :title="item.hint">{{ item.hint }}</span>
+            </span>
+          </div>
         </div>
+
+        <SettingsBlock title="写作统计" desc="本地保存的小说项目数量。">
+          <SettingsInfoRow label="项目总数" :value="String(projectCount)" />
+        </SettingsBlock>
+
+        <SettingsBlock title="模型与消费" desc="平台侧记录的模型调用与账户消费。">
+          <SettingsInfoRow label="累计调用" :value="usageTotal.toLocaleString()" />
+          <SettingsInfoRow label="采样 Token" hint="最近 200 条估算" :value="usageTokens.toLocaleString()" />
+          <SettingsInfoRow label="累计消费" :value="`${totalCostYuan.toFixed(2)} 元`" />
+          <SettingsInfoRow label="累计充值" :value="`${totalRechargedYuan.toFixed(2)} 元`" />
+          <SettingsInfoRow label="当前积分" :value="balancePoints.toLocaleString()" />
+          <SettingsInfoRow label="余额折合" :value="`约 ${balanceYuan.toFixed(2)} 元`" />
+        </SettingsBlock>
       </div>
-
-      <SettingsBlock title="写作统计" desc="本地保存的小说项目数量。">
-        <SettingsInfoRow label="项目总数" :value="String(projectCount)" />
-      </SettingsBlock>
-
-      <SettingsBlock title="模型与消费" desc="平台侧记录的模型调用与账户消费。">
-        <SettingsInfoRow label="累计调用" :value="usageTotal.toLocaleString()" />
-        <SettingsInfoRow label="采样 Token" hint="最近 200 条估算" :value="usageTokens.toLocaleString()" />
-        <SettingsInfoRow label="累计消费" :value="`${totalCostYuan.toFixed(2)} 元`" />
-        <SettingsInfoRow label="累计充值" :value="`${totalRechargedYuan.toFixed(2)} 元`" />
-        <SettingsInfoRow label="当前积分" :value="balancePoints.toLocaleString()" />
-        <SettingsInfoRow label="余额折合" :value="`约 ${balanceYuan.toFixed(2)} 元`" />
-      </SettingsBlock>
-    </NSpin>
+      </NSpin>
+    </div>
   </ProfileSectionLayout>
 </template>
+
+<style scoped>
+.user-stats-section :deep(.n-spin-container),
+.user-stats-section :deep(.n-spin-content) {
+  display: block;
+  height: auto;
+  overflow: visible;
+}
+
+.user-stats-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--profile-body-gap, 16px);
+}
+</style>

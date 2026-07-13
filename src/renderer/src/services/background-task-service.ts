@@ -1,6 +1,18 @@
 import { computed, readonly, ref } from 'vue'
+import type { AgentId, AgentWorkflowId } from '@shared/novel/agent-orchestration'
+import { translate, getCachedLocale } from '@renderer/i18n'
+import {
+  translateAgentLabel,
+  translateWorkflowLabel,
+  type TranslateFn,
+} from '@renderer/i18n/log-labels'
 
-export type BackgroundTaskKind = 'auto_write' | 'tts_preload' | 'image_generate'
+export type BackgroundTaskKind =
+  | 'auto_write'
+  | 'blueprint_generate'
+  | 'tts_preload'
+  | 'image_generate'
+  | 'agent_workflow'
 export type BackgroundTaskStatus = 'running' | 'paused' | 'completed' | 'failed' | 'cancelled'
 
 export interface BackgroundTask {
@@ -16,13 +28,56 @@ export interface BackgroundTask {
   currentChapter: number | null
   startedAt: number
   updatedAt: number
-  /** 绘图任务：封面 / 角色名等 */
   subjectLabel?: string
+  agentId?: AgentId
+  agentLabel?: string
+  workflowId?: AgentWorkflowId
+  workflowLabel?: string
+  lockedResourceLabels?: string[]
+  viewTarget?: 'inspiration' | 'writing_desk' | 'detail'
+  viewPhase?: 'chat' | 'generating' | 'preview' | 'confirm'
 }
 
 const tasks = ref<BackgroundTask[]>([])
+const STORAGE_KEY = 'novel-background-tasks'
+const PERSIST_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
-function taskId(kind: BackgroundTaskKind, projectId: string): string {
+const t: TranslateFn = (key, params) => translate(key, params)
+
+function persistTasks(): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks.value))
+  } catch {
+    /* ignore quota */
+  }
+}
+
+function hydrateTasks(): void {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return
+    const parsed = JSON.parse(raw) as BackgroundTask[]
+    if (!Array.isArray(parsed)) return
+    const now = Date.now()
+    tasks.value = parsed
+      .filter((task) => now - task.updatedAt < PERSIST_TTL_MS)
+      .map((task) => {
+        if (task.status !== 'running') return task
+        return {
+          ...task,
+          status: 'paused' as BackgroundTaskStatus,
+          message: task.message || translate('backgroundTask.restartPaused'),
+        }
+      })
+  } catch {
+    tasks.value = []
+  }
+}
+
+hydrateTasks()
+
+function taskId(kind: BackgroundTaskKind, projectId: string, extra?: string): string {
+  if (kind === 'agent_workflow' && extra) return extra
   return `${kind}:${projectId}`
 }
 
@@ -35,7 +90,7 @@ export function upsertBackgroundTask(patch: Partial<BackgroundTask> & Pick<Backg
   const existing = tasks.value.find((item) => item.id === id)
   const next = touch({
     id,
-    projectTitle: patch.projectTitle ?? existing?.projectTitle ?? '未命名作品',
+    projectTitle: patch.projectTitle ?? existing?.projectTitle ?? translate('backgroundTask.unnamedProject'),
     status: patch.status ?? existing?.status ?? 'running',
     message: patch.message ?? existing?.message ?? '',
     progressPercent: patch.progressPercent ?? existing?.progressPercent ?? 0,
@@ -43,6 +98,13 @@ export function upsertBackgroundTask(patch: Partial<BackgroundTask> & Pick<Backg
     totalCount: patch.totalCount ?? existing?.totalCount ?? 0,
     currentChapter: patch.currentChapter ?? existing?.currentChapter ?? null,
     subjectLabel: patch.subjectLabel ?? existing?.subjectLabel,
+    agentId: patch.agentId ?? existing?.agentId,
+    agentLabel: patch.agentLabel ?? existing?.agentLabel,
+    workflowId: patch.workflowId ?? existing?.workflowId,
+    workflowLabel: patch.workflowLabel ?? existing?.workflowLabel,
+    lockedResourceLabels: patch.lockedResourceLabels ?? existing?.lockedResourceLabels,
+    viewTarget: patch.viewTarget ?? existing?.viewTarget,
+    viewPhase: patch.viewPhase ?? existing?.viewPhase,
     startedAt: existing?.startedAt ?? Date.now(),
     kind: patch.kind,
     projectId: patch.projectId,
@@ -57,6 +119,7 @@ export function upsertBackgroundTask(patch: Partial<BackgroundTask> & Pick<Backg
   } else {
     tasks.value = [next, ...tasks.value]
   }
+  persistTasks()
   return next
 }
 
@@ -67,46 +130,77 @@ export function getBackgroundTask(kind: BackgroundTaskKind, projectId: string): 
 export function removeBackgroundTask(kind: BackgroundTaskKind, projectId: string): void {
   const id = taskId(kind, projectId)
   tasks.value = tasks.value.filter((item) => item.id !== id)
+  persistTasks()
 }
 
 export function backgroundTaskKindLabel(kind: BackgroundTaskKind): string {
   switch (kind) {
     case 'auto_write':
-      return 'AI 接管创作'
+      return translate('backgroundTask.autoWrite')
+    case 'blueprint_generate':
+      return translate('backgroundTask.blueprintGenerate')
     case 'tts_preload':
-      return '听书预合成'
+      return translate('backgroundTask.ttsPreload')
     case 'image_generate':
-      return 'AI 绘制'
+      return translate('backgroundTask.imageGenerate')
+    case 'agent_workflow':
+      return translate('backgroundTask.agentWorkflow')
     default:
       return kind
   }
 }
 
+function localizedAgentLabel(task: BackgroundTask): string | null {
+  if (task.agentId) return translateAgentLabel(t, task.agentId, task.agentLabel)
+  return task.agentLabel ?? null
+}
+
+function localizedWorkflowLabel(task: BackgroundTask): string | null {
+  if (task.workflowId) return translateWorkflowLabel(t, task.workflowId, task.workflowLabel)
+  return task.workflowLabel ?? null
+}
+
 export function backgroundTaskProgressLabel(task: BackgroundTask): string | null {
+  if (task.kind === 'agent_workflow') {
+    const agent = localizedAgentLabel(task)
+    const workflow = localizedWorkflowLabel(task)
+    if (agent && workflow) return `${workflow} · ${agent}`
+    return agent ?? workflow
+  }
   if (task.kind === 'image_generate') {
     return task.subjectLabel || null
   }
   if (task.totalCount <= 0) return null
   if (task.kind === 'tts_preload') {
-    return `${task.completedCount}/${task.totalCount} 段`
+    return translate('backgroundTask.progressSegments', {
+      completed: task.completedCount,
+      total: task.totalCount,
+    })
   }
   const chapterPart =
-    task.currentChapter != null ? ` · 第 ${task.currentChapter} 章` : ''
-  return `${task.completedCount}/${task.totalCount} 章${chapterPart}`
+    task.currentChapter != null
+      ? translate('backgroundTask.progressChapterN', { n: task.currentChapter })
+      : ''
+  return (
+    translate('backgroundTask.progressChapters', {
+      completed: task.completedCount,
+      total: task.totalCount,
+    }) + chapterPart
+  )
 }
 
 export function backgroundTaskStatusLabel(status: BackgroundTaskStatus): string {
   switch (status) {
     case 'running':
-      return '进行中'
+      return translate('backgroundTask.statusRunning')
     case 'paused':
-      return '已暂停'
+      return translate('backgroundTask.statusPaused')
     case 'completed':
-      return '已完成'
+      return translate('backgroundTask.statusCompleted')
     case 'failed':
-      return '失败'
+      return translate('backgroundTask.statusFailed')
     case 'cancelled':
-      return '已取消'
+      return translate('backgroundTask.statusCancelled')
     default:
       return status
   }
@@ -114,24 +208,44 @@ export function backgroundTaskStatusLabel(status: BackgroundTaskStatus): string 
 
 function formatDurationMs(ms: number): string {
   const sec = Math.max(0, Math.round(ms / 1000))
-  if (sec < 60) return `${sec} 秒`
+  if (sec < 60) return translate('backgroundTask.durationSeconds', { sec })
   const min = Math.floor(sec / 60)
   const rest = sec % 60
-  if (min < 60) return rest > 0 ? `${min} 分 ${rest} 秒` : `${min} 分`
+  if (min < 60) {
+    return rest > 0
+      ? translate('backgroundTask.durationMinutesSeconds', { min, sec: rest })
+      : translate('backgroundTask.durationMinutes', { min })
+  }
   const hour = Math.floor(min / 60)
   const restMin = min % 60
-  return restMin > 0 ? `${hour} 小时 ${restMin} 分` : `${hour} 小时`
+  return restMin > 0
+    ? translate('backgroundTask.durationHoursMinutes', { hour, min: restMin })
+    : translate('backgroundTask.durationHours', { hour })
 }
 
-/** 折叠态一行概要 */
 export function backgroundTaskSummary(task: BackgroundTask): string {
   const progress = backgroundTaskProgressLabel(task)
   const status = backgroundTaskStatusLabel(task.status)
 
-  if (task.kind === 'image_generate') {
-    const subject = task.subjectLabel || '图像'
+  if (task.kind === 'blueprint_generate') {
     if (task.status === 'running') {
-      return `${subject} · ${task.message || '绘制中…'}`
+      return task.message || translate('backgroundTask.blueprintRunning')
+    }
+    return translate('backgroundTask.blueprintSummary', { status })
+  }
+
+  if (task.kind === 'agent_workflow') {
+    const agent = localizedAgentLabel(task) ?? translate('backgroundTask.agentDefault')
+    if (task.status === 'running') {
+      return `${agent} · ${task.message || translate('backgroundTask.executing')}`
+    }
+    return `${localizedWorkflowLabel(task) ?? translate('backgroundTask.agentTaskDefault')} · ${status}`
+  }
+
+  if (task.kind === 'image_generate') {
+    const subject = task.subjectLabel || translate('backgroundTask.imageDefault')
+    if (task.status === 'running') {
+      return `${subject} · ${task.message || translate('backgroundTask.drawing')}`
     }
     return `${subject} · ${status}`
   }
@@ -152,32 +266,48 @@ export function backgroundTaskSummary(task: BackgroundTask): string {
   return status
 }
 
-/** 展开态详情字段 */
-export function backgroundTaskDetailRows(task: BackgroundTask): Array<{ label: string; value: string }> {
-  const rows: Array<{ label: string; value: string }> = [
-    { label: '类型', value: backgroundTaskKindLabel(task.kind) },
-    { label: '状态', value: backgroundTaskStatusLabel(task.status) },
+export type BackgroundTaskDetailRow = { key: string; value: string }
+
+export function backgroundTaskDetailRows(task: BackgroundTask): BackgroundTaskDetailRow[] {
+  const rows: BackgroundTaskDetailRow[] = [
+    { key: 'type', value: backgroundTaskKindLabel(task.kind) },
+    { key: 'status', value: backgroundTaskStatusLabel(task.status) },
   ]
 
+  const workflow = localizedWorkflowLabel(task)
+  if (workflow) {
+    rows.push({ key: 'workflow', value: workflow })
+  }
+
+  const agent = localizedAgentLabel(task)
+  if (agent) {
+    rows.push({ key: 'agent', value: agent })
+  }
+
+  if (task.lockedResourceLabels?.length) {
+    const separator = getCachedLocale() === 'en-US' ? ', ' : '、'
+    rows.push({ key: 'lockedResources', value: task.lockedResourceLabels.join(separator) })
+  }
+
   if (task.subjectLabel) {
-    rows.push({ label: '对象', value: task.subjectLabel })
+    rows.push({ key: 'subject', value: task.subjectLabel })
   }
 
   const progress = backgroundTaskProgressLabel(task)
   if (progress) {
-    rows.push({ label: '进度', value: progress })
+    rows.push({ key: 'progress', value: progress })
   }
 
   if (task.totalCount > 0) {
-    rows.push({ label: '完成度', value: `${Math.round(task.progressPercent)}%` })
+    rows.push({ key: 'completion', value: `${Math.round(task.progressPercent)}%` })
   }
 
-  rows.push({ label: '开始', value: formatTaskTime(task.startedAt) })
-  rows.push({ label: '更新', value: formatTaskTime(task.updatedAt) })
-  rows.push({ label: '耗时', value: formatDurationMs(task.updatedAt - task.startedAt) })
+  rows.push({ key: 'started', value: formatTaskTime(task.startedAt) })
+  rows.push({ key: 'updated', value: formatTaskTime(task.updatedAt) })
+  rows.push({ key: 'duration', value: formatDurationMs(task.updatedAt - task.startedAt) })
 
   if (task.message) {
-    rows.push({ label: '说明', value: task.message })
+    rows.push({ key: 'message', value: task.message })
   }
 
   return rows
@@ -191,6 +321,7 @@ function formatTaskTime(ts: number): string {
 
 export function dismissBackgroundTask(taskIdValue: string): void {
   tasks.value = tasks.value.filter((item) => item.id !== taskIdValue)
+  persistTasks()
 }
 
 export function useBackgroundTasks() {

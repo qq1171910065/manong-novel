@@ -1,10 +1,11 @@
-﻿import {
+import {
   clearStoredGatewayKey,
   invalidateGatewayModelCache,
 } from '@renderer/services/gateway-api'
 import { setPortalSession } from '@renderer/services/portal-api'
 import { performAuthLogout } from '@renderer/services/auth-session'
 import { getNovelUserId } from '@renderer/services/novel/client'
+import { pickJsonFile } from '@renderer/utils/portable-file'
 import {
   applyAppSettingsEffects,
   formatUserMessage,
@@ -76,6 +77,28 @@ export const dataManagementService = {
     link.download = `manong-novel-backup-${stamp}.json`
     link.click()
     URL.revokeObjectURL(url)
+  },
+
+  async importBackup(): Promise<{ imported: number; skipped: number }> {
+    const picked = await pickJsonFile()
+    if (!picked) {
+      throw new Error('已取消导入')
+    }
+    let payload: NovelStoreData
+    try {
+      payload = JSON.parse(picked.content) as NovelStoreData
+    } catch {
+      throw new Error('备份文件格式无效')
+    }
+    if (!payload || typeof payload !== 'object' || !payload.projects) {
+      throw new Error('备份文件缺少小说项目数据')
+    }
+    const userId = getNovelUserId()
+    const result = await window.api.novelMergeImportStore(userId, payload)
+    if (!result.ok || !result.data) {
+      throw new Error(result.error || '导入失败')
+    }
+    return result.data
   },
 
   async clearProjects(): Promise<void> {

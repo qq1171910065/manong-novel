@@ -8,8 +8,10 @@ import {
   type CreationWorkflowPrefs,
 } from '@renderer/services/creation-workflow-prefs'
 import { useAutoChapterPipeline } from '@renderer/novel/composables/useAutoChapterPipeline'
-import { useChapterGenProgress, CHAPTER_GEN_PHASE_LABELS } from '@renderer/novel/composables/chapter-generation-progress'
+import { useChapterGenProgress } from '@renderer/novel/composables/chapter-generation-progress'
+import { translateChapterGenPhase } from '@renderer/i18n/log-labels'
 import ProjectModelSettings from '@renderer/novel/components/shared/ProjectModelSettings.vue'
+import { useI18n } from '@renderer/composables/useI18n'
 import type { WritingMode } from '@shared/novel/types'
 
 const props = defineProps<{
@@ -23,51 +25,32 @@ const emit = defineEmits<{
   'models-update': [payload: { chat_model_id?: string | null }]
 }>()
 
+const { t } = useI18n()
 const prefs = ref<CreationWorkflowPrefs>(getCreationWorkflowPrefs())
 const autoWrite = useAutoChapterPipeline()
 const { activeProgress } = useChapterGenProgress()
 
-const boolOptions = [
-  { label: '开', value: true },
-  { label: '关', value: false },
-] as const
+const boolOptions = computed(() => [
+  { label: t('novelDetail.pipeline.boolOn'), value: true },
+  { label: t('novelDetail.pipeline.boolOff'), value: false },
+] as const)
 
-const pipelineOptions: Array<{
-  key: keyof CreationWorkflowPrefs
-  label: string
-  hint: string
-}> = [
-  {
-    key: 'autoWritePauseBeforeConfirm',
-    label: '连写每章后暂停',
-    hint: '每章写完先预览，再继续下一章',
-  },
-  {
-    key: 'autoWriteMultiVersion',
-    label: '连写多版本评审',
-    hint: '生成多个版本并自动择优，更慢但更稳',
-  },
-  {
-    key: 'strictChapterOrder',
-    label: '按顺序写章',
-    hint: '上一章确认后，才生成下一章',
-  },
-  {
-    key: 'enableConstitutionLlmCheck',
-    label: 'AI 合规检查',
-    hint: '正文违规时自动分析并重写',
-  },
-  {
-    key: 'showStreamPreview',
-    label: '生成时显示预览',
-    hint: '写作过程中实时展示 AI 输出',
-  },
-  {
-    key: 'enablePipelineLog',
-    label: '记录 AI 调用',
-    hint: '在「AI 调用流水」中查看详情',
-  },
+const pipelineOptionKeys: Array<keyof CreationWorkflowPrefs> = [
+  'autoWritePauseBeforeConfirm',
+  'autoWriteMultiVersion',
+  'strictChapterOrder',
+  'enableConstitutionLlmCheck',
+  'showStreamPreview',
+  'enablePipelineLog',
 ]
+
+const pipelineOptions = computed(() =>
+  pipelineOptionKeys.map((key) => ({
+    key,
+    label: t(`novelDetail.pipeline.options.${key}.label`),
+    hint: t(`novelDetail.pipeline.options.${key}.hint`),
+  }))
+)
 
 const liveStatus = computed(() => {
   const live = activeProgress.value
@@ -75,9 +58,11 @@ const liveStatus = computed(() => {
     return {
       title: live.message,
       chips: [
-        CHAPTER_GEN_PHASE_LABELS[live.phase],
-        live.chars > 0 ? `${live.chars} 字` : null,
-        live.versionTotal > 1 ? `版本 ${live.versionIndex}/${live.versionTotal}` : null,
+        translateChapterGenPhase(t, live.phase),
+        live.chars > 0 ? t('novelDetail.common.words', { count: live.chars }) : null,
+        live.versionTotal > 1
+          ? t('novelDetail.pipeline.versionProgress', { index: live.versionIndex, total: live.versionTotal })
+          : null,
       ].filter(Boolean) as string[],
     }
   }
@@ -88,8 +73,8 @@ const liveStatus = computed(() => {
       title: autoWrite.statusMessage.value,
       chips: [
         p.phase,
-        p.currentChapter ? `第 ${p.currentChapter} 章` : null,
-        autoWrite.isProjectPaused(props.projectId) ? '已暂停' : '连写中',
+        p.currentChapter ? t('novelDetail.pipeline.chapterN', { n: p.currentChapter }) : null,
+        autoWrite.isProjectPaused(props.projectId) ? t('novelDetail.pipeline.paused') : t('novelDetail.pipeline.autoWriting'),
       ].filter(Boolean) as string[],
     }
   }
@@ -113,7 +98,7 @@ function emitModelsUpdate(value: string | null) {
       <section v-if="liveStatus" class="pipeline-live">
         <div class="pipeline-live__indicator" aria-hidden="true" />
         <div class="pipeline-live__body">
-          <p class="pipeline-live__label">当前任务</p>
+          <p class="pipeline-live__label">{{ t('novelDetail.pipeline.currentTask') }}</p>
           <p class="pipeline-live__title">{{ liveStatus.title }}</p>
           <div v-if="liveStatus.chips.length" class="pipeline-live__chips">
             <span v-for="chip in liveStatus.chips" :key="chip" class="pipeline-live__chip">

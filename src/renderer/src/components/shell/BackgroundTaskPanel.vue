@@ -15,8 +15,12 @@ import {
   type BackgroundTask,
   useBackgroundTasks,
 } from '@renderer/services/background-task-service'
+import { dismissAgentWorkflowTask } from '@renderer/services/agent-orchestration-service'
+import { requestTaskView } from '@renderer/services/task-navigation-service'
 import { useAutoChapterPipeline } from '@renderer/novel/composables/useAutoChapterPipeline'
+import { useI18n } from '@renderer/composables/useI18n'
 
+const { t } = useI18n()
 const panelRef = ref<HTMLElement | null>(null)
 const triggerRef = ref<HTMLElement | null>(null)
 const popoverRef = ref<HTMLElement | null>(null)
@@ -53,22 +57,53 @@ function statusClass(task: BackgroundTask): string {
 }
 
 function pauseTask(task: BackgroundTask) {
-  if (task.kind !== 'auto_write') return
+  if (task.kind !== 'auto_write' && !(task.kind === 'agent_workflow' && task.workflowId === 'auto_write')) return
   autoWrite.pause()
 }
 
 function resumeTask(task: BackgroundTask) {
-  if (task.kind !== 'auto_write') return
+  if (task.kind !== 'auto_write' && !(task.kind === 'agent_workflow' && task.workflowId === 'auto_write')) return
   void autoWrite.run(task.projectId, task.projectTitle)
 }
 
 function cancelTask(task: BackgroundTask) {
-  if (task.kind === 'auto_write') {
+  if (task.kind === 'auto_write' || (task.kind === 'agent_workflow' && task.workflowId === 'auto_write')) {
     autoWrite.cancel()
     return
   }
   if (task.kind === 'tts_preload') {
     removeBackgroundTask('tts_preload', task.projectId)
+  }
+}
+
+function resolveTaskView(task: BackgroundTask) {
+  if (task.viewTarget === 'inspiration') {
+    requestTaskView(task.projectId, { type: 'inspiration', phase: task.viewPhase })
+    return
+  }
+  if (task.viewTarget === 'writing_desk') {
+    requestTaskView(task.projectId, {
+      type: 'writing_desk',
+      chapterNumber: task.currentChapter ?? undefined,
+    })
+    return
+  }
+  if (task.kind === 'blueprint_generate' || task.workflowId === 'blueprint_generation') {
+    requestTaskView(task.projectId, {
+      type: 'inspiration',
+      phase: task.status === 'completed' ? 'preview' : 'generating',
+    })
+    return
+  }
+  if (task.kind === 'auto_write' || task.workflowId === 'auto_write') {
+    requestTaskView(task.projectId, { type: 'writing_desk' })
+    return
+  }
+  if (task.workflowId === 'chapter_generation') {
+    requestTaskView(task.projectId, {
+      type: 'writing_desk',
+      chapterNumber: task.currentChapter ?? undefined,
+    })
   }
 }
 
@@ -81,17 +116,23 @@ function openProject(task: BackgroundTask) {
   if (task.kind === 'image_generate' && task.projectId.startsWith('material:')) {
     return
   }
+  resolveTaskView(task)
   navigate(`/detail/${task.projectId}`)
 }
 
 function canCancel(task: BackgroundTask): boolean {
   if (task.kind === 'image_generate') return false
+  if (task.kind === 'agent_workflow' && task.workflowId !== 'auto_write') return false
   if (task.kind === 'tts_preload') return task.status === 'running'
   return task.status === 'running' || task.status === 'paused'
 }
 
 function dismissTask(task: BackgroundTask) {
-  dismissBackgroundTask(task.id)
+  if (task.kind === 'agent_workflow') {
+    dismissAgentWorkflowTask(task.id)
+  } else {
+    dismissBackgroundTask(task.id)
+  }
   const next = new Set(expandedTaskIds.value)
   next.delete(task.id)
   expandedTaskIds.value = next
@@ -126,7 +167,7 @@ defineExpose({
       type="button"
       class="novel-task-trigger"
       :class="{ 'is-active': runningCount > 0 }"
-      aria-label="后台任务"
+      :aria-label="t('backgroundTask.panel.triggerAria')"
       :aria-expanded="showPanel"
       @click.stop="togglePanel"
     >
@@ -142,19 +183,19 @@ defineExpose({
         class="novel-task-popover"
         :style="popoverStyle"
         role="dialog"
-        aria-label="后台任务列表"
+        :aria-label="t('backgroundTask.panel.dialogAria')"
         @click.stop
         @mousedown.stop
       >
       <div class="novel-task-popover__head">
-        <strong>后台任务</strong>
-        <span v-if="runningCount > 0">{{ runningCount }} 个进行中</span>
-        <span v-else-if="hasTasks">暂无进行中的任务</span>
-        <span v-else>暂无任务</span>
+        <strong>{{ t('backgroundTask.panel.title') }}</strong>
+        <span v-if="runningCount > 0">{{ t('backgroundTask.panel.runningCount', { count: runningCount }) }}</span>
+        <span v-else-if="hasTasks">{{ t('backgroundTask.panel.noRunning') }}</span>
+        <span v-else>{{ t('backgroundTask.panel.noTasks') }}</span>
       </div>
 
       <div v-if="!hasTasks" class="novel-task-popover__empty">
-        AI 接管创作、AI 绘制、听书预合成等后台任务会显示在这里
+        {{ t('backgroundTask.panel.emptyDesc') }}
       </div>
 
       <ul v-else class="novel-task-list">
@@ -190,11 +231,11 @@ defineExpose({
               <dl class="novel-task-item__detail-list">
                 <div
                   v-for="row in backgroundTaskDetailRows(task)"
-                  :key="row.label"
+                  :key="row.key"
                   class="novel-task-item__detail-row"
-                  :class="{ 'novel-task-item__detail-row--message': row.label === '说明' }"
+                  :class="{ 'novel-task-item__detail-row--message': row.key === 'message' }"
                 >
-                  <dt>{{ row.label }}</dt>
+                  <dt>{{ t(`backgroundTask.details.${row.key}`) }}</dt>
                   <dd>{{ row.value }}</dd>
                 </div>
               </dl>
@@ -212,28 +253,28 @@ defineExpose({
               <div class="novel-task-item__actions">
                 <div class="novel-task-item__buttons">
                   <button
-                    v-if="task.status === 'running' && task.kind === 'auto_write'"
+                    v-if="task.status === 'running' && (task.kind === 'auto_write' || (task.kind === 'agent_workflow' && task.workflowId === 'auto_write'))"
                     type="button"
                     class="novel-task-item__btn"
-                    title="暂停"
+                    :title="t('backgroundTask.panel.pause')"
                     @click.stop="pauseTask(task)"
                   >
                     <CirclePause :size="14" />
                   </button>
                   <button
-                    v-if="task.status === 'paused' && task.kind === 'auto_write'"
+                    v-if="task.status === 'paused' && (task.kind === 'auto_write' || (task.kind === 'agent_workflow' && task.workflowId === 'auto_write'))"
                     type="button"
                     class="novel-task-item__btn novel-task-item__btn--primary"
-                    title="继续"
+                    :title="t('backgroundTask.panel.resume')"
                     @click.stop="resumeTask(task)"
                   >
-                    继续
+                    {{ t('backgroundTask.panel.resume') }}
                   </button>
                   <button
                     v-if="canCancel(task)"
                     type="button"
                     class="novel-task-item__btn"
-                    :title="task.kind === 'tts_preload' ? '取消预合成' : '取消'"
+                    :title="task.kind === 'tts_preload' ? t('backgroundTask.panel.cancelTts') : t('backgroundTask.panel.cancel')"
                     @click.stop="cancelTask(task)"
                   >
                     <X :size="14" />
@@ -242,16 +283,22 @@ defineExpose({
                     v-if="canOpenProject(task)"
                     type="button"
                     class="novel-task-item__btn"
-                    title="打开"
+                    :title="t('backgroundTask.panel.open')"
                     @click.stop="openProject(task)"
                   >
-                    {{ task.kind === 'tts_preload' ? '听书' : task.kind === 'image_generate' ? '作品' : '查看' }}
+                    {{
+                      task.kind === 'tts_preload'
+                        ? t('backgroundTask.panel.listen')
+                        : task.kind === 'image_generate'
+                          ? t('backgroundTask.panel.project')
+                          : t('backgroundTask.panel.view')
+                    }}
                   </button>
                   <button
                     v-if="canDismiss(task)"
                     type="button"
                     class="novel-task-item__btn"
-                    title="移除"
+                    :title="t('backgroundTask.panel.remove')"
                     @click.stop="dismissTask(task)"
                   >
                     <XCircle :size="14" />

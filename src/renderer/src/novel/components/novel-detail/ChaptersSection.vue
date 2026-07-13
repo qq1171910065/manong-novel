@@ -12,8 +12,8 @@
       :class="{ 'is-open': showChapterList }"
     >
       <div class="nd-split-page__list-head">
-        <h3 class="nd-split-page__list-title">章节</h3>
-        <span class="nd-split-page__list-count">{{ chapterList.length }} 篇</span>
+        <h3 class="nd-split-page__list-title">{{ t('novelDetail.chapters.listTitle') }}</h3>
+        <span class="nd-split-page__list-count">{{ t('novelDetail.chapters.count', { count: chapterList.length }) }}</span>
       </div>
       <ul v-if="chapterList.length" class="nd-split-page__list-body">
         <li v-for="(chapter, index) in chapterList" :key="chapter.chapter_number" class="nd-split-page__list-item">
@@ -26,7 +26,7 @@
             <div class="nd-split-page__list-btn-row">
               <div class="nd-split-page__list-btn-main">
                 <span class="nd-split-page__list-num">{{ index + 1 }}</span>
-                <span class="nd-split-page__list-name">{{ chapter.title || `第${chapter.chapter_number}章` }}</span>
+                <span class="nd-split-page__list-name">{{ chapter.title || t('novelDetail.common.chapterN', { n: chapter.chapter_number }) }}</span>
               </div>
               <span class="nd-split-page__list-meta">{{ getChapterListMeta(chapter.chapter_number) }}</span>
             </div>
@@ -37,8 +37,8 @@
       <div v-else class="nd-split-page__empty nd-split-page__empty--in-list">
         <DetailEmptyState
           compact
-          title="暂无章节"
-          description="请先在「章节大纲」中规划章节"
+          :title="t('novelDetail.chapters.emptyTitle')"
+          :description="t('novelDetail.chapters.emptyDesc')"
         />
       </div>
     </aside>
@@ -48,7 +48,7 @@
         v-if="!showChapterList && chapterList.length"
         type="button"
         class="nd-split-page__mobile-toggle"
-        aria-label="打开章节列表"
+        :aria-label="t('novelDetail.chapters.openListAria')"
         @click="showChapterList = true"
       >
         <svg width="22" height="22" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -58,7 +58,7 @@
 
       <div v-if="isLoading" class="nd-split-page__state">
         <div class="md-spinner"></div>
-        <p>加载中…</p>
+        <p>{{ t('novelDetail.loading') }}</p>
       </div>
 
       <div v-else-if="error" class="nd-split-page__state">
@@ -69,11 +69,11 @@
         <header class="nd-split-page__toolbar">
           <div class="nd-chapter-toolbar__row">
             <div>
-              <h4 class="nd-chapter-toolbar__title">{{ selectedChapter.title || `第${selectedChapter.chapter_number}章` }}</h4>
+              <h4 class="nd-chapter-toolbar__title">{{ selectedChapter.title || t('novelDetail.common.chapterN', { n: selectedChapter.chapter_number }) }}</h4>
               <div class="nd-chapter-toolbar__meta">
-                <span>第 {{ selectedChapter.chapter_number }} 章</span>
+                <span>{{ t('novelDetail.common.chapterNTitle', { n: selectedChapter.chapter_number }) }}</span>
                 <span class="nd-chapter-toolbar__meta-sep">·</span>
-                <span>{{ calculateWordCount(displayContent) }} 字</span>
+                <span>{{ t('novelDetail.common.words', { count: calculateWordCount(displayContent) }) }}</span>
               </div>
             </div>
             <div class="nd-chapter-toolbar__actions">
@@ -103,8 +103,8 @@
           <div v-else class="nd-split-page__empty nd-split-page__empty--in-pane">
             <DetailEmptyState
               compact
-              title="尚未撰写"
-              description="此章节还没有正文，可在写作台生成"
+              :title="t('novelDetail.chapters.notWritten')"
+              :description="t('novelDetail.chapters.notWrittenDesc')"
             />
           </div>
         </article>
@@ -112,8 +112,8 @@
 
       <div v-else class="nd-split-page__empty">
         <DetailEmptyState
-          title="选择章节查看内容"
-          description="从左侧列表选择章节阅读正文"
+          :title="t('novelDetail.chapters.selectTitle')"
+          :description="t('novelDetail.chapters.selectDesc')"
         />
       </div>
     </div>
@@ -128,6 +128,7 @@ import { countChapterChars } from '@shared/novel/chapter-length-plan'
 import { NovelAPI } from '@renderer/services/novel/api'
 import { useRoute } from '@renderer/novel/composables/useNovelRouter'
 import NovelChapterMarkdown from '@renderer/novel/components/shared/NovelChapterMarkdown.vue'
+import { useI18n } from '@renderer/composables/useI18n'
 import DetailEmptyState from './DetailEmptyState.vue'
 
 export interface ChapterItem {
@@ -144,6 +145,8 @@ export interface ChapterOutlineItem {
   title?: string | null
   summary?: string | null
 }
+
+const { t } = useI18n()
 
 interface ChapterDetail extends ChapterItem {
   real_summary?: string | null
@@ -191,17 +194,9 @@ const displayContent = computed(() => extractChapterPlainText(selectedChapter.va
 const calculateWordCount = (content: string | null | undefined): number => countChapterChars(content)
 
 const getStatusLabel = (status: string): string => {
-  const statusMap: Record<string, string> = {
-    not_generated: '未生成',
-    generating: '生成中',
-    evaluating: '评审中',
-    selecting: '选择中',
-    failed: '生成失败',
-    evaluation_failed: '评审失败',
-    waiting_for_confirm: '待确认',
-    successful: '已完成',
-  }
-  return statusMap[status] || status
+  const key = `novelDetail.chapters.status.${status}` as const
+  const translated = t(key)
+  return translated !== key ? translated : status
 }
 
 const getStatusClass = (status: string): string => {
@@ -222,11 +217,11 @@ const getChapterListMeta = (chapterNumber: number): string => {
   const cached = chapterCache.get(chapterNumber)
   if (cached) {
     const words = calculateWordCount(extractChapterPlainText(cached.content))
-    return words > 0 ? `${words} 字` : '未撰写'
+    return words > 0 ? t('novelDetail.common.words', { count: words }) : t('novelDetail.chapters.notWrittenMeta')
   }
   const saved = props.chapters.find((chapter) => chapter.chapter_number === chapterNumber)
   const words = calculateWordCount(extractChapterPlainText(saved?.content))
-  return words > 0 ? `${words} 字` : '未撰写'
+  return words > 0 ? t('novelDetail.common.words', { count: words }) : t('novelDetail.chapters.notWrittenMeta')
 }
 
 const buildPlaceholderChapter = (chapterNumber: number): ChapterDetail => {
@@ -234,7 +229,7 @@ const buildPlaceholderChapter = (chapterNumber: number): ChapterDetail => {
   const saved = props.chapters.find((chapter) => chapter.chapter_number === chapterNumber)
   return {
     chapter_number: chapterNumber,
-    title: saved?.title || outlineItem?.title || `第${chapterNumber}章`,
+    title: saved?.title || outlineItem?.title || t('novelDetail.common.chapterN', { n: chapterNumber }),
     summary: saved?.summary || outlineItem?.summary || null,
     content: saved?.content || null,
     generation_status: saved?.generation_status || 'not_generated',

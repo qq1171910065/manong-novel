@@ -4,8 +4,8 @@
     <DetailEmptyState
       v-if="!characters.length"
       class="nd-split-page__empty"
-      title="还没有角色档案"
-      description="点击此处添加第一个角色"
+      :title="t('novelDetail.characters.emptyTitle')"
+      :description="t('novelDetail.characters.emptyDesc')"
       :clickable="editable"
       @activate="openCreateForm"
     />
@@ -21,7 +21,7 @@
         class="nd-split-page__list"
         :class="{ 'is-open': showCharList }"
         role="tablist"
-        aria-label="角色列表"
+        :aria-label="t('novelDetail.characters.listAria')"
       >
         <button
           v-if="editable"
@@ -30,11 +30,11 @@
           @click="openCreateForm"
         >
           <Plus :size="16" aria-hidden="true" />
-          <span>新增角色</span>
+          <span>{{ t('novelDetail.characters.addCharacter') }}</span>
         </button>
         <div class="nd-split-page__list-head">
-          <h3 class="nd-split-page__list-title">角色</h3>
-          <span class="nd-split-page__list-count">{{ characters.length }} 人</span>
+          <h3 class="nd-split-page__list-title">{{ t('novelDetail.characters.listTitle') }}</h3>
+          <span class="nd-split-page__list-count">{{ t('novelDetail.characters.count', { count: characters.length }) }}</span>
         </div>
         <ul class="nd-split-page__list-body">
           <li v-for="(character, index) in characters" :key="character.id || index" class="nd-split-page__list-item">
@@ -55,10 +55,10 @@
               >
                 <span class="nd-char-list-btn__avatar" :class="{ 'nd-char-list-btn__avatar--has-img': character.portrait_url }">
                   <img v-if="character.portrait_url" :src="character.portrait_url" :alt="character.name" />
-                  <span v-else>{{ (character.name || '角').slice(0, 1) }}</span>
+                  <span v-else>{{ (character.name || t('novelDetail.common.characterFallback')).slice(0, 1) }}</span>
                 </span>
                 <span class="nd-char-list-btn__body">
-                  <span class="nd-char-list-btn__name">{{ character.name || '未命名角色' }}</span>
+                  <span class="nd-char-list-btn__name">{{ character.name || t('novelDetail.common.unnamedCharacter') }}</span>
                   <span v-if="character.identity" class="nd-char-list-btn__meta">{{ character.identity }}</span>
                 </span>
               </button>
@@ -72,7 +72,7 @@
           v-if="!showCharList"
           type="button"
           class="nd-split-page__mobile-toggle"
-          aria-label="打开角色列表"
+          :aria-label="t('novelDetail.characters.openListAria')"
           @click="showCharList = true"
         >
           <svg width="22" height="22" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -86,8 +86,8 @@
               <ImageAssetField
                 :model-value="selectedCharacter.portrait_url || null"
                 variant="portrait-hero"
-                :label="`${selectedCharacter.name || '角色'}立绘`"
-                placeholder="立绘"
+                :label="t('novelDetail.characters.portraitLabel', { name: selectedCharacter.name || t('novelDetail.common.unnamedCharacter') })"
+                :placeholder="t('novelDetail.characters.portraitPlaceholder')"
                 :editable="editable"
                 :generating="isPortraitGeneratingAt(selectedIndex)"
                 :default-prompt="characterPrompt(selectedCharacter)"
@@ -104,12 +104,12 @@
                   :editable="editable"
                   @edit="openFieldEdit('name')"
                 >
-                  <h3 class="nd-char-detail__name">{{ selectedCharacter.name || '未命名角色' }}</h3>
+                  <h3 class="nd-char-detail__name">{{ selectedCharacter.name || t('novelDetail.common.unnamedCharacter') }}</h3>
                 </DetailEditableZone>
                 <SubmitToLibraryButton
                   v-if="editable"
                   compact
-                  label="存入角色库"
+                  :label="t('novelDetail.characters.saveToLibrary')"
                   :handler="() => submitCharacter(selectedIndex)"
                 />
               </div>
@@ -121,7 +121,7 @@
                   {{ selectedCharacter.identity }}
                 </p>
                 <p v-else class="nd-char-detail__identity nd-char-detail__identity--empty">
-                  {{ editable ? '点击填写身份' : '身份待补充' }}
+                  {{ editable ? t('novelDetail.characters.identityEmpty') : t('novelDetail.characters.identityPending') }}
                 </p>
               </DetailEditableZone>
               <DetailEditableZone :editable="editable" @edit="openFieldEdit('description')">
@@ -132,7 +132,7 @@
                   {{ selectedCharacter.description }}
                 </p>
                 <p v-else-if="editable" class="nd-char-detail__desc nd-char-detail__desc--empty">
-                  点击填写描述
+                  {{ t('novelDetail.characters.descriptionEmpty') }}
                 </p>
               </DetailEditableZone>
             </div>
@@ -149,7 +149,7 @@
               <div class="nd-field nd-field--cell">
                 <dt>{{ field.label }}</dt>
                 <dd :class="{ 'nd-field__value--empty': !selectedCharacter[field.key] }">
-                  {{ selectedCharacter[field.key] || (editable ? '点击填写' : '—') }}
+                  {{ selectedCharacter[field.key] || (editable ? t('novelDetail.common.clickToFill') : '—') }}
                 </dd>
               </div>
             </DetailEditableZone>
@@ -157,12 +157,12 @@
           <DetailEmptyState
             v-else
             compact
-            title="角色设定待补充"
-            description="完善性格、目标等字段"
+            :title="t('novelDetail.characters.settingsEmptyTitle')"
+            :description="t('novelDetail.characters.settingsEmptyDesc')"
           />
 
           <section v-if="characterRelations.length" class="nd-char-detail__relations">
-            <h4 class="nd-char-detail__relations-title">人物关系</h4>
+            <h4 class="nd-char-detail__relations-title">{{ t('novelDetail.characters.relationsTitle') }}</h4>
             <ul class="nd-char-detail__relations-list">
               <li v-for="(rel, ri) in characterRelations" :key="rel.id || ri" class="nd-char-detail__relation">
                 <div class="nd-char-detail__relation-head">
@@ -203,14 +203,17 @@ import { buildCharacterPortraitPrompt } from '@renderer/services/image-service'
 import { NovelAPI } from '@renderer/services/novel/api'
 import { submitCharacterToLibrary } from '@renderer/services/novel/material-library-submit'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
+import { useI18n } from '@renderer/composables/useI18n'
 import { randomUUID } from '@renderer/utils/id'
 
-const settingFields: Array<{ key: CharacterFieldKey; label: string }> = [
-  { key: 'personality', label: '性格' },
-  { key: 'goals', label: '目标' },
-  { key: 'abilities', label: '能力' },
-  { key: 'relationship_to_protagonist', label: '与主角的关系' },
-]
+const { t } = useI18n()
+
+const settingFields = computed((): Array<{ key: CharacterFieldKey; label: string }> => [
+  { key: 'personality', label: t('novelDetail.characters.fields.personality') },
+  { key: 'goals', label: t('novelDetail.characters.fields.goals') },
+  { key: 'abilities', label: t('novelDetail.characters.fields.abilities') },
+  { key: 'relationship_to_protagonist', label: t('novelDetail.characters.fields.relationshipToProtagonist') },
+])
 
 const props = defineProps<{
   data: { characters?: Character[] } | null
@@ -278,8 +281,8 @@ const characterRelations = computed<CharacterRelationView[]>(() => {
       const isFrom = rel.character_from === name
       return {
         id: rel.id,
-        peer: isFrom ? (rel.character_to || '未知') : (rel.character_from || '未知'),
-        type: rel.relationship_type || '关系未定义',
+        peer: isFrom ? (rel.character_to || t('novelDetail.common.unknown')) : (rel.character_from || t('novelDetail.common.unknown')),
+        type: rel.relationship_type || t('novelDetail.common.relationUndefined'),
         description: rel.description,
       }
     })
@@ -309,8 +312,8 @@ function characterPrompt(character: Character) {
 function listMenuActions(index: number): DetailMenuAction[] {
   if (!props.editable) return []
   return [
-    { id: 'edit', label: '编辑', onClick: () => openEditAll(index) },
-    { id: 'delete', label: '删除', onClick: () => void deleteCharacter(index) },
+    { id: 'edit', label: t('novelDetail.common.edit'), onClick: () => openEditAll(index) },
+    { id: 'delete', label: t('novelDetail.common.delete'), onClick: () => void deleteCharacter(index) },
   ]
 }
 
@@ -371,14 +374,14 @@ async function onFormSave(character: Character) {
     emit('asset-saved', 'characters')
     showForm.value = false
   } catch (error) {
-    globalAlert.showError(error instanceof Error ? error.message : '保存失败', '角色保存失败')
+    globalAlert.showError(error instanceof Error ? error.message : t('novelDetail.common.saveFailed'), t('novelDetail.characters.saveFailed'))
   }
 }
 
 async function deleteCharacter(index: number) {
   if (!props.editable || !props.projectId) return
-  const name = characters.value[index]?.name?.trim() || '该角色'
-  const confirmed = await globalAlert.showConfirm(`确定删除「${name}」吗？此操作不可撤销。`, '删除角色')
+  const name = characters.value[index]?.name?.trim() || t('novelDetail.characters.thisCharacter')
+  const confirmed = await globalAlert.showConfirm(t('novelDetail.common.confirmDelete', { name }), t('novelDetail.characters.deleteTitle'))
   if (!confirmed) return
 
   const list = characters.value.filter((_, i) => i !== index)
@@ -389,7 +392,7 @@ async function deleteCharacter(index: number) {
       selectedIndex.value = Math.max(0, list.length - 1)
     }
   } catch (error) {
-    globalAlert.showError(error instanceof Error ? error.message : '删除失败', '删除角色失败')
+    globalAlert.showError(error instanceof Error ? error.message : t('novelDetail.common.deleteFailed'), t('novelDetail.characters.deleteFailed'))
   }
 }
 
@@ -408,7 +411,7 @@ async function submitCharacter(index: number) {
   const list = [...characters.value]
   const character = list[index]
   if (!character?.name?.trim()) {
-    globalAlert.showError('请先填写角色姓名', '无法提交')
+    globalAlert.showError(t('novelDetail.characters.nameRequired'), t('novelDetail.characters.cannotSubmit'))
     return
   }
   try {
@@ -420,9 +423,9 @@ async function submitCharacter(index: number) {
     list[index] = next
     await NovelAPI.updateBlueprint(props.projectId, { characters: list })
     emit('asset-saved', 'characters')
-    globalAlert.showSuccess(`「${item.title}」已存入角色库`, '提交成功')
+    globalAlert.showSuccess(t('novelDetail.characters.librarySuccess', { title: item.title }), t('novelDetail.common.submitSuccess'))
   } catch (error) {
-    globalAlert.showError(error instanceof Error ? error.message : '提交失败', '存入角色库失败')
+    globalAlert.showError(error instanceof Error ? error.message : t('novelDetail.common.submitFailed'), t('novelDetail.characters.libraryFailed'))
   }
 }
 

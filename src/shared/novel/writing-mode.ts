@@ -33,6 +33,8 @@ export type WritingModeSectionKey =
   | 'stats'
   | 'pipeline'
   | 'pipeline_log'
+  | 'agent_log'
+  | 'story_commits'
   | 'prompt_templates'
   | 'data'
 
@@ -44,6 +46,8 @@ const SIMPLE_SECTIONS: ReadonlySet<WritingModeSectionKey> = new Set([
   'stats',
   'pipeline',
   'pipeline_log',
+  'agent_log',
+  'story_commits',
   'prompt_templates',
   'data',
 ])
@@ -90,19 +94,24 @@ export const WRITING_MODE_DESCRIPTIONS: Record<WritingMode, { title: string; sum
   },
 }
 
-/** 简易模式：缩短灵感对话，跳过世界观深挖 */
+/** 简易出书模式：缩短灵感对话，跳过世界观深挖 */
 export const SIMPLE_CONCEPT_SUPPLEMENT = `
 ## 简易出书模式（当前项目）
 用户选择了「简易版」快速写作。请调整对话策略：
-- 优先收集：核心火花、类型基调、**文风笔触**、主角、核心冲突、催化事件、章节篇幅（共 7 项）
-- 篇幅定位短篇：建议 3–8 章，最多 ${SIMPLE_MODE_MAX_CHAPTERS} 章；若用户想要中长篇或网文体量，说明简易版不适合并建议切换工程版
-- 文风确定后须锁定，后续追问围绕已定文风展开，不要反复发散试探
-- 可简化或跳过：对立面细节、世界观与阵营深挖
-- 清单中「核心主题」可一笔带过；对话 3-5 轮内即可收束主线设定
+- **主动设计**：用户只需给出核心灵感；类型基调、文风、主角、冲突、催化事件、篇幅等**由你合理推断并写入 checklist_answers**，不要逐项盘问
+- 必填 7 项：核心火花、类型基调、文风笔触、主角、核心冲突、催化事件、章节篇幅
+- 每轮尽量**一次性补齐**所有可推断项；ai_message 以展示方案 + 邀请微调为主
+- 仅当存在互斥且无法推断的关键分岔时才提问（一次只问 1 个）；ui_control 优先 info_display 或 text_input
+- 篇幅定位短篇：默认 ${SIMPLE_MODE_DEFAULT_CHAPTERS} 章左右，最多 ${SIMPLE_MODE_MAX_CHAPTERS} 章；若用户想要中长篇，说明简易版不适合并建议切换工程版
+- 文风确定后须锁定；可跳过对立面、核心主题、世界观深挖
+- 对话 1-3 轮内应收束主线设定，禁止无脑追问
 - 设定调整时做**局部更新**，禁止每轮通篇重写 concept_brief
-- 仍保持机智伙伴语气，但问题更少、选项更聚焦主线
 - 何时进入蓝图确认由用户自行决定，不要设置 is_complete 或 ready_for_blueprint
-- 选项按实际上下文灵活给出，不凑固定数量；能开放回答时用 text_input
+`
+
+/** 简易模式 JSON 回复额外约束 — 对话轮不写入设定，由设定编辑员 tool_calls 负责 */
+export const SIMPLE_CONCEPT_JSON_SUPPLEMENT = `
+简易模式：对话 JSON 禁止 conversation_state。设定文档仅由设定编辑员 batch_update_concept 写入。
 `
 
 /** 简易出书模式：蓝图生成时省略地点/阵营，保留核心关系 */

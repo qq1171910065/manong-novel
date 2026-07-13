@@ -3,19 +3,19 @@
   <div class="nd-split-page nd-list-with-pagination">
     <div v-if="isLoading" class="nd-split-page__state">
       <div class="md-spinner"></div>
-      <p>加载伏笔数据中...</p>
+      <p>{{ t('novelDetail.foreshadowing.loading') }}</p>
     </div>
 
     <div v-else-if="error" class="nd-split-page__state">
       <p>{{ error }}</p>
-      <button type="button" class="md-btn md-btn-filled md-ripple" @click="refreshData">重试</button>
+      <button type="button" class="md-btn md-btn-filled md-ripple" @click="refreshData">{{ t('novelDetail.retry') }}</button>
     </div>
 
     <DetailEmptyState
       v-else-if="!totalForeshadowings"
       class="nd-split-page__empty"
-      title="暂无伏笔记录"
-      description="系统会从章节内容中自动识别伏笔线索"
+      :title="t('novelDetail.foreshadowing.emptyTitle')"
+      :description="t('novelDetail.foreshadowing.emptyDesc')"
     />
 
     <template v-else>
@@ -23,8 +23,8 @@
         <section class="nd-block">
           <div class="nd-block__head">
             <div>
-              <h3 class="nd-block__title">伏笔概览</h3>
-              <p class="nd-block__subtitle">埋设、回收与待处理统计</p>
+              <h3 class="nd-block__title">{{ t('novelDetail.foreshadowing.overviewTitle') }}</h3>
+              <p class="nd-block__subtitle">{{ t('novelDetail.foreshadowing.overviewSubtitle') }}</p>
             </div>
           </div>
           <div class="nd-stats-grid nd-stats-grid--compact">
@@ -42,7 +42,7 @@
         </section>
 
         <section class="nd-block">
-          <div class="nd-segment-bar" role="tablist" aria-label="伏笔状态筛选">
+          <div class="nd-segment-bar" role="tablist" :aria-label="t('novelDetail.foreshadowing.filterAria')">
             <button
               v-for="tab in statusTabs"
               :key="tab.key"
@@ -63,8 +63,8 @@
           <DetailEmptyState
             v-if="!filteredForeshadowing.length"
             compact
-            :title="activeTab === 'all' ? '暂无伏笔' : `暂无${statusTabs.find((t) => t.key === activeTab)?.label}的伏笔`"
-            description="切换其他筛选条件试试"
+            :title="filteredEmptyTitle"
+            :description="t('novelDetail.foreshadowing.emptyFilterHint')"
           />
 
           <ul v-else class="nd-record-list">
@@ -77,12 +77,19 @@
               </div>
               <p class="nd-record-item__body">{{ item.description }}</p>
               <div class="nd-record-item__meta">
-                <span>埋设 · 第 {{ item.planted_chapter }} 章《{{ item.planted_chapter_title }}》</span>
+                <span>
+                  {{
+                    t('novelDetail.foreshadowing.plantedAt', {
+                      n: item.planted_chapter,
+                      title: item.planted_chapter_title,
+                    })
+                  }}
+                </span>
                 <span v-if="item.expected_payoff_chapter">
-                  预期回收 · 第 {{ item.expected_payoff_chapter }} 章
+                  {{ t('novelDetail.foreshadowing.expectedPayoff', { n: item.expected_payoff_chapter }) }}
                 </span>
                 <span v-if="item.actual_payoff_chapter">
-                  实际回收 · 第 {{ item.actual_payoff_chapter }} 章
+                  {{ t('novelDetail.foreshadowing.actualPayoff', { n: item.actual_payoff_chapter }) }}
                 </span>
               </div>
             </li>
@@ -105,11 +112,20 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from '@renderer/novel/composables/useNovelRouter'
 import { NovelAPI, type ForeshadowingItem, type ForeshadowingResponse } from '@renderer/services/novel/api'
 import { useListPagination } from '@renderer/composables/useListPagination'
+import { useI18n } from '@renderer/composables/useI18n'
 import ListPagination from '@renderer/components/shared/ListPagination.vue'
 import DetailEmptyState from './DetailEmptyState.vue'
 
+const { t } = useI18n()
 const route = useRoute()
 const projectId = route.params.id as string
+
+const STATUS_I18N_KEY: Record<string, string> = {
+  all: 'all',
+  planted: 'planted',
+  paid_off: 'paidOff',
+  overdue: 'overdue',
+}
 
 const isLoading = ref(false)
 const error = ref<string | null>(null)
@@ -120,23 +136,29 @@ const paidOffCount = ref(0)
 const overdueCount = ref(0)
 const activeTab = ref('all')
 
-const statusTabs = [
-  { key: 'all', label: '全部' },
-  { key: 'planted', label: '已埋设' },
-  { key: 'paid_off', label: '已回收' },
-  { key: 'overdue', label: '待回收' },
-]
+const statusTabs = computed(() =>
+  (['all', 'planted', 'paid_off', 'overdue'] as const).map((key) => ({
+    key,
+    label: t(`novelDetail.foreshadowing.tabs.${STATUS_I18N_KEY[key]}`),
+  }))
+)
 
 const statCards = computed(() => [
-  { key: 'all', label: '总伏笔', value: totalForeshadowings.value, tone: undefined },
-  { key: 'planted', label: '已埋设', value: plantedCount.value, tone: 'warning' },
-  { key: 'paid_off', label: '已回收', value: paidOffCount.value, tone: 'success' },
-  { key: 'overdue', label: '待回收', value: overdueCount.value, tone: 'danger' },
+  { key: 'all', label: t('novelDetail.foreshadowing.stats.all'), value: totalForeshadowings.value, tone: undefined },
+  { key: 'planted', label: t('novelDetail.foreshadowing.stats.planted'), value: plantedCount.value, tone: 'warning' },
+  { key: 'paid_off', label: t('novelDetail.foreshadowing.stats.paidOff'), value: paidOffCount.value, tone: 'success' },
+  { key: 'overdue', label: t('novelDetail.foreshadowing.stats.overdue'), value: overdueCount.value, tone: 'danger' },
 ])
 
 const filteredForeshadowing = computed(() => {
   if (activeTab.value === 'all') return foreshadowingList.value
   return foreshadowingList.value.filter((item) => item.status === activeTab.value)
+})
+
+const filteredEmptyTitle = computed(() => {
+  if (activeTab.value === 'all') return t('novelDetail.foreshadowing.emptyAll')
+  const tab = statusTabs.value.find((item) => item.key === activeTab.value)
+  return t('novelDetail.foreshadowing.emptyFiltered', { status: tab?.label ?? activeTab.value })
 })
 
 const { page, pageSize, pageSizes, itemCount, paginatedItems, resetPage } = useListPagination(
@@ -157,21 +179,14 @@ const getCountByStatus = (status: string) => {
 }
 
 const getStatusLabel = (status: string) => {
-  const labels: Record<string, string> = {
-    planted: '已埋设',
-    paid_off: '已回收',
-    overdue: '待回收',
-  }
-  return labels[status] || status
+  const key = STATUS_I18N_KEY[status]
+  return key ? t(`novelDetail.foreshadowing.tabs.${key}`) : status
 }
 
 const getImportanceLabel = (importance: string) => {
-  const labels: Record<string, string> = {
-    short: '短期伏笔',
-    medium: '中期伏笔',
-    long: '长期伏笔',
-  }
-  return labels[importance] || importance
+  const key = `novelDetail.foreshadowing.importance.${importance}`
+  const label = t(key)
+  return label === key ? importance : label
 }
 
 const fetchData = async () => {
@@ -186,8 +201,8 @@ const fetchData = async () => {
     paidOffCount.value = data.paid_off_count
     overdueCount.value = data.overdue_count
   } catch (e: unknown) {
-    console.error('伏笔管理加载错误:', e)
-    error.value = e instanceof Error ? e.message : '加载失败，请稍后重试'
+    console.error('Foreshadowing load error:', e)
+    error.value = e instanceof Error ? e.message : t('novelDetail.foreshadowing.loadFailed')
   } finally {
     isLoading.value = false
   }

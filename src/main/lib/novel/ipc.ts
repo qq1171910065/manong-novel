@@ -31,8 +31,10 @@ export function registerNovelHandlers(appId: string): void {
   )
 
   ipcMain.removeHandler('novel:projects:save')
-  ipcMain.handle('novel:projects:save', (_event, userId: string, project: NovelProject) =>
-    getNovelStore(appId, requireUserId(userId)).saveProject(project)
+  ipcMain.handle(
+    'novel:projects:save',
+    (_event, userId: string, project: NovelProject, expectedUpdatedAt?: string) =>
+      getNovelStore(appId, requireUserId(userId)).saveProject(project, expectedUpdatedAt)
   )
 
   ipcMain.removeHandler('novel:projects:delete')
@@ -62,6 +64,11 @@ export function registerNovelHandlers(appId: string): void {
   ipcMain.removeHandler('novel:store:export')
   ipcMain.handle('novel:store:export', (_event, userId: string) =>
     getNovelStore(appId, requireUserId(userId)).exportStore()
+  )
+
+  ipcMain.removeHandler('novel:store:mergeImport')
+  ipcMain.handle('novel:store:mergeImport', (_event, userId: string, payload: import('@shared/novel/types').NovelStoreData) =>
+    getNovelStore(appId, requireUserId(userId)).mergeImportStore(payload)
   )
 
   ipcMain.removeHandler('novel:store:clearProjects')

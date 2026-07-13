@@ -1,4 +1,5 @@
 import type { NovelProjectSummary } from '@shared/novel/types'
+import type { TranslateFn } from '@renderer/i18n/log-labels'
 
 export interface HomeNovelCard {
   id: string
@@ -43,14 +44,7 @@ const GENRE_ACCENTS: Record<string, string> = {
 const THEME_ACCENT_DEFAULT = '#1f7a67'
 const THEME_INK_DEEP = '#0f4b44'
 
-const SPEECH_LINES = [
-  '这一章的转折可以再大胆一点。',
-  '角色的动机还需要再铺垫一下。',
-  '世界观设定已经很有画面感了。',
-  '接下来可以推进主线冲突了。',
-  '这段对白的节奏很顺，很有小说感。',
-  '伏笔埋得不错，后面记得回收。',
-]
+const BUBBLE_LINE_COUNT = 6
 
 function resolveAccent(genre: string): string {
   for (const [key, color] of Object.entries(GENRE_ACCENTS)) {
@@ -61,23 +55,22 @@ function resolveAccent(genre: string): string {
 
 export { resolveAccent, THEME_ACCENT_DEFAULT, THEME_INK_DEEP }
 
-/** 无封面占位：墨玉主题渐变，铺满媒体区域 */
 export function coverPlaceholderGradient(accent: string): string {
   return `linear-gradient(145deg, color-mix(in srgb, ${accent} 18%, #f5f5ed), color-mix(in srgb, ${accent} 68%, ${THEME_INK_DEEP}))`
 }
 
-function formatDate(iso: string): string {
+function formatDate(iso: string, locale: string): string {
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return iso
-  return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
+  return date.toLocaleDateString(locale, { month: 'short', day: 'numeric' })
 }
 
-function projectStatus(project: NovelProjectSummary): string {
+function projectStatus(project: NovelProjectSummary, t: TranslateFn): string {
   const { completed_chapters, total_chapters } = project
-  if (total_chapters > 0 && completed_chapters >= total_chapters) return '已完成'
-  if (completed_chapters > 0) return '创作中'
-  if (total_chapters > 0) return '待开写'
-  return '蓝图完成'
+  if (total_chapters > 0 && completed_chapters >= total_chapters) return t('home.status.done')
+  if (completed_chapters > 0) return t('home.status.writing')
+  if (total_chapters > 0) return t('home.status.draft')
+  return t('home.status.blueprintReady')
 }
 
 function projectProgress(project: NovelProjectSummary): number {
@@ -85,14 +78,23 @@ function projectProgress(project: NovelProjectSummary): number {
   return total_chapters > 0 ? Math.round((completed_chapters / total_chapters) * 100) : 0
 }
 
-function chapterLabel(project: NovelProjectSummary): string {
+function chapterLabel(project: NovelProjectSummary, t: TranslateFn): string {
   const { completed_chapters, total_chapters } = project
-  if (total_chapters <= 0) return '蓝图阶段'
-  if (completed_chapters <= 0) return `${total_chapters} 章待写`
-  return `${completed_chapters}/${total_chapters} 章`
+  if (total_chapters <= 0) return t('home.chapterLabel.blueprintPhase')
+  if (completed_chapters <= 0) {
+    return t('home.chapterLabel.chaptersPending', { total: total_chapters })
+  }
+  return t('home.chapterLabel.chaptersProgress', {
+    completed: completed_chapters,
+    total: total_chapters,
+  })
 }
 
-export function mapNovelsForHome(projects: NovelProjectSummary[]): HomeNovelCard[] {
+function bubbleLine(t: TranslateFn, index: number): string {
+  return t(`home.bubbleLines.${index % BUBBLE_LINE_COUNT}`)
+}
+
+export function mapNovelsForHome(projects: NovelProjectSummary[], t: TranslateFn, locale = 'zh-CN'): HomeNovelCard[] {
   const sorted = [...projects].sort(
     (a, b) => new Date(b.last_edited).getTime() - new Date(a.last_edited).getTime()
   )
@@ -101,43 +103,43 @@ export function mapNovelsForHome(projects: NovelProjectSummary[]): HomeNovelCard
     return [
       {
         id: 'placeholder-1',
-        title: '未命名小说',
-        genre: '奇幻',
-        subtitle: '小说家 · 等你落笔',
-        bio: '灵感到章节，陪你把第一部小说一笔一笔写完整。',
-        tags: ['开笔', '蓝图'],
-        speech: '第一部小说，就从这里开始。',
+        title: t('home.placeholders.novel1Title'),
+        genre: t('home.placeholders.novel1Genre'),
+        subtitle: t('home.placeholders.novel1Subtitle'),
+        bio: t('home.placeholders.novel1Bio'),
+        tags: [t('home.placeholders.novel1Tag1'), t('home.placeholders.novel1Tag2')],
+        speech: t('home.placeholders.novel1Speech'),
         accent: '#1f7a67',
         progress: 0,
-        chapterLabel: '等待创建',
+        chapterLabel: t('home.placeholders.novel1Chapter'),
         lastEdited: '',
         clickable: false,
       },
       {
         id: 'placeholder-2',
-        title: '灵感草稿',
-        genre: '科幻',
-        subtitle: '角色 · 文风',
-        bio: '把常用角色与文风预设整理进物料库，开新书更顺手。',
-        tags: ['角色库', '文风库'],
-        speech: '选好角色与文风，正文会写得更快。',
+        title: t('home.placeholders.novel2Title'),
+        genre: t('home.placeholders.novel2Genre'),
+        subtitle: t('home.placeholders.novel2Subtitle'),
+        bio: t('home.placeholders.novel2Bio'),
+        tags: [t('home.placeholders.novel2Tag1'), t('home.placeholders.novel2Tag2')],
+        speech: t('home.placeholders.novel2Speech'),
         accent: '#8eb4a2',
         progress: 0,
-        chapterLabel: '灵感模式',
+        chapterLabel: t('home.placeholders.novel2Chapter'),
         lastEdited: '',
         clickable: false,
       },
       {
         id: 'placeholder-3',
-        title: '连载中',
-        genre: '言情',
-        subtitle: '逐章推进 · 笔耕不辍',
-        bio: '每写完一章，进度与设定同步更新，连载不断档。',
-        tags: ['连载中', '章节'],
-        speech: '继续写下去，角色会自己长出命运。',
+        title: t('home.placeholders.novel3Title'),
+        genre: t('home.placeholders.novel3Genre'),
+        subtitle: t('home.placeholders.novel3Subtitle'),
+        bio: t('home.placeholders.novel3Bio'),
+        tags: [t('home.placeholders.novel3Tag1'), t('home.placeholders.novel3Tag2')],
+        speech: t('home.placeholders.novel3Speech'),
         accent: '#c5a059',
         progress: 42,
-        chapterLabel: '3/7 章',
+        chapterLabel: t('home.placeholders.novel3Chapter'),
         lastEdited: '',
         clickable: false,
       },
@@ -145,41 +147,46 @@ export function mapNovelsForHome(projects: NovelProjectSummary[]): HomeNovelCard
   }
 
   return sorted.slice(0, 6).map((project, index) => {
-    const genre = project.genre || '未分类'
+    const genre = project.genre || t('bookshelf.uncategorized')
     const progress = projectProgress(project)
+    const status = projectStatus(project, t)
     return {
       id: project.id,
       title: project.title,
       genre,
       coverUrl: project.cover_url,
-      subtitle: `${genre} · ${projectStatus(project)}`,
-      bio: progress > 0 ? `已完成 ${progress}% ，继续推进下一章。` : '蓝图已就绪，小说家可以开笔了。',
-      tags: [genre, chapterLabel(project)].filter(Boolean),
-      speech: SPEECH_LINES[index % SPEECH_LINES.length],
+      subtitle: t('home.subtitle', { genre, status }),
+      bio: progress > 0 ? t('home.bioProgress', { progress }) : t('home.bioReady'),
+      tags: [genre, chapterLabel(project, t)].filter(Boolean),
+      speech: bubbleLine(t, index),
       accent: resolveAccent(genre),
       progress,
-      chapterLabel: chapterLabel(project),
-      lastEdited: formatDate(project.last_edited),
+      chapterLabel: chapterLabel(project, t),
+      lastEdited: formatDate(project.last_edited, locale),
       clickable: true,
     }
   })
 }
 
-export function mapNovelsForHomeList(projects: NovelProjectSummary[]): HomeNovelRow[] {
+export function mapNovelsForHomeList(
+  projects: NovelProjectSummary[],
+  t: TranslateFn,
+  locale = 'zh-CN'
+): HomeNovelRow[] {
   return [...projects]
     .sort((a, b) => new Date(b.last_edited).getTime() - new Date(a.last_edited).getTime())
     .map((project) => {
-      const genre = project.genre || '未分类'
+      const genre = project.genre || t('bookshelf.uncategorized')
       return {
         id: project.id,
         title: project.title,
         genre,
         coverUrl: project.cover_url,
-        status: projectStatus(project),
-        date: formatDate(project.last_edited),
+        status: projectStatus(project, t),
+        date: formatDate(project.last_edited, locale),
         progress: projectProgress(project),
         accent: resolveAccent(genre),
-        chapterLabel: chapterLabel(project),
+        chapterLabel: chapterLabel(project, t),
       }
     })
 }

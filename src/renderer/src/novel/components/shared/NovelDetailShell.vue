@@ -3,7 +3,7 @@
   <div class="page portal-page portal-page--viewport-lock detail-page">
     <div class="portal-page__body">
       <div class="profile-center-layout">
-        <aside class="profile-tab-bar" role="tablist" aria-label="作品导航">
+        <aside class="profile-tab-bar" role="tablist" :aria-label="t('novelDetail.navAriaLabel')">
           <button
             type="button"
             class="detail-sidebar-create"
@@ -69,7 +69,28 @@
                     aria-hidden="true"
                   />
                   <Sparkles v-else :size="16" aria-hidden="true" />
-                  <span>{{ aiAssistantBusy ? 'AI 处理中' : 'AI 助手' }}</span>
+                  <span>{{ aiAssistantBusy ? t('novelDetail.aiProcessing') : t('novelDetail.aiAssistant') }}</span>
+                </button>
+                <button
+                  v-if="showRegeneratePlaceholderOutlineAction"
+                  type="button"
+                  class="detail-action-btn md-ripple"
+                  :disabled="regeneratePlaceholderOutlineBusy"
+                  :title="t('novelDetail.regenerateOutline.title', { count: placeholderOutlineCount })"
+                  @click="regeneratePlaceholderOutlines"
+                >
+                  <Loader2
+                    v-if="regeneratePlaceholderOutlineBusy"
+                    :size="16"
+                    class="detail-action-btn__spinner"
+                    aria-hidden="true"
+                  />
+                  <List v-else :size="16" aria-hidden="true" />
+                  <span>{{
+                    regeneratePlaceholderOutlineBusy
+                      ? t('novelDetail.regenerateOutline.busy')
+                      : t('novelDetail.regenerateOutline.button', { count: placeholderOutlineCount })
+                  }}</span>
                 </button>
                 <button
                   v-if="showAddButton"
@@ -78,7 +99,7 @@
                   @click="onHeaderAdd"
                 >
                   <Plus :size="16" aria-hidden="true" />
-                  <span>新增</span>
+                  <span>{{ t('novelDetail.add') }}</span>
                 </button>
               </div>
             </div>
@@ -92,13 +113,13 @@
             >
               <div v-if="isSectionLoading" class="novel-detail-state">
                 <div class="md-spinner"></div>
-                <p>加载中...</p>
+                <p>{{ t('novelDetail.loading') }}</p>
               </div>
 
               <div v-else-if="currentError" class="novel-detail-state">
                 <p>{{ currentError }}</p>
                 <button type="button" class="md-btn md-btn-filled md-ripple" @click="reloadSection(activeSection, true)">
-                  重试
+                  {{ t('novelDetail.retry') }}
                 </button>
               </div>
 
@@ -110,7 +131,7 @@
                 ref="activeSectionRef"
                 v-bind="componentProps"
                 :class="componentContainerClass"
-                @edit="handleSectionEdit"
+                @field-saved="onOverviewFieldSaved"
                 @add="startAddChapter"
                 @cover-update="handleCoverUpdate"
                 @cover-generate="handleCoverGenerate"
@@ -140,6 +161,7 @@
     />
 
     <InspirationModal
+      ref="inspirationModalRef"
       :show="showInspirationModal"
       :project-id="projectId"
       :mode="inspirationModalMode"
@@ -158,58 +180,44 @@
       @cancel="cancelGenerationOverlay"
     />
 
-    <!-- Blueprint Edit Modal -->
-    <BlueprintEditModal
-      :show="isModalOpen"
-      :title="modalTitle"
-      :content="modalContent"
-      :field="modalField"
-      :project-id="projectId"
-      :project-title="overviewMeta.title"
-      :chat-model-id="novel?.chat_model_id || sectionData.overview?.chat_model_id || ''"
-      :image-model-id="novel?.image_model_id || sectionData.overview?.image_model_id || ''"
-      @close="isModalOpen = false"
-      @save="handleSave"
-    />
-
     <NovelModalShell
       :show="isAddChapterModalOpen"
       variant="form"
       auto-min-width="md"
-      title="新增章节大纲"
-      aria-label="新增章节大纲"
+      :title="t('novelDetail.addChapterModal.title')"
+      :aria-label="t('novelDetail.addChapterModal.title')"
       foot-class="novel-modal__foot--form"
       @close="cancelNewChapter"
     >
       <div class="novel-modal__compact-form">
         <div class="md-text-field md-text-field-filled">
-          <label for="new-chapter-title" class="md-text-field-label">章节标题</label>
+          <label for="new-chapter-title" class="md-text-field-label">{{ t('novelDetail.addChapterModal.chapterTitle') }}</label>
           <input
             id="new-chapter-title"
             v-model="newChapterTitle"
             type="text"
             class="md-text-field-input"
-            placeholder="例如：意外的相遇"
+            :placeholder="t('novelDetail.addChapterModal.chapterTitlePlaceholder')"
           />
         </div>
         <div class="md-text-field md-text-field-filled">
-          <label for="new-chapter-summary" class="md-text-field-label">章节摘要</label>
+          <label for="new-chapter-summary" class="md-text-field-label">{{ t('novelDetail.addChapterModal.summary') }}</label>
           <textarea
             id="new-chapter-summary"
             v-model="newChapterSummary"
             rows="4"
             class="md-textarea w-full"
-            placeholder="简要描述本章发生的主要事件"
+            :placeholder="t('novelDetail.addChapterModal.summaryPlaceholder')"
           />
         </div>
       </div>
 
       <template #footer>
         <button type="button" class="md-btn md-btn-tonal md-ripple" @click="cancelNewChapter">
-          取消
+          {{ t('novelDetail.addChapterModal.cancel') }}
         </button>
         <button type="button" class="md-btn md-btn-filled md-ripple" @click="saveNewChapter">
-          保存
+          {{ t('novelDetail.addChapterModal.save') }}
         </button>
       </template>
     </NovelModalShell>
@@ -217,46 +225,44 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, nextTick } from 'vue'
 import {
-  BookOpen,
-  List,
-  MapPin,
-  ScrollText,
-  Shield,
-  Network,
-  TrendingUp,
-  Users,
-  Zap,
-  LayoutGrid,
-  History,
-  BarChart3,
-  Workflow,
-  Terminal,
-  FileText,
-  Database,
   PenLine,
   Plus,
   Sparkles,
   Loader2,
+  List,
 } from 'lucide-vue-next'
-import type { Component } from 'vue'
 import { useRoute } from '@renderer/novel/composables/useNovelRouter'
+import { useI18n } from '@renderer/composables/useI18n'
 import { useNovelStore } from '@renderer/stores/novel'
+import {
+  NOVEL_DETAIL_NAV_GROUPS,
+  resolveNavGroups,
+  isWorldViewSection,
+  type SectionKey,
+} from '@renderer/novel/data/novel-detail-navigation'
+import { DETAIL_SECTION_COMPONENTS } from '@renderer/novel/data/detail-section-registry'
+import { useNovelDetailSectionLoader } from '@renderer/novel/composables/useNovelDetailSectionLoader'
 import { NovelAPI } from '@renderer/services/novel/api'
-import { isAbortError, isBlueprintGenerating, isImportParsing } from '@renderer/services/novel/async-task-registry'
+import { isAbortError, isBlueprintGenerating, isImportParsing, isOutlineGenerating } from '@renderer/services/novel/async-task-registry'
+import { getBlueprintGenSession } from '@renderer/novel/composables/blueprint-generation-session'
+import {
+  consumeTaskViewRequest,
+  useTaskNavigation,
+} from '@renderer/services/task-navigation-service'
+import {
+  countPlaceholderChapterOutlines,
+  resolveOutlineChapterTarget,
+} from '@shared/novel/chapter-outline-quality'
 import type {
   NovelProject,
-  NovelSectionResponse,
-  NovelSectionType,
-  AllSectionType,
-  WorldViewSectionType,
 } from '@renderer/services/novel/api'
-import BlueprintEditModal from '@renderer/novel/components/BlueprintEditModal.vue'
 import NovelModalShell from '@renderer/novel/components/shared/NovelModalShell.vue'
 import WritingDeskModal from '@renderer/novel/components/writing-desk/WritingDeskModal.vue'
 import InspirationModal from '@renderer/novel/components/InspirationModal.vue'
 import BlueprintGeneratingOverlay from '@renderer/novel/components/BlueprintGeneratingOverlay.vue'
+import BlueprintSetupEmpty from '@renderer/novel/components/novel-detail/BlueprintSetupEmpty.vue'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
 import { generateCoverImage, generateCharacterPortrait } from '@renderer/services/image-service'
 import {
@@ -270,29 +276,10 @@ import {
   useBlueprintGeneration,
   LONG_TASK_NO_TOTAL_TIMEOUT,
 } from '@renderer/novel/composables/useBlueprintGeneration'
-import OverviewSection from '@renderer/novel/components/novel-detail/OverviewSection.vue'
-import WorldSettingSection from '@renderer/novel/components/novel-detail/WorldSettingSection.vue'
-import CharactersSection from '@renderer/novel/components/novel-detail/CharactersSection.vue'
-import RelationshipsSection from '@renderer/novel/components/novel-detail/RelationshipsSection.vue'
-import ChapterOutlineSection from '@renderer/novel/components/novel-detail/ChapterOutlineSection.vue'
-import ChaptersSection from '@renderer/novel/components/novel-detail/ChaptersSection.vue'
-import EmotionCurveSection from '@renderer/novel/components/novel-detail/EmotionCurveSection.vue'
-import ForeshadowingSection from '@renderer/novel/components/novel-detail/ForeshadowingSection.vue'
-import ActivityLogSection from '@renderer/novel/components/novel-detail/ActivityLogSection.vue'
-import PipelineInspectorSection from '@renderer/novel/components/novel-detail/PipelineInspectorSection.vue'
-import PipelineLogsSection from '@renderer/novel/components/novel-detail/PipelineLogsSection.vue'
-import PromptRegistrySection from '@renderer/novel/components/novel-detail/PromptRegistrySection.vue'
-import BlueprintSetupEmpty from '@renderer/novel/components/novel-detail/BlueprintSetupEmpty.vue'
-import StatsSection from '@renderer/novel/components/novel-detail/StatsSection.vue'
-import ProjectDataSection from '@renderer/novel/components/novel-detail/ProjectDataSection.vue'
-import {
-  activityLogService,
-} from '@renderer/services/activity-log-service'
+import { activityLogService } from '@renderer/services/activity-log-service'
 import {
   projectStatsService,
-  type ProjectStats,
 } from '@renderer/services/project-stats-service'
-import type { ActivityLogEntry } from '@renderer/services/activity-log-service'
 import {
   buildUnifiedPolishContext,
   formatAffectedSectionLabels,
@@ -308,6 +295,7 @@ import { isAiAssistantBusy } from '@renderer/novel/composables/useAiAssistantRun
 import { useAutoChapterPipeline } from '@renderer/novel/composables/useAutoChapterPipeline'
 import {
   filterSectionsForMode,
+  isSectionEnabledForMode,
   resolveWritingMode,
   SIMPLE_MODE_MAX_CHAPTERS,
   WRITING_MODE_LABELS,
@@ -315,22 +303,10 @@ import {
 } from '@shared/novel/writing-mode'
 import {
   canEditProjectSettingsWithAi,
-  SETTING_EDIT_REQUIRES_CLEAR_CHAPTERS_MESSAGE,
+  settingEditBlockReason,
 } from '@shared/novel/project-writing-guard'
 import { isTxtImportLocked, isTxtImportPending } from '@shared/novel/import-status'
 import type { ImportParseProgress } from '@renderer/services/novel/api'
-
-type SectionKey = AllSectionType
-
-const WORLD_VIEW_SECTIONS: WorldViewSectionType[] = [
-  'world_rules',
-  'world_locations',
-  'world_factions',
-]
-
-function isWorldViewSection(section: SectionKey): section is WorldViewSectionType {
-  return (WORLD_VIEW_SECTIONS as string[]).includes(section)
-}
 
 function resolvePolishableSection(section: SectionKey) {
   return isWorldViewSection(section) ? 'world_setting' : section
@@ -338,20 +314,20 @@ function resolvePolishableSection(section: SectionKey) {
 
 const route = useRoute()
 const novelStore = useNovelStore()
+const { t } = useI18n()
 
 const projectId = computed(() => String(route.params.id || ''))
 
-interface NavSection {
-  key: SectionKey
-  label: string
-  description: string
-  icon: Component
-}
-
-interface NavGroup {
-  label: string
-  items: NavSection[]
-}
+const navGroups = computed(() => {
+  const mode = projectWritingMode.value
+  const filtered = NOVEL_DETAIL_NAV_GROUPS.map((group) => ({
+    labelKey: group.labelKey,
+    items: group.items.filter((item) =>
+      isSectionEnabledForMode(item.key as WritingModeSectionKey, mode)
+    ),
+  })).filter((group) => group.items.length > 0)
+  return resolveNavGroups(filtered, t)
+})
 
 const BLUEPRINT_SECTION_KEYS = new Set<SectionKey>([
   'overview',
@@ -364,134 +340,32 @@ const BLUEPRINT_SECTION_KEYS = new Set<SectionKey>([
   'chapters',
 ])
 
-const blueprintSections: NavSection[] = [
-  { key: 'overview', label: '项目概览', description: '定位与整体梗概', icon: LayoutGrid },
-  { key: 'world_rules', label: '世界规则', description: '世界观的基本法则与限制', icon: ScrollText },
-  { key: 'world_locations', label: '关键地点', description: '故事发生的重要场景', icon: MapPin },
-  { key: 'world_factions', label: '主要阵营', description: '势力划分与对立关系', icon: Shield },
-  { key: 'characters', label: '主要角色', description: '人物性格与目标', icon: Users },
-  { key: 'relationships', label: '人物关系', description: '角色之间的联系', icon: Network },
-  { key: 'chapter_outline', label: '章节大纲', description: '故事结构规划', icon: List },
-  { key: 'chapters', label: '章节内容', description: '生成状态与摘要', icon: BookOpen },
-]
-
-const analysisSections: NavSection[] = [
-  { key: 'emotion_curve', label: '情感曲线', description: '追踪章节情感变化', icon: TrendingUp },
-  { key: 'foreshadowing', label: '伏笔管理', description: '故事线索与回收', icon: Zap },
-]
-
-const insightSections: NavSection[] = [
-  { key: 'stats', label: '统计信息', description: '字数、阅读与 Token 消耗', icon: BarChart3 },
-  { key: 'pipeline', label: '创作流水线', description: '写作模型与生成选项', icon: Workflow },
-  { key: 'pipeline_log', label: 'AI 调用流水', description: '灵感、蓝图与章节写作的调用记录', icon: Terminal },
-  { key: 'prompt_templates', label: 'Prompt 模板', description: '系统提示词一览', icon: FileText },
-  { key: 'activity_log', label: '操作记录', description: '修改、生成与阅读历史', icon: History },
-]
-
-const dataSections: NavSection[] = [
-  { key: 'data', label: '数据管理', description: '占用、导出与删除', icon: Database },
-]
-
-const navGroups = computed<NavGroup[]>(() => {
-  const mode = projectWritingMode.value
-  const groups: NavGroup[] = [
-    {
-      label: '创作蓝图',
-      items: filterSectionsForMode(blueprintSections, mode),
-    },
-    {
-      label: '数据分析',
-      items: filterSectionsForMode(analysisSections, mode),
-    },
-  ]
-  const insightItems = filterSectionsForMode(insightSections, mode)
-  if (insightItems.length) {
-    groups.push({ label: '项目记录', items: insightItems })
-  }
-  const dataItems = filterSectionsForMode(dataSections, mode)
-  if (dataItems.length) {
-    groups.push({ label: '数据管理', items: dataItems })
-  }
-  return groups.filter((group) => group.items.length > 0)
-})
-
 const sections = computed(() => navGroups.value.flatMap((group) => group.items))
 
-const sectionComponents: Record<SectionKey, any> = {
-  overview: OverviewSection,
-  world_setting: WorldSettingSection,
-  world_rules: WorldSettingSection,
-  world_locations: WorldSettingSection,
-  world_factions: WorldSettingSection,
-  characters: CharactersSection,
-  relationships: RelationshipsSection,
-  chapter_outline: ChapterOutlineSection,
-  chapters: ChaptersSection,
-  emotion_curve: EmotionCurveSection,
-  foreshadowing: ForeshadowingSection,
-  activity_log: ActivityLogSection,
-  pipeline: PipelineInspectorSection,
-  pipeline_log: PipelineLogsSection,
-  prompt_templates: PromptRegistrySection,
-  stats: StatsSection,
-  data: ProjectDataSection,
-}
-
-const sectionData = reactive<Partial<Record<SectionKey, any>>>({})
-const sectionLoading = reactive<Record<SectionKey, boolean>>({
-  overview: false,
-  world_setting: false,
-  world_rules: false,
-  world_locations: false,
-  world_factions: false,
-  characters: false,
-  relationships: false,
-  chapter_outline: false,
-  chapters: false,
-  emotion_curve: false,
-  foreshadowing: false,
-  activity_log: false,
-  pipeline: false,
-  pipeline_log: false,
-  prompt_templates: false,
-  stats: false,
-  data: false,
-})
-const sectionError = reactive<Record<SectionKey, string | null>>({
-  overview: null,
-  world_setting: null,
-  world_rules: null,
-  world_locations: null,
-  world_factions: null,
-  characters: null,
-  relationships: null,
-  chapter_outline: null,
-  chapters: null,
-  emotion_curve: null,
-  foreshadowing: null,
-  activity_log: null,
-  pipeline: null,
-  pipeline_log: null,
-  prompt_templates: null,
-  stats: null,
-  data: null,
-})
-
-const projectStats = ref<ProjectStats | null>(null)
-const activityEntries = ref<ActivityLogEntry[]>([])
+const sectionComponents = DETAIL_SECTION_COMPONENTS
 
 const overviewMeta = reactive<{ title: string; updated_at: string | null }>({
-  title: '加载中...',
+  title: t('novelDetail.loading'),
   updated_at: null
 })
 
 const activeSection = ref<SectionKey>('overview')
 
-// Modal state (user mode only)
-const isModalOpen = ref(false)
-const modalTitle = ref('')
-const modalContent = ref<any>('')
-const modalField = ref('')
+const {
+  sectionData,
+  sectionLoading,
+  sectionError,
+  projectStats,
+  activityEntries,
+  loadSection,
+  reloadSection,
+  loadInsightSection,
+} = useNovelDetailSectionLoader({
+  projectId,
+  activeSection,
+  overviewMeta,
+  loadFailedMessage: () => t('novelDetail.loadFailed'),
+})
 
 // Add chapter modal state (user mode only)
 const isAddChapterModalOpen = ref(false)
@@ -501,6 +375,8 @@ const originalBodyOverflow = ref('')
 
 const showWritingDeskModal = ref(false)
 const showInspirationModal = ref(false)
+const inspirationModalRef = ref<InstanceType<typeof InspirationModal> | null>(null)
+const { pending: pendingTaskView } = useTaskNavigation()
 const inspirationModalMode = ref<'inspiration' | 'section-polish'>('inspiration')
 const polishContext = ref<SectionPolishContext | null>(null)
 const blueprintGen = useBlueprintGeneration()
@@ -517,29 +393,31 @@ const showImportParsing = computed(() => {
   return importParseGen.isGenerating.value || isImportParsing(projectId.value)
 })
 const generationOverlayDescription = computed(() => {
-  if (isAutoWriteActive.value) {
-    return '自动写作进行中，可在写作台查看章节生成进度；点击取消可暂停创作。'
+  if (showBlueprintGenerating.value) {
+    return t('novelDetail.generation.blueprintBackground')
   }
   if (showImportParsing.value) {
-    return '智能解析会逐批阅读全书，耗时可能较长，请保持应用在前台；可随时点击取消。'
+    return t('novelDetail.generation.importParsing')
   }
-  return 'AI 正在为您精心打造独特的故事蓝图，请稍候…'
+  return t('novelDetail.generation.default')
 })
 
 const generationOverlayProgress = computed(() => {
-  if (isAutoWriteActive.value) return autoWrite.progressPercent.value
+  const session = getBlueprintGenSession(projectId.value)
+  if (showBlueprintGenerating.value && session?.active) return session.percent
   return Math.round(generationOverlay.value.progress.value)
 })
 
 const generationOverlayText = computed(() => {
-  if (isAutoWriteActive.value) return autoWrite.statusMessage.value
   if (showImportParsing.value) return importParseMessage.value
+  const session = getBlueprintGenSession(projectId.value)
+  if (showBlueprintGenerating.value && session?.message) return session.message
   return generationOverlay.value.loadingText.value
 })
 
 const showGenerationOverlay = computed(
   () =>
-    (showBlueprintGenerating.value || showImportParsing.value || isAutoWriteActive.value) &&
+    (showBlueprintGenerating.value || showImportParsing.value) &&
     !showInspirationModal.value
 )
 
@@ -579,18 +457,30 @@ const importedChapterCount = computed(() => novel.value?.chapters?.length ?? 0)
 const primaryActionLabel = computed(() => {
   if (isAutoWriteActive.value) {
     const msg = autoWrite.statusMessage.value
-    return msg.length > 18 ? `${msg.slice(0, 18)}…` : msg || '创作中…'
+    return msg.length > 18 ? `${msg.slice(0, 18)}…` : msg || t('novelDetail.primaryAction.writing')
   }
-  if (showImportParsing.value) return '解析中...'
-  if (isImportPending.value) return '智能解析'
+  if (showBlueprintGenerating.value) {
+    const session = getBlueprintGenSession(projectId.value)
+    const msg = session?.message?.trim()
+    if (msg) return msg.length > 18 ? `${msg.slice(0, 18)}…` : msg
+    return t('novelDetail.primaryAction.blueprintGenerating')
+  }
+  if (showImportParsing.value) return t('novelDetail.primaryAction.parsing')
+  if (isImportPending.value) return t('novelDetail.primaryAction.smartParse')
   const project = novel.value
-  if (!project || needsInspirationConversation(project)) return '完善设定'
-  return '打开写作台'
+  if (!project || needsInspirationConversation(project)) return t('novelDetail.primaryAction.completeSetup')
+  return t('novelDetail.primaryAction.openWritingDesk')
 })
 
 const primaryActionHint = computed(() => {
+  if (showBlueprintGenerating.value) {
+    return t('novelDetail.primaryAction.blueprintBackgroundHint')
+  }
+  if (isAutoWriteActive.value) {
+    return t('novelDetail.primaryAction.autoWriteHint')
+  }
   if (isImportPending.value) {
-    return `已导入 ${importedChapterCount.value} 章。点「智能解析」填充蓝图与各板块。`
+    return t('novelDetail.primaryAction.importHint', { count: importedChapterCount.value })
   }
   return ''
 })
@@ -604,9 +494,7 @@ const isBlueprintSetupPending = computed(() => {
 const showBlueprintSetupEmpty = computed(
   () => isBlueprintSetupPending.value && BLUEPRINT_SECTION_KEYS.has(activeSection.value)
 )
-const isPrimaryActionBusy = computed(
-  () => showImportParsing.value || showBlueprintGenerating.value
-)
+const isPrimaryActionBusy = computed(() => showImportParsing.value)
 
 const projectWritingMode = computed(() => {
   const overviewMode = sectionData.overview?.writing_mode as import('@shared/novel/types').WritingMode | undefined
@@ -634,21 +522,38 @@ const settingsAiEligible = computed(() => {
   return !needsInspirationConversation(project)
 })
 
+const polishSectionContext = computed(() => ({
+  section: String(resolvePolishableSection(activeSection.value)),
+}))
+
 const canOpenAiAssistant = computed(
-  () => settingsAiEligible.value && canEditProjectSettingsWithAi(novel.value)
+  () =>
+    settingsAiEligible.value &&
+    canEditProjectSettingsWithAi(novel.value, polishSectionContext.value)
 )
 
 const aiAssistantBlockedReason = computed(() => {
   if (!settingsAiEligible.value) return ''
-  if (canEditProjectSettingsWithAi(novel.value)) return ''
-  return SETTING_EDIT_REQUIRES_CLEAR_CHAPTERS_MESSAGE
+  const reason = settingEditBlockReason(novel.value, polishSectionContext.value)
+  if (!reason) return ''
+  return reason === 'scoped_only'
+    ? t('novelDetail.shell.scopedSettingEditHint')
+    : t('novelDetail.projectData.settingLockMessage')
 })
 
 const guardSettingsAiEdit = (): boolean => {
-  if (canEditProjectSettingsWithAi(novel.value)) return true
-  globalAlert.showError(SETTING_EDIT_REQUIRES_CLEAR_CHAPTERS_MESSAGE, '无法修改设定')
+  if (canEditProjectSettingsWithAi(novel.value, polishSectionContext.value)) return true
+  const reason = settingEditBlockReason(novel.value, polishSectionContext.value)
+  const message =
+    reason === 'scoped_only'
+      ? t('novelDetail.shell.scopedSettingEditHint')
+      : t('novelDetail.projectData.settingLockMessage')
+  globalAlert.showError(message, t('novelDetail.shell.cannotEditSettings'))
   return false
 }
+
+const detailProjectTitle = (project?: NovelProject | null) =>
+  overviewMeta.title || project?.title || novel.value?.title || t('novelDetail.common.unnamedProject')
 
 const aiAssistantBusy = computed(() => isAiAssistantBusy(projectId.value))
 
@@ -656,7 +561,7 @@ const showAiAssistantAction = computed(() => settingsAiEligible.value)
 
 const aiAssistantActionTitle = computed(() => {
   if (aiAssistantBlockedReason.value) return aiAssistantBlockedReason.value
-  return 'AI 助手 · 全书联动调整当前 Tab 与蓝图设定'
+  return t('novelDetail.aiAssistantTitle')
 })
 
 const showAddButton = computed(() => {
@@ -671,7 +576,39 @@ const showAddButton = computed(() => {
   }
 })
 
-const showSectionHeaderActions = computed(() => showAiAssistantAction.value || showAddButton.value)
+const placeholderOutlineCount = computed(() => {
+  const project = novel.value
+  const outline =
+    sectionData.chapter_outline?.chapter_outline || project?.blueprint?.chapter_outline
+  if (!outline?.length || !project) return 0
+  const expected = resolveOutlineChapterTarget(outline)
+  if (expected <= 0) return 0
+  return countPlaceholderChapterOutlines(
+    outline,
+    expected,
+    project.blueprint?.title || project.title
+  )
+})
+
+const showRegeneratePlaceholderOutlineAction = computed(
+  () =>
+    activeSection.value === 'chapter_outline' &&
+    !isContentLocked.value &&
+    !showBlueprintSetupEmpty.value &&
+    settingsAiEligible.value &&
+    placeholderOutlineCount.value > 0
+)
+
+const regeneratePlaceholderOutlineBusy = computed(() =>
+  isOutlineGenerating(projectId.value)
+)
+
+const showSectionHeaderActions = computed(
+  () =>
+    showAiAssistantAction.value ||
+    showAddButton.value ||
+    showRegeneratePlaceholderOutlineAction.value
+)
 
 const onHeaderAdd = () => {
   if (activeSection.value === 'chapter_outline') {
@@ -680,6 +617,36 @@ const onHeaderAdd = () => {
   }
   if (activeSection.value === 'relationships') {
     activeSectionRef.value?.openAddRelationship?.()
+  }
+}
+
+async function regeneratePlaceholderOutlines() {
+  if (regeneratePlaceholderOutlineBusy.value) return
+  const count = placeholderOutlineCount.value
+  if (count <= 0) return
+
+  const confirmed = await globalAlert.showConfirm(
+    t('novelDetail.shell.regenerateOutlineConfirm', { count }),
+    t('novelDetail.shell.regenerateOutlineTitle')
+  )
+  if (!confirmed) return
+
+  try {
+    await novelStore.regeneratePlaceholderChapterOutlines()
+    await loadSection('chapter_outline', true)
+    globalAlert.showSuccess(
+      t('novelDetail.shell.regenerateOutlineSuccess', { count: placeholderOutlineCount.value }),
+      t('novelDetail.shell.generateComplete')
+    )
+  } catch (error) {
+    if (isAbortError(error)) {
+      globalAlert.showSuccess(t('novelDetail.shell.cancelled'), t('novelDetail.shell.cancelled'))
+      return
+    }
+    globalAlert.showError(
+      error instanceof Error ? error.message : t('novelDetail.shell.regenerateOutlineFailed'),
+      t('novelDetail.shell.placeholderOutlineFailed')
+    )
   }
 }
 
@@ -709,6 +676,7 @@ const isFillSection = computed(() =>
     'activity_log',
     'pipeline',
     'pipeline_log',
+    'agent_log',
     'prompt_templates',
     'emotion_curve',
     'foreshadowing',
@@ -744,93 +712,31 @@ const switchSection = (section: SectionKey) => {
   }
 }
 
-const loadInsightSection = (section: 'activity_log' | 'stats' | 'pipeline' | 'pipeline_log' | 'prompt_templates') => {
-  sectionLoading[section] = true
-  sectionError[section] = null
-  try {
-    if (section === 'activity_log') {
-      activityEntries.value = activityLogService.listByProject(projectId.value, 50)
-    } else if (section === 'stats') {
-      projectStats.value = projectStatsService.get(projectId.value)
-      if (!sectionData.chapters) {
-        void loadSection('chapters')
-      }
-    }
-  } catch (error) {
-    sectionError[section] = error instanceof Error ? error.message : '加载失败'
-  } finally {
-    sectionLoading[section] = false
-  }
-}
-
-const loadSection = async (section: SectionKey, force = false) => {
-  if (!projectId.value) return
-
-  const insightSections: SectionKey[] = ['activity_log', 'stats', 'pipeline', 'pipeline_log', 'prompt_templates']
-  if (insightSections.includes(section)) {
-    if (section === 'activity_log' && !force && activityEntries.value.length) return
-    loadInsightSection(section as 'activity_log' | 'stats' | 'pipeline' | 'pipeline_log' | 'prompt_templates')
-    return
-  }
-
-  const analysisSections: SectionKey[] = ['emotion_curve', 'foreshadowing']
-  if (analysisSections.includes(section)) {
-    return
-  }
-
-  if (!force && sectionData[isWorldViewSection(section) ? 'world_setting' : section]) {
-    return
-  }
-
-  const dataKey = isWorldViewSection(section) ? 'world_setting' : section
-  const apiSection: NovelSectionType = isWorldViewSection(section)
-    ? 'world_setting'
-    : (section as NovelSectionType)
-
-  sectionLoading[section] = true
-  sectionError[section] = null
-  try {
-    const response: NovelSectionResponse = await NovelAPI.getSection(projectId.value, apiSection)
-    sectionData[dataKey] = response.data
-    if (section === 'overview') {
-      const data = response.data as { title?: string; updated_at?: string }
-      overviewMeta.title = data.title || overviewMeta.title
-      overviewMeta.updated_at = data.updated_at || null
-    }
-  } catch (error) {
-    console.error('加载模块失败:', error)
-    sectionError[section] = error instanceof Error ? error.message : '加载失败'
-  } finally {
-    sectionLoading[section] = false
-  }
-}
-
-const reloadSection = (section: SectionKey, force = false) => {
-  if (section === 'world_setting') {
-    delete sectionData.world_setting
-    if (isWorldViewSection(activeSection.value)) {
-      void loadSection(activeSection.value, true)
-    }
-    return
-  }
-  loadSection(section, force)
-}
-
 const needsInspirationConversation = (project: NovelProject): boolean => {
   if (isTxtImportPending(project)) return false
-  if (project.title === '未命名灵感' || project.title === '未命名小说') return true
+  if (project.title === t('novelDetail.shell.unnamedInspiration') || project.title === t('novelDetail.shell.unnamedNovel')) return true
   const outline = project.blueprint?.chapter_outline
   return !Array.isArray(outline) || outline.length === 0
 }
 
 const goToWritingDesk = async () => {
-  if (isPrimaryActionBusy.value) return
+  if (showImportParsing.value) return
   await ensureProjectLoaded()
   const project = novel.value
   if (!project) return
 
+  if (isBlueprintGenerating(projectId.value)) {
+    openBlueprintSetup()
+    return
+  }
+
+  if (isCurrentProjectAutoWriteRunning.value || isCurrentProjectAutoWritePaused.value) {
+    showWritingDeskModal.value = true
+    return
+  }
+
   if (isTxtImportPending(project)) {
-    importParseMessage.value = '正在准备智能解析…'
+    importParseMessage.value = t('novelDetail.shell.importPreparing')
     try {
       await importParseGen.run(
         () =>
@@ -845,25 +751,25 @@ const goToWritingDesk = async () => {
       void loadSection('chapters', true)
       activityLogService.logBlueprintGenerate(
         projectId.value,
-        overviewMeta.title || project.title || '未命名作品'
+        detailProjectTitle(project)
       )
       globalAlert.showSuccess(
-        `智能解析完成：共 ${novel.value?.chapters?.length ?? 0} 章，蓝图与各板块已填充`,
-        '解析成功'
+        t('novelDetail.shell.parseSuccessDetail', { count: novel.value?.chapters?.length ?? 0 }),
+        t('novelDetail.shell.parseSuccess')
       )
     } catch (error) {
       if (isAbortError(error)) {
-        globalAlert.showSuccess('已取消智能解析', '已取消')
+        globalAlert.showSuccess(t('novelDetail.shell.parseCancelled'), t('novelDetail.shell.cancelled'))
         return
       }
       console.error('智能解析失败:', error)
       globalAlert.showError(
         error instanceof Error
           ? /超时|timeout/i.test(error.message)
-            ? `${error.message}。智能解析章节较多时可能需 30 分钟以上，请确认网络与模型可用后重试。`
+            ? t('novelDetail.shell.parseTimeoutHint', { message: error.message })
             : error.message
-          : '智能解析失败，请稍后重试',
-        '解析失败'
+          : t('novelDetail.shell.parseFailed'),
+        t('novelDetail.shell.parseFailedTitle')
       )
     } finally {
       importParseMessage.value = ''
@@ -880,7 +786,7 @@ const goToWritingDesk = async () => {
 }
 
 const openBlueprintSetup = () => {
-  if (isPrimaryActionBusy.value) return
+  if (showImportParsing.value) return
   inspirationModalMode.value = 'inspiration'
   polishContext.value = null
   showInspirationModal.value = true
@@ -888,33 +794,34 @@ const openBlueprintSetup = () => {
 
 const pauseAutoWritePipeline = () => {
   autoWrite.pause()
-  globalAlert.showSuccess('AI 创作已转入后台暂停，可在写作台或状态栏任务列表继续', '已暂停')
+  globalAlert.showSuccess(t('novelDetail.shell.autoWritePaused'), t('novelDetail.shell.paused'))
 }
 
-const runAutoWritePipeline = async () => {
-  const title = novel.value?.title || overviewMeta.title || '未命名作品'
-  const result = await autoWrite.run(projectId.value, title)
+async function finalizeAutoWriteRun(
+  promise: ReturnType<typeof autoWrite.run>
+): Promise<void> {
+  const result = await promise
   await novelStore.loadProject(projectId.value, true)
   void loadSection('chapters', true)
   if (result === 'completed') {
-    globalAlert.showSuccess('全部章节已由 AI 生成并确认', '创作完成')
+    globalAlert.showSuccess(t('novelDetail.shell.autoWriteComplete'), t('novelDetail.shell.creationComplete'))
   } else if (result === 'failed') {
-    globalAlert.showError(autoWrite.progress.value.message || 'AI 接管创作中断', '创作中断')
+    globalAlert.showError(autoWrite.progress.value.message || t('novelDetail.shell.autoWriteInterrupted'), t('novelDetail.shell.creationInterrupted'))
   } else if (result === 'cancelled') {
-    globalAlert.showSuccess('已取消 AI 接管创作', '已取消')
+    globalAlert.showSuccess(t('novelDetail.shell.autoWriteCancelled'), t('novelDetail.shell.cancelled'))
   }
 }
 
-const resumeAutoWritePipeline = async () => {
-  const title = novel.value?.title || overviewMeta.title || '未命名作品'
-  const result = await autoWrite.run(projectId.value, title)
-  await novelStore.loadProject(projectId.value, true)
-  void loadSection('chapters', true)
-  if (result === 'completed') {
-    globalAlert.showSuccess('全部章节已由 AI 生成并确认', '创作完成')
-  } else if (result === 'failed') {
-    globalAlert.showError(autoWrite.progress.value.message || 'AI 接管创作中断', '创作中断')
-  }
+const runAutoWritePipeline = () => {
+  const title = detailProjectTitle()
+  closeWritingDesk()
+  globalAlert.showSuccess(t('novelDetail.shell.autoWriteStarted'), t('novelDetail.shell.backgroundCreation'))
+  void finalizeAutoWriteRun(autoWrite.run(projectId.value, title))
+}
+
+const resumeAutoWritePipeline = () => {
+  const title = detailProjectTitle()
+  void finalizeAutoWriteRun(autoWrite.run(projectId.value, title))
 }
 
 const openAiAssistant = async (options?: {
@@ -982,7 +889,7 @@ const handleSectionPolishApplied = async (payload: SectionPolishApplyPayload) =>
   await ensureProjectLoaded()
   const project = novel.value
   if (!project) {
-    globalAlert.showError('项目未加载，请刷新页面后重试。', '应用失败')
+    globalAlert.showError(t('novelDetail.shell.applyFailedNoProject'), t('novelDetail.shell.applyFailed'))
     return
   }
 
@@ -990,9 +897,9 @@ const handleSectionPolishApplied = async (payload: SectionPolishApplyPayload) =>
     const patch = validateBlueprintUpdates(payload.blueprintUpdates)
     if (payload.replaceEntireBlueprint) {
       const merged = { ...(project.blueprint ?? {}), ...patch }
-      await NovelAPI.saveBlueprint(project.id, merged)
+      await NovelAPI.saveBlueprint(project.id, merged, { source: 'polish' })
     } else {
-      await NovelAPI.updateBlueprint(project.id, patch)
+      await NovelAPI.updateBlueprint(project.id, patch, { source: 'polish' })
     }
     const syncedProject = await NovelAPI.markSectionPolishApplied(project.id)
     novelStore.setCurrentProject(syncedProject)
@@ -1005,10 +912,10 @@ const handleSectionPolishApplied = async (payload: SectionPolishApplyPayload) =>
     const affectedLabels = formatAffectedSectionLabels(affectedSections)
     activityLogService.logBlueprintEdit(
       projectId.value,
-      overviewMeta.title || project.title || '未命名作品',
+      detailProjectTitle(project),
       payload.replaceEntireBlueprint
-        ? '全书框架（重新过灵感）'
-        : `${affectedLabels}（AI 修改）`
+        ? t('novelDetail.shell.polishScopeFull')
+        : t('novelDetail.shell.polishAiEdit', { labels: affectedLabels })
     )
     for (const key of resolveAllSectionReloadKeys(affectedSections)) {
       await loadSection(key, true)
@@ -1017,33 +924,56 @@ const handleSectionPolishApplied = async (payload: SectionPolishApplyPayload) =>
     if (activeSection.value === 'activity_log') loadInsightSection('activity_log')
     globalAlert.showSuccess(
       payload.replaceEntireBlueprint
-        ? '全书框架已重构并保存'
+        ? t('novelDetail.shell.polishScopeSaved')
         : affectedLabels.length > 1
-          ? `已更新 ${affectedLabels}`
-          : `${affectedLabels} 修改已应用`,
-      '保存成功'
+          ? t('novelDetail.shell.polishAppliedMultiple', { labels: affectedLabels })
+          : t('novelDetail.shell.polishAppliedSingle', { label: affectedLabels }),
+      t('novelDetail.common.saveSuccess')
     )
     closeInspiration()
   } catch (error) {
     console.error('应用修改结果失败:', error)
-    globalAlert.showError(error instanceof Error ? error.message : '应用失败', '保存失败')
+    globalAlert.showError(error instanceof Error ? error.message : t('novelDetail.shell.applyFailed'), t('novelDetail.common.saveFailed'))
   }
 }
 
 const closeInspiration = () => {
+  if (isBlueprintGenerating(projectId.value)) {
+    globalAlert.showSuccess(t('novelDetail.shell.blueprintBackgroundStarted'), t('novelDetail.shell.movedToBackground'))
+  }
   showInspirationModal.value = false
   inspirationModalMode.value = 'inspiration'
   polishContext.value = null
   refreshDetailSections()
 }
 
+async function handlePendingTaskView() {
+  const request = consumeTaskViewRequest()
+  if (!request || request.projectId !== projectId.value) return
+
+  if (request.target.type === 'inspiration') {
+    openBlueprintSetup()
+    await nextTick()
+    inspirationModalRef.value?.restoreTaskView(request.target.phase)
+    return
+  }
+
+  if (request.target.type === 'writing_desk') {
+    showWritingDeskModal.value = true
+  }
+}
+
+watch(pendingTaskView, () => {
+  void handlePendingTaskView()
+})
+
 const onBlueprintSaved = () => {
   activityLogService.logBlueprintGenerate(
     projectId.value,
-    overviewMeta.title || novel.value?.title || '未命名作品'
+    detailProjectTitle()
   )
   activeSection.value = 'overview'
-  globalAlert.showSuccess('蓝图已生成。可在各 Tab 使用「AI 助手」继续调整设定。', '生成成功')
+  globalAlert.showSuccess(t('novelDetail.shell.blueprintGenerated'), t('novelDetail.shell.generateSuccess'))
   closeInspiration()
 }
 
@@ -1079,10 +1009,6 @@ const refreshDetailSections = () => {
 }
 
 const cancelGenerationOverlay = () => {
-  if (isAutoWriteActive.value) {
-    autoWrite.pause()
-    return
-  }
   if (showImportParsing.value) {
     novelStore.cancelImportParse()
     return
@@ -1202,6 +1128,10 @@ const componentProps = computed(() => {
       }
     case 'pipeline_log':
       return { projectId: projectId.value }
+    case 'agent_log':
+      return { projectId: projectId.value }
+    case 'story_commits':
+      return { storySystem: novel.value?.story_system ?? null }
     case 'prompt_templates':
       return {}
     case 'stats':
@@ -1220,11 +1150,11 @@ const componentProps = computed(() => {
   }
 })
 
-const handleSectionEdit = (payload: { field: string; title: string; value: any }) => {
-  modalField.value = payload.field
-  modalTitle.value = payload.title
-  modalContent.value = payload.value
-  isModalOpen.value = true
+const onOverviewFieldSaved = async () => {
+  await ensureProjectLoaded()
+  await loadSection('overview', true)
+  if (activeSection.value === 'stats') loadInsightSection('stats')
+  if (activeSection.value === 'activity_log') loadInsightSection('activity_log')
 }
 
 const persistCover = async (coverUrl: string | null): Promise<string | null> => {
@@ -1245,10 +1175,10 @@ const handleModelsUpdate = async (payload: { chat_model_id?: string | null }) =>
     if (sectionData.overview) {
       sectionData.overview = { ...sectionData.overview, ...payload }
     }
-    globalAlert.showSuccess('本书模型设置已保存', '保存成功')
+    globalAlert.showSuccess(t('novelDetail.shell.modelSaved'), t('novelDetail.common.saveSuccess'))
   } catch (error) {
     console.error('保存模型设置失败:', error)
-    globalAlert.showError(error instanceof Error ? error.message : '保存失败', '保存失败')
+    globalAlert.showError(error instanceof Error ? error.message : t('novelDetail.common.saveFailed'), t('novelDetail.common.saveFailed'))
   }
 }
 
@@ -1258,24 +1188,27 @@ const handleCoverUpdate = async (coverUrl: string | null) => {
     projectStatsService.recordEdit(projectId.value)
     activityLogService.logCoverUpdate(
       projectId.value,
-      overviewMeta.title || novel.value?.title || '未命名作品',
+      detailProjectTitle(),
       false
     )
-    globalAlert.showSuccess(normalized ? '封面已保存到本地' : '封面已移除', '保存成功')
+    globalAlert.showSuccess(
+      normalized ? t('novelDetail.shell.coverSaved') : t('novelDetail.shell.coverRemoved'),
+      t('novelDetail.common.saveSuccess')
+    )
   } catch (error) {
     console.error('保存封面失败:', error)
-    globalAlert.showError(error instanceof Error ? error.message : '保存封面失败', '保存失败')
+    globalAlert.showError(error instanceof Error ? error.message : t('novelDetail.shell.coverSaveFailed'), t('novelDetail.common.saveFailed'))
   }
 }
 
 const handleCoverGenerate = (prompt: string) => {
   if (coverGenerating.value) return
   const overview = sectionData.overview || {}
-  const title = overviewMeta.title || novel.value?.title || '未命名作品'
+  const title = detailProjectTitle()
   enqueueImageGenerationJob({
     taskProjectId: projectId.value,
     projectTitle: title,
-    subject: '书籍封面',
+    subject: t('novelDetail.shell.coverSubject'),
     uiKey: coverUiKey(projectId.value),
     generate: () =>
       generateCoverImage(
@@ -1294,7 +1227,7 @@ const handleCoverGenerate = (prompt: string) => {
       projectStatsService.recordImageGeneration(projectId.value)
       activityLogService.logCoverUpdate(projectId.value, title, true)
     },
-    successMessage: 'AI 封面绘制完成，已保存到本地',
+    successMessage: t('novelDetail.shell.coverAiSuccess'),
   })
 }
 
@@ -1323,14 +1256,17 @@ const handlePortraitUpdate = async (payload: { index: number; value: string | nu
     projectStatsService.recordEdit(projectId.value)
     activityLogService.logPortraitUpdate(
       projectId.value,
-      overviewMeta.title || novel.value?.title || '未命名作品',
-      character?.name || '角色',
+      detailProjectTitle(),
+      character?.name || t('novelDetail.shell.characterFallback'),
       false
     )
-    globalAlert.showSuccess(normalized ? '角色立绘已保存到本地' : '角色立绘已移除', '保存成功')
+    globalAlert.showSuccess(
+      normalized ? t('novelDetail.shell.portraitSaved') : t('novelDetail.shell.portraitRemoved'),
+      t('novelDetail.common.saveSuccess')
+    )
   } catch (error) {
     console.error('保存角色立绘失败:', error)
-    globalAlert.showError(error instanceof Error ? error.message : '保存角色立绘失败', '保存失败')
+    globalAlert.showError(error instanceof Error ? error.message : t('novelDetail.shell.portraitSaveFailed'), t('novelDetail.common.saveFailed'))
   }
 }
 
@@ -1339,12 +1275,12 @@ const handlePortraitGenerate = (payload: { index: number; prompt: string }) => {
   const character = characters[payload.index]
   if (!character) return
   const overview = sectionData.overview || {}
-  const title = overviewMeta.title || novel.value?.title || '未命名作品'
-  const name = character.name || '角色'
+  const title = detailProjectTitle()
+  const name = character.name || t('novelDetail.shell.characterFallback')
   enqueueImageGenerationJob({
     taskProjectId: projectId.value,
     projectTitle: title,
-    subject: `角色·${name}`,
+    subject: t('novelDetail.shell.portraitSubject', { name }),
     uiKey: portraitUiKey(projectId.value, payload.index),
     generate: () =>
       generateCharacterPortrait(
@@ -1358,78 +1294,8 @@ const handlePortraitGenerate = (payload: { index: number; prompt: string }) => {
       projectStatsService.recordImageGeneration(projectId.value)
       activityLogService.logPortraitUpdate(projectId.value, title, name, true)
     },
-    successMessage: 'AI 立绘绘制完成，已保存到本地',
+    successMessage: t('novelDetail.shell.portraitAiSuccess'),
   })
-}
-
-const resolveSectionKey = (field: string): SectionKey => {
-  if (field.startsWith('world_setting')) return 'world_rules'
-  if (field.startsWith('characters')) return 'characters'
-  if (field.startsWith('relationships')) return 'relationships'
-  if (field.startsWith('chapter_outline')) return 'chapter_outline'
-  return 'overview'
-}
-
-const BLUEPRINT_FIELD_LABELS: Record<string, string> = {
-  one_sentence_summary: '核心摘要',
-  full_synopsis: '完整梗概',
-  title: '作品标题',
-  genre: '题材类型',
-  style: '写作风格',
-  tone: '叙事基调',
-  target_audience: '目标读者',
-  world_setting: '世界设定',
-  characters: '主要角色',
-  relationships: '人物关系',
-  chapter_outline: '章节大纲',
-}
-
-const resolveBlueprintFieldLabel = (field: string): string => {
-  if (field.includes('.')) {
-    const [, child] = field.split('.')
-    return BLUEPRINT_FIELD_LABELS[child] || child
-  }
-  return BLUEPRINT_FIELD_LABELS[field] || field
-}
-
-const handleSave = async (data: { field: string; content: any }) => {
-  await ensureProjectLoaded()
-  const project = novel.value
-  if (!project) return
-
-  const { field, content } = data
-  const payload: Record<string, any> = {}
-
-  if (field.includes('.')) {
-    const [parentField, childField] = field.split('.')
-    payload[parentField] = {
-      ...(project.blueprint?.[parentField as keyof typeof project.blueprint] as Record<string, any> | undefined),
-      [childField]: content
-    }
-  } else {
-    payload[field] = content
-  }
-
-  try {
-    const updatedProject = await NovelAPI.updateBlueprint(project.id, payload)
-    novelStore.setCurrentProject(updatedProject)
-    projectStatsService.recordEdit(projectId.value)
-    activityLogService.logBlueprintEdit(
-      projectId.value,
-      overviewMeta.title || project.title || '未命名作品',
-      resolveBlueprintFieldLabel(field)
-    )
-    const sectionToReload = resolveSectionKey(field)
-    await loadSection(sectionToReload, true)
-    if (sectionToReload !== 'overview') {
-      await loadSection('overview', true)
-    }
-    if (activeSection.value === 'stats') loadInsightSection('stats')
-    if (activeSection.value === 'activity_log') loadInsightSection('activity_log')
-    isModalOpen.value = false
-  } catch (error) {
-    console.error('保存变更失败:', error)
-  }
 }
 
 const startAddChapter = async () => {
@@ -1437,10 +1303,10 @@ const startAddChapter = async () => {
   const outline = sectionData.chapter_outline?.chapter_outline || novel.value?.blueprint?.chapter_outline || []
   const nextNumber = outline.length > 0 ? Math.max(...outline.map((item: any) => item.chapter_number)) + 1 : 1
   if (projectWritingMode.value === 'simple' && nextNumber > SIMPLE_MODE_MAX_CHAPTERS) {
-    alert(`简易版适用于短篇故事，章节大纲最多 ${SIMPLE_MODE_MAX_CHAPTERS} 章。如需更长篇幅请使用工程版。`)
+    alert(t('novelDetail.shell.simpleModeChapterLimit', { max: SIMPLE_MODE_MAX_CHAPTERS }))
     return
   }
-  newChapterTitle.value = `新章节 ${nextNumber}`
+  newChapterTitle.value = t('novelDetail.shell.newChapterDefault', { n: nextNumber })
   newChapterSummary.value = ''
   isAddChapterModalOpen.value = true
 }
@@ -1454,7 +1320,7 @@ const saveNewChapter = async () => {
   const project = novel.value
   if (!project) return
   if (!newChapterTitle.value.trim()) {
-    alert('章节标题不能为空')
+    alert(t('novelDetail.shell.chapterTitleRequired'))
     return
   }
 
@@ -1472,8 +1338,8 @@ const saveNewChapter = async () => {
     projectStatsService.recordEdit(projectId.value)
     activityLogService.logBlueprintEdit(
       projectId.value,
-      overviewMeta.title || project.title || '未命名作品',
-      '章节大纲'
+      detailProjectTitle(project),
+      t('novelDetail.shell.chapterOutlineLabel')
     )
     await loadSection('chapter_outline', true)
     isAddChapterModalOpen.value = false
@@ -1494,7 +1360,7 @@ const resetDetailCaches = () => {
   }
   projectStats.value = null
   activityEntries.value = []
-  overviewMeta.title = '加载中...'
+  overviewMeta.title = t('novelDetail.loading')
   overviewMeta.updated_at = null
 }
 
@@ -1512,11 +1378,12 @@ const bootstrapDetailProject = async (id: string) => {
   }
   activityLogService.logProjectOpened(
     id,
-    overviewMeta.title !== '加载中...' ? overviewMeta.title : '未命名作品'
+    overviewMeta.title !== t('novelDetail.loading') ? overviewMeta.title : t('novelDetail.common.unnamedProject')
   )
   if (isSectionAvailable('world_rules')) {
     loadSection('world_rules')
   }
+  await handlePendingTaskView()
 }
 
 watch(

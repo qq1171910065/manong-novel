@@ -3,13 +3,14 @@ import {
   canEditProjectSettingsWithAi,
   hasWrittenChapterContent,
   listWrittenChapterNumbers,
+  settingEditBlockMessage,
 } from './project-writing-guard'
 import type { NovelProject, Chapter } from './types'
 
 function chapter(partial: Partial<Chapter> & Pick<Chapter, 'chapter_number' | 'title'>): Chapter {
   return {
     summary: '',
-    versions: [],
+    versions: null,
     evaluation: null,
     content: null,
     generation_status: 'not_generated',
@@ -49,10 +50,19 @@ describe('project-writing-guard', () => {
     ).toEqual([2, 3])
   })
 
-  it('blocks ai setting edit when writing started', () => {
+  it('blocks ai setting edit when writing started without scoped section', () => {
     const empty = project([])
     const written = project([chapter({ chapter_number: 1, title: '1', content: 'x', generation_status: 'successful' })])
     expect(canEditProjectSettingsWithAi(empty)).toBe(true)
     expect(canEditProjectSettingsWithAi(written)).toBe(false)
+    expect(canEditProjectSettingsWithAi(written, { section: 'characters' })).toBe(false)
+  })
+
+  it('allows scoped polish sections after writing started', () => {
+    const written = project([chapter({ chapter_number: 1, title: '1', content: 'x', generation_status: 'successful' })])
+    expect(canEditProjectSettingsWithAi(written, { section: 'world_setting' })).toBe(true)
+    expect(canEditProjectSettingsWithAi(written, { section: 'relationships' })).toBe(true)
+    expect(canEditProjectSettingsWithAi(written, { section: 'chapter_outline' })).toBe(true)
+    expect(settingEditBlockMessage(written, { section: 'world_setting' })).toBe('')
   })
 })

@@ -1,6 +1,6 @@
 import StoreImport from 'electron-store'
 import { app } from 'electron'
-import type { PortalSession } from '../shared/types'
+import type { PortalSession } from '../../shared/types'
 
 /** electron-store v9+ 为 ESM；electron-vite main 输出 CJS require() 时需取 .default */
 const Store =
@@ -13,12 +13,11 @@ let store: AuthStore | null = null
 /** 打包后 conf 无法从 asar 推断 projectName，需显式 cwd + projectName */
 function getStore(): AuthStore {
   if (!store) {
-    store = new Store<{ portalSession: PortalSession | null }>({
+    store = new Store({
       name: 'mntools-auth',
-      projectName: app.getName(),
       cwd: app.getPath('userData'),
       defaults: { portalSession: null },
-    })
+    }) as unknown as AuthStore
   }
   return store
 }

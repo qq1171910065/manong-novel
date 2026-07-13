@@ -8,7 +8,6 @@ import {
   registerModules,
   setAppConfig,
   getMainWindow,
-  createMainWindow,
   createLoginWindow,
   cleanupModules,
 } from './lib/window-manager'

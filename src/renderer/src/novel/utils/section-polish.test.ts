@@ -80,7 +80,7 @@ describe('shouldAutoMaterializePolish', () => {
           ui_control: { type: 'text_input' },
         },
         { value: '继续生成剩余的角色' },
-        { characters: [{ name: '李昊' }] },
+        { characters: [{ name: '李昊', description: '' }] },
         'characters'
       )
     ).toBe(true)

@@ -5,8 +5,8 @@
     <DetailEmptyState
       v-if="!worldSetting.core_rules?.trim()"
       class="nd-split-page__empty"
-      title="还没有世界规则"
-      description="点击此处编写世界规则"
+      :title="t('novelDetail.worldSetting.rulesEmptyTitle')"
+      :description="t('novelDetail.worldSetting.rulesEmptyDesc')"
       :clickable="editable"
       @activate="openRulesEdit"
     />
@@ -14,7 +14,7 @@
     <article v-else class="nd-split-page__main nd-split-page__main--detail" role="tabpanel">
       <div class="nd-char-detail">
         <div class="nd-char-detail__name-row">
-          <h3 class="nd-char-detail__name">核心规则</h3>
+          <h3 class="nd-char-detail__name">{{ t('novelDetail.worldSetting.coreRules') }}</h3>
         </div>
 
         <DetailEditableZone
@@ -38,10 +38,10 @@
 
     <NovelPreviewDialog
       :show="showRulesPreview"
-      title="世界规则"
-      badge="核心规则"
+      :title="t('novelDetail.worldSetting.rulesPreviewTitle')"
+      :badge="t('novelDetail.worldSetting.coreRules')"
       :show-hero="false"
-      aria-label="世界规则预览"
+      :aria-label="t('novelDetail.worldSetting.rulesPreviewAria')"
       @close="showRulesPreview = false"
     >
       <p class="nd-preview-text">{{ worldSetting.core_rules }}</p>
@@ -75,11 +75,11 @@
           @click="openCreateItem(itemKind)"
         >
           <Plus :size="16" aria-hidden="true" />
-          <span>{{ panel === 'factions' ? '新增阵营' : '新增地点' }}</span>
+          <span>{{ panel === 'factions' ? t('novelDetail.worldSetting.addFaction') : t('novelDetail.worldSetting.addLocation') }}</span>
         </button>
         <div class="nd-split-page__list-head">
           <h3 class="nd-split-page__list-title">{{ listTitle }}</h3>
-          <span class="nd-split-page__list-count">{{ currentList.length }} 项</span>
+          <span class="nd-split-page__list-count">{{ t('novelDetail.worldSetting.listCount', { count: currentList.length }) }}</span>
         </div>
         <ul class="nd-split-page__list-body">
           <li v-for="(item, index) in currentList" :key="item.id || index" class="nd-split-page__list-item">
@@ -104,7 +104,7 @@
                 <span class="nd-char-list-btn__body">
                   <span class="nd-char-list-btn__name">{{ item.title }}</span>
                   <span v-if="item.description" class="nd-char-list-btn__meta">{{ item.description }}</span>
-                  <span v-else class="nd-char-list-btn__meta nd-char-list-btn__meta--empty">描述待补充</span>
+                  <span v-else class="nd-char-list-btn__meta nd-char-list-btn__meta--empty">{{ t('novelDetail.worldSetting.descriptionPending') }}</span>
                 </span>
               </button>
             </DetailEditableZone>
@@ -117,7 +117,7 @@
           v-if="!showList"
           type="button"
           class="nd-split-page__mobile-toggle"
-          :aria-label="`打开${listTitle}`"
+          :aria-label="t('novelDetail.worldSetting.openList', { title: listTitle })"
           @click="showList = true"
         >
           <svg width="22" height="22" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -143,7 +143,7 @@
           >
             <p v-if="selectedItem.description" class="nd-char-detail__desc">{{ selectedItem.description }}</p>
             <p v-else class="nd-char-detail__desc nd-char-detail__desc--empty">
-              {{ editable ? '点击填写描述' : '描述待补充' }}
+              {{ editable ? t('novelDetail.worldSetting.descriptionEmpty') : t('novelDetail.worldSetting.descriptionPending') }}
             </p>
           </DetailEditableZone>
         </div>
@@ -161,14 +161,14 @@
 
     <NovelPreviewDialog
       :show="showPreview"
-      :title="previewItem?.title || '预览'"
+      :title="previewItem?.title || t('novelDetail.worldSetting.preview')"
       :badge="previewKindLabel"
       :show-hero="false"
-      aria-label="世界设定预览"
+      :aria-label="t('novelDetail.worldSetting.previewAria')"
       @close="showPreview = false"
     >
       <p v-if="previewItem?.description" class="nd-preview-text">{{ previewItem.description }}</p>
-      <p v-else class="nd-preview-text nd-preview-text--empty">暂无描述</p>
+      <p v-else class="nd-preview-text nd-preview-text--empty">{{ t('novelDetail.worldSetting.noDescription') }}</p>
     </NovelPreviewDialog>
   </div>
 </template>
@@ -186,11 +186,14 @@ import WorldListItemFormModal from './WorldListItemFormModal.vue'
 import { ensureWorldListItem } from '@renderer/services/novel/blueprint-asset'
 import { NovelAPI } from '@renderer/services/novel/api'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
+import { useI18n } from '@renderer/composables/useI18n'
 import { randomUUID } from '@renderer/utils/id'
 import type { ProjectModelPrefs } from '@renderer/services/novel/project-model'
 
 export type WorldSettingPanel = 'rules' | 'locations' | 'factions'
 type ItemKind = 'location' | 'faction'
+
+const { t } = useI18n()
 
 interface ListItem {
   id?: string
@@ -238,7 +241,7 @@ const normalizeList = (source: unknown): ListItem[] => {
       const normalized = ensureWorldListItem(item as WorldListItem | string)
       return {
         id: normalized.id,
-        title: normalized.name || normalized.title || '未命名',
+        title: normalized.name || normalized.title || t('novelDetail.worldSetting.unnamed'),
         description: normalized.description || '',
       }
     })
@@ -253,20 +256,24 @@ const currentList = computed(() => (props.panel === 'factions' ? factions.value 
 
 const selectedItem = computed(() => currentList.value[selectedIndex.value] ?? null)
 
-const listTitle = computed(() => (props.panel === 'factions' ? '阵营' : '地点'))
-const listAriaLabel = computed(() => (props.panel === 'factions' ? '阵营列表' : '地点列表'))
-const listIconFallback = computed(() => (props.panel === 'factions' ? '阵' : '地'))
+const listTitle = computed(() =>
+  props.panel === 'factions' ? t('novelDetail.worldSetting.factionsList') : t('novelDetail.worldSetting.locationsList')
+)
+const listAriaLabel = computed(() =>
+  props.panel === 'factions' ? t('novelDetail.worldSetting.factionsListAria') : t('novelDetail.worldSetting.locationsListAria')
+)
+const listIconFallback = computed(() =>
+  props.panel === 'factions' ? t('novelDetail.worldSetting.factionIcon') : t('novelDetail.worldSetting.locationIcon')
+)
 const emptyTitle = computed(() =>
-  props.panel === 'factions' ? '还没有阵营设定' : '还没有关键地点'
+  props.panel === 'factions' ? t('novelDetail.worldSetting.factionsEmptyTitle') : t('novelDetail.worldSetting.locationsEmptyTitle')
 )
 const emptyDescription = computed(() =>
-  props.panel === 'factions'
-    ? '点击此处添加第一个阵营'
-    : '点击此处添加第一个地点'
+  props.panel === 'factions' ? t('novelDetail.worldSetting.factionsEmptyDesc') : t('novelDetail.worldSetting.locationsEmptyDesc')
 )
 
 const previewKindLabel = computed(() =>
-  itemFormKind.value === 'location' ? '关键地点' : '主要阵营'
+  itemFormKind.value === 'location' ? t('novelDetail.worldSetting.locationBadge') : t('novelDetail.worldSetting.factionBadge')
 )
 
 const itemFormSource = computed(() => {
@@ -303,22 +310,22 @@ watch(currentList, (list) => {
 
 function rulesMenuActions(): DetailMenuAction[] {
   if (!props.editable) {
-    return [{ id: 'preview', label: '预览', onClick: () => openRulesPreview() }]
+    return [{ id: 'preview', label: t('novelDetail.common.preview'), onClick: () => openRulesPreview() }]
   }
   return [
-    { id: 'preview', label: '预览', onClick: () => openRulesPreview() },
-    { id: 'edit', label: '编辑', onClick: () => openRulesEdit() },
+    { id: 'preview', label: t('novelDetail.common.preview'), onClick: () => openRulesPreview() },
+    { id: 'edit', label: t('novelDetail.common.edit'), onClick: () => openRulesEdit() },
   ]
 }
 
 function listItemMenuActions(index: number): DetailMenuAction[] {
   if (!props.editable) {
-    return [{ id: 'preview', label: '预览', onClick: () => openPreview(index) }]
+    return [{ id: 'preview', label: t('novelDetail.common.preview'), onClick: () => openPreview(index) }]
   }
   return [
-    { id: 'preview', label: '预览', onClick: () => openPreview(index) },
-    { id: 'edit', label: '编辑', onClick: () => openEditItem(itemKind.value, index) },
-    { id: 'delete', label: '删除', onClick: () => void deleteItem(itemKind.value, index) },
+    { id: 'preview', label: t('novelDetail.common.preview'), onClick: () => openPreview(index) },
+    { id: 'edit', label: t('novelDetail.common.edit'), onClick: () => openEditItem(itemKind.value, index) },
+    { id: 'delete', label: t('novelDetail.common.delete'), onClick: () => void deleteItem(itemKind.value, index) },
   ]
 }
 
@@ -375,7 +382,7 @@ async function onRulesSave(rules: string) {
     await persistWorldSetting({ core_rules: rules })
     showRulesForm.value = false
   } catch (error) {
-    globalAlert.showError(error instanceof Error ? error.message : '保存失败', '世界规则保存失败')
+    globalAlert.showError(error instanceof Error ? error.message : t('novelDetail.common.saveFailed'), t('novelDetail.worldSetting.rulesSaveFailed'))
   }
 }
 
@@ -397,7 +404,7 @@ async function onItemFormSave(item: WorldListItem) {
     await persistWorldSetting({ [field]: source })
     showItemForm.value = false
   } catch (error) {
-    globalAlert.showError(error instanceof Error ? error.message : '保存失败', '保存失败')
+    globalAlert.showError(error instanceof Error ? error.message : t('novelDetail.common.saveFailed'), t('novelDetail.common.saveFailed'))
   }
 }
 
@@ -405,9 +412,12 @@ async function deleteItem(kind: ItemKind, index: number) {
   if (!props.editable || !props.projectId) return
   const list = kind === 'location' ? locations.value : factions.value
   const item = list[index]
-  const label = item?.title || '该条目'
-  const kindLabel = kind === 'location' ? '地点' : '阵营'
-  const confirmed = await globalAlert.showConfirm(`确定删除「${label}」吗？此操作不可撤销。`, `删除${kindLabel}`)
+  const label = item?.title || t('novelDetail.worldSetting.thisEntry')
+  const kindLabel = kind === 'location' ? t('novelDetail.worldSetting.kindLocation') : t('novelDetail.worldSetting.kindFaction')
+  const confirmed = await globalAlert.showConfirm(
+    t('novelDetail.common.confirmDelete', { name: label }),
+    t('novelDetail.worldSetting.deleteItem', { kind: kindLabel })
+  )
   if (!confirmed) return
 
   const field = kind === 'location' ? 'key_locations' : 'factions'
@@ -419,7 +429,7 @@ async function deleteItem(kind: ItemKind, index: number) {
       selectedIndex.value = Math.max(0, source.length - 1)
     }
   } catch (error) {
-    globalAlert.showError(error instanceof Error ? error.message : '删除失败', '删除失败')
+    globalAlert.showError(error instanceof Error ? error.message : t('novelDetail.common.deleteFailed'), t('novelDetail.common.deleteFailed'))
   }
 }
 

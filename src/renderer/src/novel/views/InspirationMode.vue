@@ -16,9 +16,9 @@
     >
       <!-- 灵感模式入口界面（仅独立页面） -->
       <div v-if="!embedded && !conversationStarted" class="novel-entry-card fade-in">
-        <h1 class="novel-entry-card__title">小说家的新篇章</h1>
+        <h1 class="novel-entry-card__title">{{ t('inspiration.entryTitle') }}</h1>
         <p class="novel-entry-card__desc">
-          与 AI 对话构思，从一句灵感出发，搭好世界观与人物，落笔第一部小说。
+          {{ t('inspiration.entryDesc') }}
         </p>
         <button
           type="button"
@@ -26,9 +26,9 @@
           :disabled="novelStore.isLoading"
           @click="startConversation"
         >
-          {{ novelStore.isLoading ? '正在准备...' : '开启灵感模式' }}
+          {{ novelStore.isLoading ? t('common.loading') : t('inspiration.startButton') }}
         </button>
-        <button type="button" class="novel-btn novel-btn--text mt-3" @click="goBack">返回</button>
+        <button type="button" class="novel-btn novel-btn--text mt-3" @click="goBack">{{ t('common.back') }}</button>
       </div>
 
       <!-- 灵感模式交互界面 -->
@@ -42,6 +42,7 @@
           :mode="projectWritingMode"
           :conversation-state="displayConversationState"
           :is-refining="isChatRequestInFlight"
+          :project-id="projectId"
         />
         <div
           class="novel-chat-panel"
@@ -69,39 +70,46 @@
             </div>
             <div class="novel-chat-panel__title-text">
               <h2 class="novel-chat-panel__title">
-                <template v-if="isPolishMode">AI 助手</template>
-                <template v-else>灵感对话</template>
+                <template v-if="isPolishMode">{{ t('inspiration.polishTitle') }}</template>
+                <template v-else>{{ t('inspiration.chatTitle') }}</template>
               </h2>
               <p class="novel-chat-panel__subtitle">
                 <template v-if="isPolishMode">
-                  全书共用同一会话 · 当前浏览「{{ polishContext?.sectionLabel }}」
+                  {{ t('inspiration.polishSubtitle', { section: polishContext?.sectionLabel ?? '' }) }}
                   <span class="novel-chat-panel__scope-tag">{{ POLISH_SCOPE_LABELS.global }}</span>
                   <span v-if="polishWorkflowMode === 'reinspiration'" class="novel-chat-panel__scope-tag is-warn">
                     {{ POLISH_WORKFLOW_LABELS.reinspiration }}
                   </span>
                 </template>
-                <template v-else>与文思一起构思你的故事</template>
+                <template v-else>{{ t('inspiration.chatSubtitle') }}</template>
               </p>
             </div>
           </div>
           <p v-if="isPolishMode" class="novel-chat-panel__scope-note">
-            设定修改默认全书联动，会同步调整所有相关板块。
+            {{ t('inspiration.polishScopeNote') }}
           </p>
           <div class="novel-chat-panel__meta">
+            <span
+              v-if="activeAgentMessage && !isPolishMode"
+              class="novel-chat-panel__status-badge novel-chat-panel__status-badge--agent"
+            >
+              <span class="novel-chat-panel__status-dot is-pulse" />
+              {{ activeAgentMessage }}
+            </span>
             <span
               v-if="isChatRequestInFlight || isPolishMaterializing"
               class="novel-chat-panel__status-badge"
               :class="{ 'novel-chat-panel__status-badge--polish': isPolishMode }"
             >
               <span class="novel-chat-panel__status-dot is-pulse" />
-              回复中
+              {{ t('inspiration.replying') }}
             </span>
-            <span v-if="currentTurn > 0" class="novel-chat-panel__turn">第 {{ currentTurn }} 轮</span>
+            <span v-if="currentTurn > 0" class="novel-chat-panel__turn">{{ t('inspiration.turn', { n: currentTurn }) }}</span>
             <button
               v-if="!embedded"
               type="button"
               class="novel-chat-panel__icon-btn"
-              :title="isPolishMode ? '新会话' : '重新开始'"
+              :title="isPolishMode ? t('inspiration.newSession') : t('inspiration.restart')"
               :disabled="isInitialLoading"
               @click="handleRestart"
             >
@@ -111,7 +119,7 @@
               v-if="!embedded"
               type="button"
               class="novel-chat-panel__icon-btn"
-              title="关闭"
+              :title="t('inspiration.close')"
               @click="handleClose"
             >
               <X :size="16" />
@@ -185,6 +193,7 @@
         <BlueprintGeneratingPanel
           :progress="blueprintGen.progress.value"
           :loading-text="blueprintProgressMessage || blueprintGen.loadingText.value"
+          :generation-progress="blueprintProgressDetail"
           @cancel="cancelBlueprintGeneration"
         />
       </div>
@@ -234,16 +243,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, onMounted, onUnmounted, computed, watch } from 'vue'
+import { ref, nextTick, onMounted, onUnmounted, computed, watch, toRef } from 'vue'
 import { RotateCcw, X, Sparkles, MessageCircle } from 'lucide-vue-next'
 import { useRouter, useRoute } from '@renderer/novel/composables/useNovelRouter'
 import { useNovelStore } from '@renderer/stores/novel'
-import type { UIControl, Blueprint, ConversationMessage } from '@renderer/services/novel/api'
+import type { UIControl, ConversationMessage } from '@renderer/services/novel/api'
 import { NovelAPI } from '@renderer/services/novel/api'
-import { isAbortError, isBlueprintGenerating } from '@renderer/services/novel/async-task-registry'
+import { isAbortError } from '@renderer/services/novel/async-task-registry'
 import type { ChatStreamStatus } from '@renderer/services/novel/writing-service'
 import type { SectionPolishContext, PolishableSectionKey, SectionPolishApplyPayload } from '@renderer/novel/utils/section-polish'
-import { sanitizeMaterialCharacters } from '@shared/novel/blueprint-material-schemas'
 import {
   extractCharacterBatchTargetFromHistory,
   isCharacterBatchContinuationRequest,
@@ -253,7 +261,6 @@ import {
 import {
   normalizeAffectedSections,
   normalizePolishScopeMode,
-  POLISH_SECTION_LABELS,
   POLISH_SCOPE_LABELS,
   POLISH_WORKFLOW_LABELS,
   buildPolishMaterializeChoiceControl,
@@ -262,11 +269,8 @@ import {
   resolvePolishMaterializeMessage,
   shouldAutoMaterializePolish,
   shouldShowPolishMaterializeChoice,
-  type PolishScopeMode,
-  type PolishWorkflowMode,
 } from '@renderer/novel/utils/section-polish'
-import { patchAiAssistantRuntime } from '@renderer/novel/composables/useAiAssistantRuntime'
-import { restorePolishSession } from '@renderer/novel/utils/polish-session'
+import { useSectionPolishSession } from '@renderer/novel/composables/useSectionPolishSession'
 import ChatBubble from '@renderer/novel/components/ChatBubble.vue'
 import ConversationInput from '@renderer/novel/components/ConversationInput.vue'
 import BlueprintConfirmation from '@renderer/novel/components/BlueprintConfirmation.vue'
@@ -276,25 +280,22 @@ import BlueprintGeneratingPanel from '@renderer/novel/components/BlueprintGenera
 import ConceptChecklistPanel from '@renderer/novel/components/ConceptChecklistPanel.vue'
 import InspirationLoading from '@renderer/novel/components/InspirationLoading.vue'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
-import {
-  formatBlueprintGenerationError,
-  useBlueprintGeneration,
-  LONG_TASK_NO_TOTAL_TIMEOUT,
-} from '@renderer/novel/composables/useBlueprintGeneration'
-import { getMaterialSchema } from '@shared/novel/blueprint-material-schemas'
-import { isUnresolvedPolishAiMessage, resolveDisplayAiMessage } from '@renderer/services/novel/json-utils'
+import { useInspirationBlueprintFlow } from '@renderer/novel/composables/useInspirationBlueprintFlow'
+import { useI18n } from '@renderer/composables/useI18n'
+import { isUnresolvedPolishAiMessage, resolveDisplayAiMessage, UNRESOLVED_AI_MESSAGE_PLACEHOLDER } from '@renderer/services/novel/json-utils'
 import { polishDebug, polishDebugWarn } from '@renderer/novel/utils/section-polish-debug'
-import { normalizeUiControl } from '@renderer/novel/utils/chat-options'
+import { resolveUiControl } from '@renderer/novel/utils/chat-options'
 import { randomUUID } from '@renderer/utils/id'
 import { formatGatewayContentFilterError } from '@renderer/services/gateway-api'
 import { resolveWritingMode } from '@shared/novel/writing-mode'
 import {
   buildConceptBlueprintPreview,
-  reconcileConceptConversationState,
-  rebuildFullConceptStateFromHistory,
   resolveConceptBriefForDisplay,
+  resolveConceptStateForDisplay,
   type ConceptConversationState,
 } from '@shared/novel/concept-checklist'
+import { resolveProjectConceptState } from '@shared/novel/story-system'
+import { useAgentOrchestration } from '@renderer/services/agent-orchestration-service'
 import {
   DEFAULT_INSPIRATION_MODAL_CHROME,
   type InspirationModalChrome,
@@ -367,7 +368,9 @@ const DEFAULT_UI_CONTROL: UIControl = {
 
 const router = useRouter()
 const route = useRoute()
+const { t } = useI18n()
 const novelStore = useNovelStore()
+const { getActiveRun } = useAgentOrchestration()
 
 function formatChatError(error: unknown): string {
   const raw = error instanceof Error ? error.message : '未知错误'
@@ -376,28 +379,97 @@ function formatChatError(error: unknown): string {
 
 const conversationStarted = ref(false)
 const isInitialLoading = ref(false)
-const showBlueprintConfirmation = ref(false)
-const showSectionPolishConfirmation = ref(false)
-const showBlueprint = ref(false)
 const chatMessages = ref<ChatMessage[]>([])
 const currentUIControl = ref<UIControl | null>(null)
 const currentTurn = ref(0)
-const completedBlueprint = ref<Blueprint | null>(null)
-const isBlueprintSaving = ref(false)
-const confirmationMessage = ref('')
-const blueprintMessage = ref('')
 const chatArea = ref<HTMLElement>()
-const blueprintGen = useBlueprintGeneration()
-const blueprintProgressMessage = ref('')
+const isChatRequestInFlight = ref(false)
+
+const runPolishMaterializeHolder: {
+  fn: (latestMessage?: string) => Promise<boolean | void>
+} = { fn: async () => false }
+
+const scrollToBottomHolder = {
+  fn: async () => {},
+}
+
+const blueprintFlow = useInspirationBlueprintFlow({
+  embedded: toRef(props, 'embedded'),
+  projectId: computed(() => props.projectId),
+  conversationStarted,
+  onBlueprintSaved: () => emit('blueprint-saved'),
+  onClose: () => emit('close'),
+  navigateToProject: (projectId) => router.push(`/novel/${projectId}`),
+})
+
+const {
+  showBlueprintConfirmation,
+  showBlueprint,
+  completedBlueprint,
+  isBlueprintSaving,
+  confirmationMessage,
+  blueprintMessage,
+  blueprintProgressMessage,
+  blueprintProgressDetail,
+  showGeneratingOverlay,
+  blueprintGen,
+  handleStartBlueprintGeneration,
+  cancelBlueprintGeneration,
+  restoreTaskView,
+  handleRegenerateBlueprint,
+  handleRegenerateBlueprintWithConfirm,
+  handleConfirmBlueprint,
+} = blueprintFlow
+
+const polishSession = useSectionPolishSession({
+  projectId: computed(() => props.projectId),
+  polishContext: computed(() => props.polishContext),
+  novelStore,
+  conversationStarted,
+  isInitialLoading,
+  chatMessages,
+  currentUIControl,
+  currentTurn,
+  confirmationMessage,
+  isChatRequestInFlight,
+  onApplied: (payload) => emit('section-polish-applied', payload),
+  scrollToBottom: () => scrollToBottomHolder.fn(),
+  onAutoMaterialize: (msg) => runPolishMaterializeHolder.fn(msg),
+})
+
+const {
+  showSectionPolishConfirmation,
+  polishHistory,
+  polishConversationState,
+  pendingBlueprintUpdates,
+  pendingAffectedSectionLabels,
+  isPolishMaterializing,
+  lastPolishAiMessage,
+  polishScopeMode,
+  polishWorkflowMode,
+  sessionBootstrapped,
+  restorePolishInputControl,
+  getLastPolishUserText,
+  buildEffectivePolishContext,
+  showPolishConfirmation,
+  initSectionPolishSession,
+  handleApplySectionPolish,
+  resetPolishSessionState,
+  polishInputPlaceholder,
+} = polishSession
+
 const projectWritingMode = computed(() =>
   resolveWritingMode(novelStore.currentProject ?? undefined)
 )
 
 const displayConversationState = computed((): ConceptConversationState | null | undefined => {
-  const state = novelStore.currentConversationState as ConceptConversationState | null | undefined
-  const history = novelStore.currentProject?.conversation_history
-  if (!state || !history?.length) return state
-  return reconcileConceptConversationState(state, projectWritingMode.value, { history })
+  const project = novelStore.currentProject
+  const embedded = novelStore.currentConversationState as ConceptConversationState | null | undefined
+  if (!project) return embedded
+  const base = resolveProjectConceptState(project, projectWritingMode.value, embedded)
+  return resolveConceptStateForDisplay(base, projectWritingMode.value, {
+    history: project.conversation_history?.length ? project.conversation_history : undefined,
+  })
 })
 
 const checklistProgress = computed(() => {
@@ -418,80 +490,26 @@ const canEnterBlueprintConfirmation = computed(
 )
 
 const confirmGateHint = computed(() => {
-  if (currentTurn.value < 1) return '先和文思聊一轮，再确认设定'
+  if (currentTurn.value < 1) return t('inspiration.confirmBlueprintHint')
   if (checklistProgress.value.pending > 0) {
-    return `还有 ${checklistProgress.value.pending} 项待完善，也可直接预览`
+    return t('inspiration.confirmBlueprintPending', { n: checklistProgress.value.pending })
   }
-  return '满意后进入蓝图确认'
+  return t('inspiration.confirmBlueprintReady')
 })
-const showGeneratingOverlay = computed(() => {
-  const projectId = novelStore.currentProject?.id
-  return (
-    blueprintGen.isGenerating.value ||
-    (projectId ? isBlueprintGenerating(projectId) : false)
-  )
+const activeAgentRun = computed(() => {
+  const id = props.projectId ?? novelStore.currentProject?.id
+  return id ? getActiveRun(id) : undefined
 })
-const polishHistory = ref<ConversationMessage[]>([])
-const polishConversationState = ref<Record<string, unknown>>({})
-const pendingBlueprintUpdates = ref<Partial<import('@shared/novel/types').Blueprint> | null>(null)
-const pendingAffectedSections = ref<PolishableSectionKey[]>([])
-const isPolishMaterializing = ref(false)
-const isChatRequestInFlight = ref(false)
-const lastPolishAiMessage = ref('')
-const polishScopeMode = ref<PolishScopeMode>('global')
-const polishWorkflowMode = ref<PolishWorkflowMode>('edit')
-const sessionBootstrapped = ref(false)
-
-const syncAssistantRuntime = () => {
-  if (!isPolishMode.value || !props.projectId) return
-  patchAiAssistantRuntime(props.projectId, {
-    inFlight: isChatRequestInFlight.value,
-    materializing: isPolishMaterializing.value,
-    entrySectionLabel: props.polishContext?.sectionLabel ?? '',
-    scopeMode: polishScopeMode.value,
-    workflowMode: polishWorkflowMode.value,
-  })
-}
-
-watch([isChatRequestInFlight, isPolishMaterializing, polishScopeMode, polishWorkflowMode], syncAssistantRuntime, {
-  immediate: true,
+const activeAgentMessage = computed(() => {
+  const run = activeAgentRun.value
+  if (!run?.currentAgentLabel) return null
+  return `${run.currentAgentLabel} · ${run.currentMessage ?? t('inspiration.agentRunning')}`
 })
-
-watch(
-  () => props.polishContext,
-  (ctx) => {
-    if (!isPolishMode.value || !ctx || !sessionBootstrapped.value) return
-    if (ctx.workflowMode) polishWorkflowMode.value = ctx.workflowMode
-    if (ctx.scopeMode) polishScopeMode.value = normalizePolishScopeMode(ctx.scopeMode)
-    if (ctx.section) {
-      polishConversationState.value = {
-        ...polishConversationState.value,
-        entry_section: ctx.section,
-        workflow_mode: ctx.workflowMode ?? polishWorkflowMode.value,
-        scope_mode: ctx.scopeMode ?? polishScopeMode.value,
-      }
-    }
-    restorePolishInputControl()
-    syncAssistantRuntime()
-  },
-  { deep: true }
-)
-const pendingAffectedSectionLabels = computed(() =>
-  pendingAffectedSections.value.map((s) => POLISH_SECTION_LABELS[s])
-)
 let activeAbortController: AbortController | null = null
 
 const inputDisabled = computed(
   () => isInitialLoading.value || isChatRequestInFlight.value || isPolishMaterializing.value
 )
-
-const restorePolishInputControl = () => {
-  if (!props.polishContext) return
-  currentUIControl.value = {
-    type: 'text_input',
-    placeholder: polishInputPlaceholder(props.polishContext, polishScopeMode.value, polishWorkflowMode.value),
-  }
-}
 
 const polishMaterializeChoiceControl = buildPolishMaterializeChoiceControl
 
@@ -505,18 +523,16 @@ const resolvePolishDisplayMessage = (rawMessage: string): string => {
   return display
 }
 
-const getLastPolishUserText = (): string => {
-  for (let i = polishHistory.value.length - 1; i >= 0; i -= 1) {
-    const item = polishHistory.value[i]
-    if (item.role !== 'user') continue
-    try {
-      const input = JSON.parse(item.content) as { value?: string | null }
-      return input.value?.trim() ?? ''
-    } catch {
-      return item.content.trim()
-    }
-  }
-  return ''
+const resolveConceptDisplayMessage = (rawMessage: string, fallback = ''): string => {
+  const display = resolveDisplayAiMessage(rawMessage)
+  if (display.trim()) return display
+  const streamed = fallback.trim()
+  if (streamed) return resolveDisplayAiMessage(streamed)
+  return UNRESOLVED_AI_MESSAGE_PLACEHOLDER
+}
+
+const applyConceptUiControl = (rawControl: unknown, displayMessage: string) => {
+  currentUIControl.value = resolveUiControl(rawControl, displayMessage)
 }
 
 const abortActiveRequest = () => {
@@ -576,15 +592,8 @@ const resetInspirationMode = (clearProject = true) => {
   completedBlueprint.value = null
   confirmationMessage.value = ''
   blueprintMessage.value = ''
-  polishHistory.value = []
-  polishConversationState.value = {}
-  pendingBlueprintUpdates.value = null
-  pendingAffectedSections.value = []
+  resetPolishSessionState()
   isChatRequestInFlight.value = false
-  isPolishMaterializing.value = false
-  sessionBootstrapped.value = false
-  polishScopeMode.value = 'global'
-  polishWorkflowMode.value = 'edit'
 
   if (clearProject && !isPolishMode.value) {
     novelStore.setCurrentProject(null)
@@ -617,6 +626,9 @@ const handleRestart = async () => {
         sessionBootstrapped.value = false
         await initSectionPolishSession(props.projectId, props.polishContext, true)
       }
+    } else if (props.projectId || novelStore.currentProject?.id) {
+      const projectId = props.projectId ?? novelStore.currentProject!.id
+      await restartConceptSession(projectId)
     } else {
       await startConversation()
     }
@@ -702,6 +714,38 @@ const startConversation = async () => {
   }
 }
 
+const restartConceptSession = async (projectId: string) => {
+  abortActiveRequest()
+  showBlueprintConfirmation.value = false
+  showSectionPolishConfirmation.value = false
+  showBlueprint.value = false
+  chatMessages.value = []
+  currentTurn.value = 0
+  completedBlueprint.value = null
+  confirmationMessage.value = ''
+  blueprintMessage.value = ''
+  conversationStarted.value = true
+  isInitialLoading.value = true
+  currentUIControl.value = { ...DEFAULT_UI_CONTROL, placeholder: '文思正在准备第一个问题…' }
+
+  try {
+    await NovelAPI.clearConceptSession(projectId)
+    novelStore.currentConversationState = {}
+    if (novelStore.currentProject?.id === projectId) {
+      novelStore.currentProject.conversation_history = []
+    }
+    await handleUserInput(null)
+  } catch (error) {
+    if (isAbortError(error)) return
+    console.error('重新开始灵感对话失败:', error)
+    globalAlert.showError(
+      `无法重新开始: ${error instanceof Error ? error.message : '未知错误'}`,
+      '重新开始失败'
+    )
+    isInitialLoading.value = false
+  }
+}
+
 const prepareConversationForProject = () => {
   conversationStarted.value = true
   isInitialLoading.value = false
@@ -765,12 +809,12 @@ const restoreConversation = async (projectId: string) => {
         const lastAssistantMsg = JSON.parse(lastAssistantMsgStr)
 
         currentUIControl.value =
-          normalizeUiControl(
+          resolveUiControl(
             lastAssistantMsg.ui_control,
             resolveDisplayAiMessage(String(lastAssistantMsg.ai_message || ''))
           ) || { ...DEFAULT_UI_CONTROL }
-        novelStore.currentConversationState = rebuildFullConceptStateFromHistory(
-          project.conversation_history,
+        novelStore.currentConversationState = resolveProjectConceptState(
+          project,
           projectWritingMode.value,
           lastAssistantMsg.conversation_state || {}
         )
@@ -785,140 +829,6 @@ const restoreConversation = async (projectId: string) => {
     globalAlert.showError(`无法恢复对话: ${error instanceof Error ? error.message : '未知错误'}`, '加载失败')
     resetInspirationMode()
   }
-}
-
-const polishInputPlaceholder = (
-  context: SectionPolishContext,
-  _scope: PolishScopeMode = 'global',
-  workflow: PolishWorkflowMode = 'edit'
-) => {
-  if (workflow === 'reinspiration') {
-    return '描述你想保留的元素，以及希望整本书改成什么方向…'
-  }
-  const schema = getMaterialSchema(context.section)
-  const example = schema.userExamples[0]
-  return example
-    ? `用自然语言描述想改的${schema.label}，例如：${example}`
-    : `用自然语言描述想改的${schema.label}（全书联动）…`
-}
-
-const initSectionPolishSession = async (projectId: string, context: SectionPolishContext, force = false) => {
-  if (sessionBootstrapped.value && !force) {
-    restorePolishInputControl()
-    syncAssistantRuntime()
-    return
-  }
-
-  conversationStarted.value = true
-  isInitialLoading.value = false
-  showSectionPolishConfirmation.value = false
-  pendingBlueprintUpdates.value = null
-  pendingAffectedSections.value = []
-  confirmationMessage.value = ''
-
-  if (novelStore.currentProject?.id !== projectId) {
-    await novelStore.loadProject(projectId, true)
-  }
-
-  const project = novelStore.currentProject
-  const history = project?.section_polish_history ?? []
-  const savedState = project?.section_polish_state ?? {}
-  if (savedState.scope_mode === 'entry' || savedState.scope_mode === 'global' || savedState.scope_mode === 'auto') {
-    polishScopeMode.value = normalizePolishScopeMode(savedState.scope_mode)
-  }
-  if (savedState.workflow_mode === 'edit' || savedState.workflow_mode === 'reinspiration') {
-    polishWorkflowMode.value = savedState.workflow_mode
-  }
-  if (context.workflowMode) polishWorkflowMode.value = context.workflowMode
-  if (context.scopeMode) polishScopeMode.value = normalizePolishScopeMode(context.scopeMode)
-  const placeholder = polishInputPlaceholder(context, polishScopeMode.value, polishWorkflowMode.value)
-
-  if (history.length) {
-    const restored = restorePolishSession(
-      history,
-      savedState,
-      context.section,
-      project?.blueprint,
-      placeholder
-    )
-    chatMessages.value = restored.chatMessages
-    polishHistory.value = restored.polishHistory
-    polishConversationState.value = {
-      ...restored.polishConversationState,
-      scope_mode: polishScopeMode.value,
-      workflow_mode: polishWorkflowMode.value,
-      entry_section: context.section,
-    }
-    currentUIControl.value = restored.currentUIControl
-    currentTurn.value = restored.currentTurn
-    if (restored.pendingConfirmation) {
-      confirmationMessage.value = restored.pendingConfirmation.aiMessage
-      pendingBlueprintUpdates.value = restored.pendingConfirmation.blueprintUpdates
-      pendingAffectedSections.value = restored.pendingConfirmation.affectedSections
-      showSectionPolishConfirmation.value = true
-    } else if (restored.needsAutoMaterialize) {
-      lastPolishAiMessage.value = restored.autoMaterializeMessage ?? ''
-      await runPolishMaterialize(restored.autoMaterializeMessage)
-    } else if (
-      restored.autoMaterializeMessage &&
-      restored.currentUIControl.type === 'single_choice'
-    ) {
-      lastPolishAiMessage.value = restored.autoMaterializeMessage
-    }
-    sessionBootstrapped.value = true
-    syncAssistantRuntime()
-    await scrollToBottom()
-    return
-  }
-
-  chatMessages.value = []
-  polishHistory.value = []
-  polishConversationState.value = {
-    scope_mode: polishScopeMode.value,
-    workflow_mode: polishWorkflowMode.value,
-    entry_section: context.section,
-  }
-  currentTurn.value = 0
-  currentUIControl.value = {
-    type: 'text_input',
-    placeholder,
-  }
-  sessionBootstrapped.value = true
-  syncAssistantRuntime()
-}
-
-const buildEffectivePolishContext = (): SectionPolishContext | null => {
-  if (!props.polishContext) return null
-  return {
-    ...props.polishContext,
-    scopeMode: polishScopeMode.value,
-    workflowMode: polishWorkflowMode.value,
-    fullBlueprint: novelStore.currentProject?.blueprint ?? props.polishContext.fullBlueprint,
-  }
-}
-
-const showPolishConfirmation = (
-  aiMessage: string,
-  updates: Partial<Blueprint>,
-  affected: PolishableSectionKey[]
-) => {
-  const normalized: Partial<Blueprint> = { ...updates }
-  if (Array.isArray(normalized.characters)) {
-    normalized.characters = sanitizeMaterialCharacters(normalized.characters)
-    if (!normalized.characters.length) {
-      globalAlert.showError(
-        '生成的角色数据不完整（姓名至少 2 字且需含身份/性格/描述），请补充说明后重试。',
-        '无法确认'
-      )
-      restorePolishInputControl()
-      return
-    }
-  }
-  confirmationMessage.value = aiMessage
-  pendingBlueprintUpdates.value = normalized
-  pendingAffectedSections.value = affected
-  restorePolishInputControl()
-  showSectionPolishConfirmation.value = true
 }
 
 const getPolishExistingCharacterCount = () =>
@@ -945,7 +855,7 @@ const runPolishMaterialize = async (latestMessage?: string) => {
   })
 
   isPolishMaterializing.value = true
-  currentUIControl.value = { ...LOADING_UI_CONTROL, placeholder: '正在生成可应用的修改稿…' }
+  currentUIControl.value = { ...LOADING_UI_CONTROL, placeholder: t('inspiration.materializing') }
 
   const draftId = randomUUID()
   chatMessages.value.push({
@@ -968,12 +878,12 @@ const runPolishMaterialize = async (latestMessage?: string) => {
       {
         signal,
         stream: {
-          onChunk: ({ display, status }) => {
+          onChunk: ({ raw, status }) => {
             const idx = chatMessages.value.findIndex((m) => m.id === draftId)
             if (idx < 0) return
             chatMessages.value[idx] = {
               ...chatMessages.value[idx],
-              content: display || '正在整理修改稿…',
+              content: raw,
               streamStatus: status,
             }
             void scrollToBottom()
@@ -1141,12 +1051,12 @@ const handlePolishInput = async (userInput: any) => {
       {
         signal,
         stream: {
-          onChunk: ({ display, status }) => {
+          onChunk: ({ raw, status }) => {
             const idx = chatMessages.value.findIndex((m) => m.id === draftId)
             if (idx < 0) return
             chatMessages.value[idx] = {
               ...chatMessages.value[idx],
-              content: display,
+              content: raw,
               streamStatus: status,
             }
             void scrollToBottom()
@@ -1247,21 +1157,7 @@ const handlePolishInput = async (userInput: any) => {
   }
 }
 
-const handleApplySectionPolish = () => {
-  if (!props.polishContext || !pendingBlueprintUpdates.value) {
-    globalAlert.showError('修改结果缺失，请重新对话。', '应用失败')
-    return
-  }
-  emit('section-polish-applied', {
-    entrySection: props.polishContext.section,
-    blueprintUpdates: pendingBlueprintUpdates.value,
-    affectedSections: pendingAffectedSections.value,
-    replaceEntireBlueprint: polishWorkflowMode.value === 'reinspiration',
-  })
-  showSectionPolishConfirmation.value = false
-  pendingBlueprintUpdates.value = null
-  pendingAffectedSections.value = []
-}
+runPolishMaterializeHolder.fn = runPolishMaterialize
 
 const handleUserInput = async (userInput: any) => {
   if (isPolishMode.value) {
@@ -1313,10 +1209,13 @@ const handleUserInput = async (userInput: any) => {
     }
 
     const idx = chatMessages.value.findIndex((m) => m.id === draftId)
+    let displayMessage = ''
     if (idx >= 0) {
+      const streamed = chatMessages.value[idx].content
+      displayMessage = resolveConceptDisplayMessage(response.ai_message, streamed)
       chatMessages.value[idx] = {
         ...chatMessages.value[idx],
-        content: resolveDisplayAiMessage(response.ai_message),
+        content: displayMessage,
         streamStatus: 'done',
       }
     }
@@ -1324,11 +1223,7 @@ const handleUserInput = async (userInput: any) => {
 
     await scrollToBottom()
 
-    if (response.ui_control) {
-      currentUIControl.value = response.ui_control
-    } else {
-      currentUIControl.value = { ...DEFAULT_UI_CONTROL }
-    }
+    applyConceptUiControl(response.ui_control, displayMessage)
   } catch (error) {
     activeAbortController = null
     chatMessages.value = chatMessages.value.filter((m) => m.id !== draftId)
@@ -1343,84 +1238,6 @@ const handleUserInput = async (userInput: any) => {
     }
   } finally {
     isChatRequestInFlight.value = false
-  }
-}
-
-const handleStartBlueprintGeneration = async () => {
-  showBlueprintConfirmation.value = false
-  blueprintProgressMessage.value = ''
-  try {
-    const response = await blueprintGen.run(
-      () =>
-        novelStore.runBlueprintGeneration({
-          onProgress: (progress) => {
-            blueprintGen.setProgress(progress.percent)
-            blueprintProgressMessage.value = progress.message
-          },
-        }),
-      { totalTimeoutMs: LONG_TASK_NO_TOTAL_TIMEOUT }
-    )
-    handleBlueprintGenerated(response)
-  } catch (error) {
-    if (isAbortError(error)) {
-      globalAlert.showSuccess('已取消蓝图生成', '已取消')
-      showBlueprintConfirmation.value = true
-      return
-    }
-    console.error('生成蓝图失败:', error)
-    showBlueprintConfirmation.value = true
-    globalAlert.showError(formatBlueprintGenerationError(error), '生成失败')
-  }
-}
-
-const cancelBlueprintGeneration = () => {
-  novelStore.cancelBlueprintGeneration()
-}
-
-const handleBlueprintGenerated = (response: any) => {
-  completedBlueprint.value = response.blueprint
-  blueprintMessage.value = response.ai_message
-  showBlueprintConfirmation.value = false
-  showBlueprint.value = true
-}
-
-const handleRegenerateBlueprint = () => {
-  showBlueprint.value = false
-  showBlueprintConfirmation.value = true
-}
-
-const handleRegenerateBlueprintWithConfirm = async () => {
-  const confirmed = await globalAlert.showConfirm(
-    '重新生成会覆盖当前蓝图，确定继续吗？',
-    '重新生成'
-  )
-  if (confirmed) handleRegenerateBlueprint()
-}
-
-const handleConfirmBlueprint = async () => {
-  if (!completedBlueprint.value) {
-    globalAlert.showError('蓝图数据缺失，请重新生成或稍后重试。', '保存失败')
-    return
-  }
-  isBlueprintSaving.value = true
-  try {
-    await novelStore.saveBlueprint(completedBlueprint.value)
-    if (props.embedded) {
-      showBlueprint.value = false
-      completedBlueprint.value = null
-      blueprintMessage.value = ''
-      emit('blueprint-saved')
-      emit('close')
-      return
-    }
-    if (novelStore.currentProject) {
-      router.push(`/novel/${novelStore.currentProject.id}`)
-    }
-  } catch (error) {
-    console.error('保存蓝图失败:', error)
-    globalAlert.showError(`保存蓝图失败: ${error instanceof Error ? error.message : '未知错误'}`, '保存失败')
-  } finally {
-    isBlueprintSaving.value = false
   }
 }
 
@@ -1517,6 +1334,7 @@ defineExpose({
   handleRegenerateBlueprintWithConfirm,
   handleApplySectionPolish,
   resumeConceptRevision,
+  restoreTaskView,
 })
 
 const scrollToBottom = async () => {
@@ -1528,6 +1346,7 @@ const scrollToBottom = async () => {
     }
   })
 }
+scrollToBottomHolder.fn = scrollToBottom
 
 const bootstrapProject = async (projectId: string) => {
   await novelStore.loadProject(projectId, props.embedded)

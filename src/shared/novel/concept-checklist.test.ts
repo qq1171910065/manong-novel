@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   applyUserAnswerToChecklist,
   applyChapterCountFromUserText,
+  applySimpleModeChecklistDefaults,
   composeConceptBriefFromAnswers,
   deriveLockedFields,
   detectUserEditTopics,
@@ -14,8 +15,15 @@ import {
   patchConceptBriefSections,
   enrichBlueprintFromConcept,
   buildConceptBlueprintPreview,
+  buildChecklistPromptSupplement,
   buildFallbackRelationshipsFromConcept,
+  createEmptyChecklist,
+  rankIncompleteTopicsForQuestioning,
+  resolvePendingTopicAfterResponse,
   reconcileConceptConversationState,
+  sanitizeRefinedConceptState,
+  isPassthroughUserText,
+  syncChecklistFlagsFromAnswers,
   resolveBlueprintExpectedChapterCount,
   parseExplicitChecklistFieldEdit,
   parseExpectedChapterCount,
@@ -49,6 +57,108 @@ describe('extractMultiTopicHintsFromMessage', () => {
   it('pendingTopic 时短答归入追问项', () => {
     const hints = extractMultiTopicHintsFromMessage('近未来黑色幽默', 'genre_tone')
     expect(hints.genre_tone).toContain('近未来')
+  })
+})
+
+describe('rankIncompleteTopicsForQuestioning', () => {
+  it('用户一句多设定时优先追问已透露但未确认的项', () => {
+    const checklist = createEmptyChecklist()
+    checklist.spark = true
+    const ranked = rankIncompleteTopicsForQuestioning(
+      checklist,
+      { spark: '能品尝谎言的侦探世界' },
+      {},
+      'full',
+      {
+        userValue: '赛博朋克侦探故事，主角能品尝谎言，大概 20 章',
+      }
+    )
+    expect(['genre_tone', 'protagonist']).toContain(ranked[0])
+    expect(ranked.slice(0, 3)).toContain('protagonist')
+    expect(ranked).toContain('chapter_count')
+    expect(ranked.indexOf('working_title')).toBeGreaterThan(ranked.indexOf('protagonist'))
+  })
+
+  it('无用户线索时标题篇幅靠后', () => {
+    const checklist = createEmptyChecklist()
+    checklist.spark = true
+    checklist.genre_tone = true
+    checklist.prose_style = true
+    checklist.protagonist = true
+    const ranked = rankIncompleteTopicsForQuestioning(checklist, {}, {}, 'full')
+    const titleIdx = ranked.indexOf('working_title')
+    const chapterIdx = ranked.indexOf('chapter_count')
+    const conflictIdx = ranked.indexOf('central_conflict')
+    expect(conflictIdx).toBeGreaterThanOrEqual(0)
+    if (titleIdx >= 0 && conflictIdx >= 0) expect(titleIdx).toBeGreaterThan(conflictIdx)
+    if (chapterIdx >= 0 && conflictIdx >= 0) expect(chapterIdx).toBeGreaterThan(conflictIdx)
+  })
+})
+
+describe('buildChecklistPromptSupplement', () => {
+  it('不强制固定顺序的「本轮优先引导补齐」', () => {
+    const checklist = createEmptyChecklist()
+    checklist.spark = true
+    const supplement = buildChecklistPromptSupplement(checklist, { spark: '记忆交易城市' }, 'full', {
+      userValue: '主角是失忆的档案员',
+      drafts: { protagonist: '失忆的档案员' },
+    })
+    expect(supplement).toContain('智能追问策略')
+    expect(supplement).not.toContain('本轮优先引导补齐')
+    expect(supplement).toContain('主角')
+  })
+
+  it('简易模式要求主动设计而非逐项追问', () => {
+    const checklist = createEmptyChecklist()
+    const supplement = buildChecklistPromptSupplement(checklist, {}, 'simple', {
+      userValue: '赛博朋克侦探能品尝谎言',
+      substantiveTurns: 1,
+      drafts: { spark: '赛博朋克侦探能品尝谎言', genre_tone: '赛博朋克', protagonist: '能品尝谎言的侦探' },
+    })
+    expect(supplement).toContain('简易模式·主动设计')
+    expect(supplement).not.toContain('智能追问策略')
+    expect(supplement).toContain('禁止')
+    expect(supplement).toContain('主动设计')
+  })
+})
+
+describe('applySimpleModeChecklistDefaults', () => {
+  it('核心设定足够时自动补默认篇幅', () => {
+    const checklist = createEmptyChecklist()
+    checklist.spark = true
+    checklist.genre_tone = true
+    checklist.protagonist = true
+    const result = applySimpleModeChecklistDefaults(
+      checklist,
+      {
+        spark: '记忆可被交易的城市',
+        genre_tone: '近未来黑色科幻',
+        protagonist: '失忆档案员',
+      },
+      'simple'
+    )
+    expect(result.answers.chapter_count).toContain('6')
+    expect(result.checklist.chapter_count).toBe(true)
+  })
+
+  it('工程模式不自动补篇幅', () => {
+    const checklist = createEmptyChecklist()
+    const result = applySimpleModeChecklistDefaults(
+      checklist,
+      { spark: '火花', genre_tone: '类型', protagonist: '主角' },
+      'full'
+    )
+    expect(result.answers.chapter_count).toBeUndefined()
+  })
+})
+
+describe('resolvePendingTopicAfterResponse', () => {
+  it('仅根据 AI 追问内容识别 pending，无关键词时返回 null', () => {
+    const checklist = createEmptyChecklist()
+    expect(
+      resolvePendingTopicAfterResponse('我们来聊聊主角的驱动力吧', checklist, 'full')
+    ).toBe('protagonist')
+    expect(resolvePendingTopicAfterResponse('好的，继续', checklist, 'full')).toBeNull()
   })
 })
 
@@ -398,6 +508,76 @@ describe('reconcileConceptConversationState', () => {
     expect(reconciled.checklist_answers?.chapter_count).toBe('5 章左右')
   })
 
+  it('从对话历史同步长篇并勾选 chapter_count', () => {
+    const reconciled = reconcileConceptConversationState(
+      { checklist: {}, checklist_answers: {}, checklist_drafts: {} },
+      'full',
+      {
+        history: [{ role: 'user', content: JSON.stringify({ value: '长篇' }) }],
+      }
+    )
+    expect(reconciled.checklist?.chapter_count).toBe(true)
+    expect(reconciled.checklist_answers?.chapter_count).toContain('120')
+  })
+
+  it('sanitizeRefinedConceptState 剔除传话式 answers', () => {
+    const userLine = '八位美女逐一登场，原始征服的狂欢派对就此拉开帷幕'
+    const sanitized = sanitizeRefinedConceptState(
+      {
+        checklist: { spark: true },
+        checklist_answers: { spark: userLine },
+        checklist_drafts: { spark: userLine },
+      },
+      'full',
+      {
+        history: [{ role: 'user', content: JSON.stringify({ value: userLine }) }],
+      }
+    )
+    expect(sanitized.checklist?.spark).toBe(false)
+    expect(sanitized.checklist_answers?.spark).toBeUndefined()
+    const preview = buildConceptBlueprintPreview(sanitized, 'full')
+    expect(preview.items.find((i) => i.key === 'spark')?.value).toBe('待 AI 提炼')
+  })
+
+  it('isPassthroughUserText 识别用户原话', () => {
+    const user = '近未来赛博朋克黑色幽默'
+    expect(isPassthroughUserText(user, [user])).toBe(true)
+    expect(isPassthroughUserText('赛博朋克都市中，谎言有味道的黑色侦探故事', [user])).toBe(false)
+    expect(
+      isPassthroughUserText('近未来赛博朋克黑色幽默，主角是侦探', [user])
+    ).toBe(false)
+  })
+
+  it('基于 draft 扩写润色的 answer 可展示在清单', () => {
+    const draft = '赛博朋克侦探能品尝谎言'
+    const refined = '在近未来赛博朋克都市中，一名拥有品尝谎言能力的私家侦探游走于霓虹与谎言之间'
+    expect(isRefinedConceptAnswer(refined, draft)).toBe(true)
+    expect(isPassthroughUserText(refined, [draft], draft)).toBe(false)
+    const preview = buildConceptBlueprintPreview(
+      {
+        checklist: {},
+        checklist_answers: { spark: refined, protagonist: '私家侦探，能品尝谎言，外冷内热' },
+        checklist_drafts: { spark: draft, protagonist: draft },
+      },
+      'simple'
+    )
+    expect(preview.items.find((i) => i.key === 'spark')?.done).toBe(true)
+    expect(preview.items.find((i) => i.key === 'protagonist')?.done).toBe(true)
+  })
+
+  it('syncChecklistFlagsFromAnswers 根据模型 answers 勾选清单', () => {
+    const checklist = syncChecklistFlagsFromAnswers(
+      createEmptyChecklist(),
+      {
+        spark: '荒岛求生背景下，系统驱动的多线情感与权力博弈',
+        genre_tone: '热辣直接的成人向爽文基调',
+      },
+      { userTexts: ['用户原始灵感描述'] }
+    )
+    expect(checklist.spark).toBe(true)
+    expect(checklist.genre_tone).toBe(true)
+  })
+
   it('buildConceptBlueprintPreview 与 reconcile 后 answers 一致', () => {
     const state = reconcileConceptConversationState(
       {
@@ -454,7 +634,7 @@ describe('buildConceptBlueprintPreview', () => {
       {
         checklist: { spark: true, protagonist: true, chapter_count: true },
         checklist_answers: {
-          spark: '一场雨夜谋杀',
+          spark: '雨夜凶案现场，侦探从谎言的味觉里嗅出真相',
           protagonist: '林默，私家侦探',
           working_title: '雨夜档案',
           chapter_count: '写12章',

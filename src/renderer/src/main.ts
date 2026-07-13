@@ -1,4 +1,4 @@
-﻿import { createApp } from 'vue'
+import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 
 import '@fontsource/noto-sans-sc/400.css'
@@ -26,6 +26,12 @@ import { pageLoaders } from './data/page-loaders'
 import HomePage from '@renderer/pages/HomePage.vue'
 
 import NovelRouterLink from '@renderer/novel/components/NovelRouterLink.vue'
+import { initWritingRuntime } from '@renderer/services/novel/writing-runtime-init'
+import { initGatewayKeyStorage } from '@renderer/services/gateway-api'
+import { initI18n } from '@renderer/composables/useI18n'
+
+void Promise.all([initGatewayKeyStorage(), initI18n()])
+initWritingRuntime()
 
 const Root = createRoot({
   appName: appConfig.displayName,

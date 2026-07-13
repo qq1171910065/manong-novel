@@ -45,8 +45,8 @@ const tooltipStyle = computed(() => ({
   left: `${tooltipPosition.value.left}px`,
 }))
 
-let leaveTimeout: NodeJS.Timeout
-let enterTimeout: NodeJS.Timeout
+let leaveTimeout: ReturnType<typeof setTimeout> | undefined
+let enterTimeout: ReturnType<typeof setTimeout> | undefined
 
 const onMouseEnter = () => {
   clearTimeout(leaveTimeout)

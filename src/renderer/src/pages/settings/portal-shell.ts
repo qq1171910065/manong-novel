@@ -53,7 +53,7 @@ export interface PortalShellContext {
     showSizePicker?: boolean
   }>
   usageChartOption: ComputedRef<Record<string, unknown>>
-  usagePageSummary: ComputedRef<{ records: number; cost: number; tokens: number }>
+  usagePageSummary: ComputedRef<{ records: number; pageRecords: number; cost: number; tokens: number }>
   accountDetails: ComputedRef<
     Array<{ id: string; label: string; hint?: string; value: string; status?: string }>
   >

@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Character, Relationship } from '@shared/novel/types'
+import { useI18n } from '@renderer/composables/useI18n'
+
+const { t } = useI18n()
 
 const props = withDefaults(
   defineProps<{
@@ -13,6 +16,8 @@ const props = withDefaults(
     highlightName: null,
   }
 )
+
+const defaultRelationType = computed(() => t('novelDetail.relationshipGraph.defaultRelationType'))
 
 export interface GraphClickPayload {
   x: number
@@ -66,7 +71,7 @@ function readName(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
 }
 
-function normalizeRelationship(rel: Relationship, index: number): NormalizedRel | null {
+function normalizeRelationship(rel: Relationship, index: number, fallbackType: string): NormalizedRel | null {
   const extra = rel as Record<string, unknown>
   const from = readName(rel.character_from ?? extra.from ?? extra.source ?? extra.character_a)
   const to = readName(rel.character_to ?? extra.to ?? extra.target ?? extra.character_b)
@@ -75,7 +80,7 @@ function normalizeRelationship(rel: Relationship, index: number): NormalizedRel 
     index,
     from,
     to,
-    type: readName(rel.relationship_type ?? extra.type ?? extra.relation) || '关系',
+    type: readName(rel.relationship_type ?? extra.type ?? extra.relation) || fallbackType,
     description: rel.description,
     raw: rel,
   }
@@ -83,7 +88,7 @@ function normalizeRelationship(rel: Relationship, index: number): NormalizedRel 
 
 const normalizedRelations = computed(() =>
   props.relationships
-    .map((rel, index) => normalizeRelationship(rel, index))
+    .map((rel, index) => normalizeRelationship(rel, index, defaultRelationType.value))
     .filter((item): item is NormalizedRel => Boolean(item))
 )
 
@@ -564,8 +569,8 @@ watch(
 <template>
   <div ref="rootRef" class="nd-rel-graph" @click="onCanvasClick">
     <div v-if="!hasGraph" class="nd-rel-graph__empty">
-      <p>暂无可展示的角色节点</p>
-      <p class="nd-rel-graph__empty-sub">请先在「主要角色」或关系数据中添加角色名称</p>
+      <p>{{ t('novelDetail.relationshipGraph.emptyTitle') }}</p>
+      <p class="nd-rel-graph__empty-sub">{{ t('novelDetail.relationshipGraph.emptyDesc') }}</p>
     </div>
 
     <svg
@@ -574,7 +579,7 @@ watch(
       :viewBox="`0 0 ${width} ${height}`"
       preserveAspectRatio="xMidYMid meet"
       role="img"
-      aria-label="人物关系图谱"
+      :aria-label="t('novelDetail.relationshipGraph.ariaLabel')"
     >
       <defs>
         <pattern

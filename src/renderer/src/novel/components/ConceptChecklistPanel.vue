@@ -1,18 +1,24 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { ChevronDown } from 'lucide-vue-next'
+import { ChevronDown, Lock } from 'lucide-vue-next'
 import {
   buildConceptBlueprintPreview,
   resolveConceptBriefForDisplay,
   type ConceptConversationState,
 } from '@shared/novel/concept-checklist'
 import type { WritingMode } from '@shared/novel/types'
+import { useAgentOrchestration } from '@renderer/services/agent-orchestration-service'
+import { useI18n } from '@renderer/composables/useI18n'
 
 const props = defineProps<{
   mode: WritingMode
   conversationState?: ConceptConversationState | null
   isRefining?: boolean
+  projectId?: string
 }>()
+
+const { t } = useI18n()
+const { isLocked, getProjectLocks } = useAgentOrchestration()
 
 const briefOpen = ref(true)
 const checklistOpen = ref(true)
@@ -35,6 +41,18 @@ const paragraphs = computed(() =>
 
 const pendingItems = computed(() => preview.value.items.filter((item) => !item.done))
 
+const conceptLocked = computed(() =>
+  props.projectId ? isLocked('concept', props.projectId) : false
+)
+
+const lockNotice = computed(() => {
+  if (!props.projectId || !conceptLocked.value) return null
+  const locks = getProjectLocks(props.projectId)
+  const conceptLock = locks.find((lock) => lock.key.kind === 'concept')
+  if (!conceptLock) return t('conceptPanel.locked')
+  return `${conceptLock.ownerAgentLabel} 正在${conceptLock.label}`
+})
+
 function truncate(text: string, max = 72): string {
   const trimmed = text.trim()
   if (trimmed.length <= max) return trimmed
@@ -45,15 +63,27 @@ function toggleBrief() {
   briefOpen.value = !briefOpen.value
 }
 
+const memoOpen = ref(false)
+
+const memoParagraphs = computed(() => {
+  const memo = props.conversationState?.concept_memo?.trim()
+  if (!memo) return []
+  return memo.split(/\n\s*\n/).filter((p) => p.trim())
+})
+
+function toggleMemo() {
+  memoOpen.value = !memoOpen.value
+}
+
 function toggleChecklist() {
   checklistOpen.value = !checklistOpen.value
 }
 </script>
 
 <template>
-  <aside class="concept-panel" aria-label="故事设定">
+  <aside class="concept-panel" :aria-label="t('conceptPanel.title')">
     <div class="concept-panel__head">
-      <h3 class="concept-panel__title">故事设定</h3>
+      <h3 class="concept-panel__title">{{ t('conceptPanel.title') }}</h3>
       <span class="concept-panel__progress">
         {{ display.completeness.completed }}/{{ display.completeness.total }}
       </span>
@@ -69,12 +99,17 @@ function toggleChecklist() {
       <div class="concept-panel__bar-fill" :style="{ width: `${display.completeness.percent}%` }" />
     </div>
 
-    <div v-if="isRefining" class="concept-panel__status">
-      <span class="concept-panel__spinner" aria-hidden="true" />
-      整合设定中…
+    <div v-if="lockNotice" class="concept-panel__status concept-panel__status--locked">
+      <Lock :size="13" aria-hidden="true" />
+      {{ lockNotice }}
     </div>
 
-    <div v-else class="concept-panel__accordions">
+    <div v-if="isRefining" class="concept-panel__status concept-panel__status--inline">
+      <span class="concept-panel__spinner" aria-hidden="true" />
+      {{ t('conceptPanel.refining') }}
+    </div>
+
+    <div class="concept-panel__accordions">
       <section class="concept-panel__accordion" :class="{ 'is-open': briefOpen }">
         <button
           type="button"
@@ -82,15 +117,35 @@ function toggleChecklist() {
           :aria-expanded="briefOpen"
           @click="toggleBrief"
         >
-          <span>综述</span>
+          <span>{{ t('conceptPanel.overview') }}</span>
           <ChevronDown :size="14" class="concept-panel__accordion-chevron" aria-hidden="true" />
         </button>
         <div v-show="briefOpen" class="concept-panel__accordion-body">
           <div v-if="!paragraphs.length" class="concept-panel__empty">
-            对话开始后，AI 会在这里整理故事综述。
+            {{ t('conceptPanel.emptyBrief') }}
           </div>
           <article v-else class="concept-panel__brief">
             <p v-for="(para, index) in paragraphs" :key="index">{{ para }}</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="concept-panel__accordion" :class="{ 'is-open': memoOpen }">
+        <button
+          type="button"
+          class="concept-panel__accordion-head"
+          :aria-expanded="memoOpen"
+          @click="toggleMemo"
+        >
+          <span>{{ t('conceptPanel.memo') }}</span>
+          <ChevronDown :size="14" class="concept-panel__accordion-chevron" aria-hidden="true" />
+        </button>
+        <div v-show="memoOpen" class="concept-panel__accordion-body">
+          <div v-if="!memoParagraphs.length" class="concept-panel__empty">
+            {{ t('conceptPanel.emptyMemo') }}
+          </div>
+          <article v-else class="concept-panel__brief concept-panel__brief--memo">
+            <p v-for="(para, index) in memoParagraphs" :key="index">{{ para }}</p>
           </article>
         </div>
       </section>
@@ -105,17 +160,14 @@ function toggleChecklist() {
           :aria-expanded="checklistOpen"
           @click="toggleChecklist"
         >
-          <span>清单</span>
+          <span>{{ t('conceptPanel.checklist') }}</span>
           <span v-if="pendingItems.length" class="concept-panel__accordion-badge">
-            {{ pendingItems.length }} 待确认
+            {{ t('conceptPanel.pending', { n: pendingItems.length }) }}
           </span>
           <ChevronDown :size="14" class="concept-panel__accordion-chevron" aria-hidden="true" />
         </button>
         <div v-show="checklistOpen" class="concept-panel__accordion-body">
-          <div v-if="display.status === 'empty'" class="concept-panel__empty">
-            已确认的设定会出现在这里。
-          </div>
-          <ul v-else class="concept-panel__list">
+          <ul class="concept-panel__list">
             <li
               v-for="item in preview.items"
               :key="item.key"
@@ -269,6 +321,19 @@ function toggleChecklist() {
   display: flex;
   align-items: center;
   gap: 0.4rem;
+}
+
+.concept-panel__status--inline {
+  margin-bottom: 0.15rem;
+}
+
+.concept-panel__status--locked {
+  margin-bottom: 0.35rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--brand) 8%, transparent);
+  color: var(--brand);
+  font-size: 0.72rem;
 }
 
 .concept-panel__spinner {

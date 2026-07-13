@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Download, Sparkles, Trash2 } from 'lucide-vue-next'
+import { Download, Sparkles, Trash2, Upload } from 'lucide-vue-next'
 import { confirm } from '@renderer/composables/useAppDialog'
 import FactoryResetDialog from './FactoryResetDialog.vue'
 import {
@@ -48,6 +48,33 @@ async function runDataAction(action: () => Promise<void>, successMessage: string
 
 async function exportData() {
   await runDataAction(() => dataManagementService.exportBackup(), '本地数据已导出。')
+}
+
+async function importData() {
+  if (!(await confirm({
+    title: '导入本地备份',
+    message: '将从备份文件新增小说项目，不会覆盖或清除现有内容。',
+    detail: '若项目 ID 冲突，将自动分配新 ID。',
+    confirmText: '选择文件',
+  }))) return
+
+  dataBusy.value = true
+  dataMessage.value = ''
+  emit('error', '')
+  try {
+    const result = await dataManagementService.importBackup()
+    await loadStats()
+    await novelStore.loadProjects()
+    const skippedHint = result.skipped ? `，跳过 ${result.skipped} 条无效记录` : ''
+    dataMessage.value = `已新增 ${result.imported} 个小说项目${skippedHint}。`
+  } catch (err) {
+    const message = formatUserMessage(err)
+    if (message !== '已取消导入') {
+      emit('error', message)
+    }
+  } finally {
+    dataBusy.value = false
+  }
 }
 
 async function clearProjects() {
@@ -166,10 +193,14 @@ defineExpose({ reload: loadStats })
 
     <section class="data-block">
       <h4>基本管理</h4>
-      <div class="data-actions">
+      <div class="data-actions data-actions--row">
         <button type="button" class="data-action" :disabled="dataBusy" @click="exportData">
           <Download :size="16" />
           导出本地备份
+        </button>
+        <button type="button" class="data-action" :disabled="dataBusy" @click="importData">
+          <Upload :size="16" />
+          导入本地备份
         </button>
         <button type="button" class="data-action" :disabled="dataBusy" @click="clearProjects">
           <Trash2 :size="16" />
@@ -180,9 +211,6 @@ defineExpose({ reload: loadStats })
           清除操作记录
         </button>
       </div>
-      <p class="data-hint" title="导出备份会保存小说项目等本地 JSON 数据。清理操作仅影响本机，不会删除云端账号。">
-        导出本地 JSON；清理仅影响本机。
-      </p>
     </section>
 
     <section class="data-block data-block--danger">
@@ -261,6 +289,12 @@ defineExpose({ reload: loadStats })
   gap: 8px;
 }
 
+.data-actions--row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .data-action {
   display: inline-flex;
   align-items: center;
@@ -307,16 +341,6 @@ defineExpose({ reload: loadStats })
   margin: 10px 0 0;
   color: #1f7a67;
   font-size: 12px;
-}
-
-.data-hint {
-  margin: 10px 0 0;
-  color: #7a83ae;
-  font-size: 12px;
-  line-height: 1.45;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .data-block--danger .danger-panel {

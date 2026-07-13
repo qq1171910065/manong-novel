@@ -4,6 +4,7 @@ import {
   normalizeChoiceOptions,
   normalizeUiControl,
   parseOptionText,
+  resolveUiControl,
 } from './chat-options'
 
 describe('parseOptionText', () => {
@@ -67,6 +68,27 @@ describe('normalizeUiControl', () => {
     ).toEqual({
       type: 'single_choice',
       options: [{ id: '1', label: '方案一：纯欲火主角', description: undefined }],
+    })
+  })
+})
+
+describe('resolveUiControl', () => {
+  it('falls back to A/B/C options embedded in ai_message', () => {
+    const message = [
+      '我们可以从这几个方向入手：',
+      'A. 赛博朋克都市：霓虹与谎言交织',
+      'B. 古风江湖：刀光剑影中的情义',
+      'C. 现代悬疑：密室中的心理博弈',
+      '请选择一个，或直接描述你的想法。',
+    ].join('\n')
+
+    expect(resolveUiControl({ type: 'text_input' }, message)).toEqual({
+      type: 'single_choice',
+      options: [
+        { id: 'A', label: '赛博朋克都市：霓虹与谎言交织', description: undefined },
+        { id: 'B', label: '古风江湖：刀光剑影中的情义', description: undefined },
+        { id: 'C', label: '现代悬疑：密室中的心理博弈', description: undefined },
+      ],
     })
   })
 })

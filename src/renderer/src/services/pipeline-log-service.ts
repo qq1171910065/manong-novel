@@ -1,5 +1,6 @@
 export type PipelineStep =
   | 'concept_converse'
+  | 'concept_refine'
   | 'blueprint_generate'
   | 'blueprint_outline'
   | 'chapter_plan'
@@ -41,6 +42,7 @@ const PREVIEW_LIMIT = 4000
 
 export const PIPELINE_STEP_LABELS: Record<PipelineStep, string> = {
   concept_converse: '灵感对话',
+  concept_refine: '设定提炼',
   blueprint_generate: '蓝图生成',
   blueprint_outline: '大纲补全',
   chapter_plan: '章节导演脚本',

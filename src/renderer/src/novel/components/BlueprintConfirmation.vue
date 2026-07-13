@@ -17,24 +17,24 @@
 
     <template v-else>
       <header class="blueprint-confirm__head">
-        <p class="blueprint-confirm__eyebrow">设定已完成 · 请确认后再生成</p>
+        <p class="blueprint-confirm__eyebrow">{{ t('blueprintConfirm.eyebrow') }}</p>
         <h2 class="blueprint-confirm__title">{{ preview.workingTitle }}</h2>
         <p class="blueprint-confirm__meta">
-          预期篇幅 {{ preview.expectedChaptersLabel }}
-          <span v-if="writingMode === 'simple'"> · 简易模式</span>
-          <span v-else> · 完整设定模式</span>
+          {{ t('blueprintConfirm.expectedChapters') }} {{ preview.expectedChaptersLabel }}
+          <span v-if="writingMode === 'simple'"> · {{ t('blueprintConfirm.simpleMode') }}</span>
+          <span v-else> · {{ t('blueprintConfirm.fullMode') }}</span>
         </p>
       </header>
 
       <section class="blueprint-confirm__section">
-        <h3 class="blueprint-confirm__section-title">即将生成的蓝图内容</h3>
+        <h3 class="blueprint-confirm__section-title">{{ t('blueprintConfirm.sectionsTitle') }}</h3>
         <ul class="blueprint-confirm__sections">
           <li v-for="section in preview.blueprintSections" :key="section">{{ section }}</li>
         </ul>
       </section>
 
       <section class="blueprint-confirm__section">
-        <h3 class="blueprint-confirm__section-title">设定摘要</h3>
+        <h3 class="blueprint-confirm__section-title">{{ t('blueprintConfirm.summaryTitle') }}</h3>
         <dl class="blueprint-confirm__facts">
           <template v-for="item in previewItems" :key="item.key">
             <dt>{{ item.label }}</dt>
@@ -49,16 +49,16 @@
       </section>
 
       <section v-if="aiMessage" class="blueprint-confirm__section">
-        <h3 class="blueprint-confirm__section-title">AI 说明</h3>
+        <h3 class="blueprint-confirm__section-title">{{ t('blueprintConfirm.aiNoteTitle') }}</h3>
         <div class="blueprint-confirm__message prose" v-html="renderedAiMessage" />
       </section>
 
       <footer class="blueprint-confirm__actions">
         <button type="button" class="novel-btn novel-btn--text" @click="$emit('back')">
-          返回继续改设定
+          {{ t('blueprintConfirm.back') }}
         </button>
         <button type="button" class="novel-btn novel-btn--primary" @click="$emit('generate')">
-          生成蓝图
+          {{ t('blueprintConfirm.generate') }}
         </button>
       </footer>
     </template>
@@ -74,7 +74,11 @@ import {
 } from '@shared/novel/concept-checklist'
 import type { WritingMode } from '@shared/novel/types'
 
+import { useI18n } from '@renderer/composables/useI18n'
+
 marked.setOptions({ gfm: true, breaks: true })
+
+const { t } = useI18n()
 
 const props = defineProps<{
   aiMessage: string

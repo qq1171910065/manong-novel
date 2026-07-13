@@ -1,17 +1,22 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import type { ActivityLogEntry } from '@renderer/services/activity-log-service'
 import {
-  activityKindLabel,
-  formatActivityTime,
-  type ActivityLogEntry,
-} from '@renderer/services/activity-log-service'
+  formatActivityMessage,
+  formatRelativeActivityTime,
+  resolveLocaleDateString,
+  translateActivityKind,
+} from '@renderer/i18n/log-labels'
 import { useListPagination } from '@renderer/composables/useListPagination'
 import ListPagination from '@renderer/components/shared/ListPagination.vue'
+import { useI18n } from '@renderer/composables/useI18n'
 import DetailEmptyState from './DetailEmptyState.vue'
 
 const props = defineProps<{
   entries: ActivityLogEntry[]
 }>()
+
+const { t, currentLocale } = useI18n()
 
 const expandedIds = ref<Set<string>>(new Set())
 
@@ -20,13 +25,15 @@ const { page, pageSize, pageSizes, itemCount, paginatedItems } = useListPaginati
   { pageSize: 10 }
 )
 
+const dateLocale = computed(() => resolveLocaleDateString(currentLocale.value))
+
 const grouped = computed(() => {
   const map = new Map<string, ActivityLogEntry[]>()
   for (const entry of paginatedItems.value) {
     const date = new Date(entry.createdAt)
     const key = Number.isNaN(date.getTime())
-      ? '未知日期'
-      : date.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })
+      ? t('novelDetail.activity.unknownDate')
+      : date.toLocaleDateString(dateLocale.value, { year: 'numeric', month: 'long', day: 'numeric' })
     const list = map.get(key) || []
     list.push(entry)
     map.set(key, list)
@@ -54,8 +61,8 @@ function formatMeta(meta?: Record<string, unknown>): string | null {
     <DetailEmptyState
       v-if="!entries.length"
       class="nd-split-page__empty"
-      title="暂无操作记录"
-      description="打开作品、修改蓝图、生成章节或更新封面后，记录会显示在这里"
+      :title="t('novelDetail.activity.emptyTitle')"
+      :description="t('novelDetail.activity.emptyDesc')"
     />
 
     <template v-else>
@@ -64,9 +71,9 @@ function formatMeta(meta?: Record<string, unknown>): string | null {
           <h3 class="nd-block__title nd-activity-date">{{ dateLabel }}</h3>
           <ul class="nd-activity-list">
             <li v-for="entry in items" :key="entry.id" class="nd-activity-item">
-              <span class="nd-activity-badge" :data-kind="entry.kind">{{ activityKindLabel(entry.kind) }}</span>
+              <span class="nd-activity-badge" :data-kind="entry.kind">{{ translateActivityKind(t, entry.kind) }}</span>
               <div class="nd-activity-item__body">
-                <p class="nd-activity-item__message">{{ entry.message }}</p>
+                <p class="nd-activity-item__message">{{ formatActivityMessage(t, entry) }}</p>
                 <p v-if="entry.detail" class="nd-activity-item__detail">{{ entry.detail }}</p>
                 <button
                   v-if="formatMeta(entry.meta)"
@@ -74,13 +81,13 @@ function formatMeta(meta?: Record<string, unknown>): string | null {
                   class="nd-activity-item__meta-btn"
                   @click="toggleExpand(entry.id)"
                 >
-                  {{ expandedIds.has(entry.id) ? '收起详情' : '查看详情' }}
+                  {{ expandedIds.has(entry.id) ? t('novelDetail.activity.collapse') : t('novelDetail.activity.expand') }}
                 </button>
                 <p v-if="expandedIds.has(entry.id) && formatMeta(entry.meta)" class="nd-activity-item__meta">
                   {{ formatMeta(entry.meta) }}
                 </p>
               </div>
-              <time class="nd-activity-item__time">{{ formatActivityTime(entry.createdAt) }}</time>
+              <time class="nd-activity-item__time">{{ formatRelativeActivityTime(t, entry.createdAt, dateLocale) }}</time>
             </li>
           </ul>
         </section>

@@ -2,9 +2,9 @@
 <template>
   <div class="nd-section">
     <div v-if="importPending" class="nd-import-banner">
-      <p class="nd-import-banner__title">TXT 导入 · 待智能解析</p>
+      <p class="nd-import-banner__title">{{ t('novelDetail.overview.importBannerTitle') }}</p>
       <p class="nd-import-banner__desc">
-        已识别 {{ importedChapterCount }} 章正文。请点击左侧「智能解析」——系统将完整阅读并按章节整理世界观、角色、关系与大纲（耗时较长，优先保证准确）。解析完成前内容不可编辑。
+        {{ t('novelDetail.overview.importBannerDesc', { count: importedChapterCount ?? 0 }) }}
       </p>
     </div>
 
@@ -13,7 +13,7 @@
         <div class="nd-overview-hero__content">
           <DetailEditableZone
             :editable="editable"
-            @edit="openEdit('title', '书名', data?.title)"
+            @edit="openEdit('title', t('novelDetail.overview.fields.title'), data?.title)"
           >
             <div class="nd-overview-hero__title-row">
               <h2 class="nd-overview-hero__title">{{ displayTitle }}</h2>
@@ -24,9 +24,9 @@
           <DetailEditableZone
             class="nd-overview-hero__summary"
             :editable="editable"
-            @edit="openEdit('one_sentence_summary', '核心摘要', data?.one_sentence_summary)"
+            @edit="openEdit('one_sentence_summary', t('novelDetail.overview.fields.oneSentenceSummary'), data?.one_sentence_summary)"
           >
-            <p class="nd-overview-hero__summary-label">核心摘要</p>
+            <p class="nd-overview-hero__summary-label">{{ t('novelDetail.overview.summaryLabel') }}</p>
             <p
               v-if="data?.one_sentence_summary"
               class="nd-overview-hero__summary-text"
@@ -34,7 +34,7 @@
               {{ data.one_sentence_summary }}
             </p>
             <p v-else class="nd-overview-hero__summary-text nd-overview-hero__summary-text--empty">
-              点击填写一句话概括作品定位
+              {{ t('novelDetail.overview.summaryEmpty') }}
             </p>
           </DetailEditableZone>
 
@@ -50,7 +50,7 @@
               <div class="nd-meta-row__item">
                 <span class="nd-meta-row__label">{{ item.label }}</span>
                 <span class="nd-meta-row__value" :class="{ 'nd-meta-row__value--empty': !item.value }">
-                  {{ item.value || '点击填写' }}
+                  {{ item.value || t('novelDetail.common.clickToFill') }}
                 </span>
               </div>
             </DetailEditableZone>
@@ -59,7 +59,7 @@
           <div v-if="editable && hasStyleInfo" class="nd-overview-hero__meta-actions">
             <SubmitToLibraryButton
               compact
-              label="存入文风库"
+              :label="t('novelDetail.overview.saveToStyleLibrary')"
               :handler="submitStylePreset"
             />
           </div>
@@ -69,8 +69,8 @@
           <ImageAssetField
             :model-value="data?.cover_url || null"
             variant="cover"
-            label="封面"
-            placeholder="上传或 AI 绘制"
+            :label="t('novelDetail.overview.coverLabel')"
+            :placeholder="t('novelDetail.overview.coverPlaceholder')"
             :editable="editable"
             :generating="coverGenerating"
             :default-prompt="coverPrompt"
@@ -86,8 +86,8 @@
     <section class="nd-block">
       <div class="nd-block__head">
         <div>
-          <h3 class="nd-block__title">完整剧情梗概</h3>
-          <p class="nd-block__subtitle">故事主线与关键转折</p>
+          <h3 class="nd-block__title">{{ t('novelDetail.overview.synopsisTitle') }}</h3>
+          <p class="nd-block__subtitle">{{ t('novelDetail.overview.synopsisSubtitle') }}</p>
         </div>
       </div>
 
@@ -95,11 +95,11 @@
         v-if="!data?.full_synopsis"
         block
         :editable="editable"
-        @edit="openEdit('full_synopsis', '完整剧情梗概', data?.full_synopsis)"
+        @edit="openEdit('full_synopsis', t('novelDetail.overview.fields.fullSynopsis'), data?.full_synopsis)"
       >
         <DetailEmptyState
-          title="暂无剧情梗概"
-          description="点击编辑"
+          :title="t('novelDetail.overview.synopsisEmptyTitle')"
+          :description="t('novelDetail.common.clickToEdit')"
         />
       </DetailEditableZone>
 
@@ -107,24 +107,40 @@
         v-else
         block
         :editable="editable"
-        @edit="openEdit('full_synopsis', '完整剧情梗概', data?.full_synopsis)"
+        @edit="openEdit('full_synopsis', t('novelDetail.overview.fields.fullSynopsis'), data?.full_synopsis)"
       >
         <p class="nd-text-block nd-text-block--synopsis">{{ data.full_synopsis }}</p>
       </DetailEditableZone>
     </section>
+
+    <DetailTextFieldModal
+      :show="editModalOpen"
+      :field="editField"
+      :title="editTitle"
+      :value="editValue"
+      :saving="fieldSaving"
+      @close="closeFieldEdit"
+      @save="saveFieldEdit"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import ImageAssetField from '@renderer/novel/components/shared/ImageAssetField.vue'
 import SubmitToLibraryButton from '@renderer/novel/components/shared/SubmitToLibraryButton.vue'
 import DetailEditableZone from './DetailEditableZone.vue'
 import DetailEmptyState from './DetailEmptyState.vue'
+import DetailTextFieldModal from './DetailTextFieldModal.vue'
 import { buildCoverPrompt } from '@renderer/services/image-service'
 import { submitStyleToLibrary } from '@renderer/services/novel/material-library-submit'
+import { NovelAPI } from '@renderer/services/novel/api'
+import { activityLogService } from '@renderer/services/activity-log-service'
+import { projectStatsService } from '@renderer/services/project-stats-service'
+import { useNovelStore } from '@renderer/stores/novel'
 import type { ProjectModelPrefs } from '@renderer/services/novel/project-model'
 import type { WritingMode } from '@shared/novel/types'
+import { useI18n } from '@renderer/composables/useI18n'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
 
 export interface OverviewData {
@@ -140,6 +156,8 @@ export interface OverviewData {
   full_synopsis?: string | null
 }
 
+const { t } = useI18n()
+
 const props = defineProps<{
   data: OverviewData | null
   editable?: boolean
@@ -153,14 +171,22 @@ const props = defineProps<{
   writingModeLabel?: string
 }>()
 
+const novelStore = useNovelStore()
+
 const emit = defineEmits<{
-  (e: 'edit', payload: { field: string; title: string; value: any }): void
+  (e: 'field-saved'): void
   (e: 'cover-update', value: string | null): void
   (e: 'cover-generate', prompt: string): void
 }>()
 
+const editModalOpen = ref(false)
+const editField = ref('')
+const editTitle = ref('')
+const editValue = ref('')
+const fieldSaving = ref(false)
+
 const displayTitle = computed(
-  () => props.data?.title?.trim() || props.projectTitle?.trim() || '未命名作品'
+  () => props.data?.title?.trim() || props.projectTitle?.trim() || t('novelDetail.common.unnamedProject')
 )
 
 const projectModel = computed(() => ({
@@ -178,10 +204,10 @@ const coverPrompt = computed(() =>
 )
 
 const metaStats = computed(() => [
-  { key: 'target_audience', field: 'target_audience', label: '目标受众', value: props.data?.target_audience },
-  { key: 'genre', field: 'genre', label: '类型', value: props.data?.genre },
-  { key: 'style', field: 'style', label: '风格', value: props.data?.style },
-  { key: 'tone', field: 'tone', label: '基调', value: props.data?.tone },
+  { key: 'target_audience', field: 'target_audience', label: t('novelDetail.overview.fields.targetAudience'), value: props.data?.target_audience },
+  { key: 'genre', field: 'genre', label: t('novelDetail.overview.fields.genre'), value: props.data?.genre },
+  { key: 'style', field: 'style', label: t('novelDetail.overview.fields.style'), value: props.data?.style },
+  { key: 'tone', field: 'tone', label: t('novelDetail.overview.fields.tone'), value: props.data?.tone },
 ])
 
 const hasStyleInfo = computed(
@@ -206,15 +232,49 @@ async function submitStylePreset() {
       },
       libraryContext()
     )
-    globalAlert.showSuccess(`「${item.title}」已存入文风库`, '提交成功')
+    globalAlert.showSuccess(t('novelDetail.overview.styleLibrarySuccess', { title: item.title }), t('novelDetail.common.submitSuccess'))
   } catch (error) {
-    globalAlert.showError(error instanceof Error ? error.message : '提交失败', '存入文风库失败')
+    globalAlert.showError(error instanceof Error ? error.message : t('novelDetail.common.submitFailed'), t('novelDetail.overview.styleLibraryFailed'))
   }
 }
 
-const openEdit = (field: string, title: string, value: any) => {
-  if (!props.editable) return
-  emit('edit', { field, title, value })
+const openEdit = (field: string, title: string, value: string | null | undefined) => {
+  if (!props.editable || !props.projectId) return
+  editField.value = field
+  editTitle.value = title
+  editValue.value = value ?? ''
+  editModalOpen.value = true
+}
+
+function closeFieldEdit() {
+  editModalOpen.value = false
+}
+
+async function saveFieldEdit(value: string) {
+  if (!props.projectId || !editField.value) return
+  fieldSaving.value = true
+  try {
+    const updatedProject = await NovelAPI.updateBlueprint(props.projectId, {
+      [editField.value]: value,
+    })
+    novelStore.setCurrentProject(updatedProject)
+    projectStatsService.recordEdit(props.projectId)
+    activityLogService.logBlueprintEdit(
+      props.projectId,
+      props.projectTitle || updatedProject.title || t('novelDetail.common.unnamedProject'),
+      editTitle.value
+    )
+    editModalOpen.value = false
+    emit('field-saved')
+    globalAlert.showSuccess(t('novelDetail.common.saved'), t('novelDetail.common.saveSuccess'))
+  } catch (error) {
+    globalAlert.showError(
+      error instanceof Error ? error.message : t('novelDetail.common.saveFailed'),
+      t('novelDetail.common.saveFailed')
+    )
+  } finally {
+    fieldSaving.value = false
+  }
 }
 
 function emitCoverUpdate(value: string | null) {

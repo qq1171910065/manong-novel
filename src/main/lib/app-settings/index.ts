@@ -1,6 +1,7 @@
 import { app, ipcMain } from 'electron'
 
 export function registerAppSettingsHandlers(_appId = 'com.manong.novel'): void {
+  ipcMain.removeHandler('app:get-login-item-settings')
   ipcMain.handle('app:get-login-item-settings', () => {
     try {
       const settings = app.getLoginItemSettings()
@@ -10,6 +11,7 @@ export function registerAppSettingsHandlers(_appId = 'com.manong.novel'): void {
     }
   })
 
+  ipcMain.removeHandler('app:set-login-item-settings')
   ipcMain.handle('app:set-login-item-settings', (_event, openAtLogin?: boolean) => {
     try {
       app.setLoginItemSettings({ openAtLogin: Boolean(openAtLogin), openAsHidden: false })
@@ -20,6 +22,7 @@ export function registerAppSettingsHandlers(_appId = 'com.manong.novel'): void {
     }
   })
 
+  ipcMain.removeHandler('app:get-version')
   ipcMain.handle('app:get-version', () => ({ ok: true, version: app.getVersion() }))
 
   ipcMain.removeHandler('app:get-runtime-meta')

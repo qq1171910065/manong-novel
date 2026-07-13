@@ -20,7 +20,7 @@ export type {
 } from '@shared/novel/types'
 
 export type AnalysisSectionType = 'emotion_curve' | 'foreshadowing'
-export type InsightSectionType = 'activity_log' | 'stats' | 'pipeline' | 'pipeline_log' | 'prompt_templates' | 'data'
+export type InsightSectionType = 'activity_log' | 'stats' | 'pipeline' | 'pipeline_log' | 'agent_log' | 'story_commits' | 'prompt_templates' | 'data'
 export type WorldViewSectionType = 'world_rules' | 'world_locations' | 'world_factions'
 export type AllSectionType =
   | NovelSectionType
@@ -46,12 +46,18 @@ import type {
 } from '@shared/novel/types'
 import type { SectionPolishContext } from '@renderer/novel/utils/section-polish'
 import { novelClient } from './client'
-import { isAbortError } from './async-task-registry'
-import { getChapterGenProgressSnapshot } from '@renderer/novel/composables/chapter-generation-progress'
+import { persistProject } from './project-persistence'
 import { ensureBlueprintAssetIds } from './blueprint-asset'
 import { applyProjectModelPrefs } from './project-model'
 import * as writing from './writing-service'
 import type { ConversationRequestOptions } from './writing-service'
+import {
+  generateBlueprintForProject,
+  generateChapterForProject,
+  evaluateChapterForProject,
+} from './api-generation'
+import { ensureWritingRuntime } from './writing-runtime-init'
+import { createEmptyStorySystem, recordBlueprintCommit, recordChapterCommit, runStorySystemDoctor, type BlueprintCommitSource } from '@shared/novel/story-system'
 import * as analytics from './analytics-service'
 import type { EmotionCurveResponse, ForeshadowingResponse } from './analytics-service'
 import {
@@ -67,6 +73,16 @@ import { countChapterChars } from '@shared/novel/chapter-length-plan'
 import { exportProjectJson, exportProjectTxt } from './project-export'
 
 export type { ImportParseProgress }
+
+async function saveNovelProject(
+  project: NovelProject,
+  options?: { skipReplay?: boolean; expectedUpdatedAt?: string | null }
+): Promise<NovelProject> {
+  return persistProject(project, {
+    skipReplay: options?.skipReplay,
+    expectedUpdatedAt: options?.expectedUpdatedAt ?? project.updated_at,
+  })
+}
 
 export class NovelAPI {
   static createNovel(
@@ -118,7 +134,7 @@ export class NovelAPI {
         section_polish_state: source.section_polish_state,
         updated_at: new Date().toISOString(),
       }
-      await novelClient.saveProject(merged)
+      await saveNovelProject(merged)
       return { id: project.id }
     }
 
@@ -136,7 +152,7 @@ export class NovelAPI {
     project.writing_mode = 'full'
     project.chapters = buildImportedChapters(chapters)
     project.blueprint = buildInitialImportBlueprint(title, chapters)
-    await novelClient.saveProject(project)
+    await saveNovelProject(project)
     return { id: project.id }
   }
 
@@ -159,7 +175,7 @@ export class NovelAPI {
     applyProjectModelPrefs(project, options?.modelPrefs)
     const blueprint = await analyzeImportedNovel(project, options)
     applyImportAnalysis(project, blueprint)
-    return novelClient.saveProject(project)
+    return saveNovelProject(project)
   }
 
   static async exportNovelTxt(projectId: string): Promise<boolean> {
@@ -191,10 +207,11 @@ export class NovelAPI {
     options?: ConversationRequestOptions,
     modelPrefs?: import('./project-model').ProjectModelPrefs | null
   ): Promise<ConverseResponse> {
+    ensureWritingRuntime()
     const project = await novelClient.getProject(projectId)
     applyProjectModelPrefs(project, modelPrefs)
     const response = await writing.converseConcept(project, userInput, conversationState, options)
-    await novelClient.saveProject(project)
+    await saveNovelProject(project)
     return response
   }
 
@@ -206,6 +223,7 @@ export class NovelAPI {
     conversationState: Record<string, unknown> = {},
     options?: ConversationRequestOptions
   ): Promise<SectionPolishResponse> {
+    ensureWritingRuntime()
     const project = await novelClient.getProject(projectId)
     const response = await writing.converseSectionPolish(
       project,
@@ -221,7 +239,7 @@ export class NovelAPI {
     const { polish_history: _ignored, ...nextState } = response.conversation_state ?? {}
     project.section_polish_history = nextHistory
     project.section_polish_state = nextState
-    await novelClient.saveProject(project)
+    await saveNovelProject(project)
     return response
   }
 
@@ -246,7 +264,14 @@ export class NovelAPI {
     const project = await novelClient.getProject(projectId)
     project.section_polish_history = []
     project.section_polish_state = {}
-    return novelClient.saveProject(project)
+    return saveNovelProject(project)
+  }
+
+  static async clearConceptSession(projectId: string): Promise<NovelProject> {
+    const project = await novelClient.getProject(projectId)
+    project.conversation_history = []
+    project.story_system = createEmptyStorySystem('concept')
+    return saveNovelProject(project)
   }
 
   static async saveSectionPolishUiState(
@@ -262,7 +287,7 @@ export class NovelAPI {
       ...(project.section_polish_state ?? {}),
       ...state,
     }
-    return novelClient.saveProject(project)
+    return saveNovelProject(project)
   }
 
   static async markSectionPolishApplied(projectId: string): Promise<NovelProject> {
@@ -287,7 +312,7 @@ export class NovelAPI {
       break
     }
     project.section_polish_history = history
-    return novelClient.saveProject(project)
+    return saveNovelProject(project)
   }
 
   static async persistMaterializedPolish(
@@ -321,9 +346,10 @@ export class NovelAPI {
       break
     }
     project.section_polish_history = history
-    return novelClient.saveProject(project)
+    return saveNovelProject(project)
   }
 
+  /** 蓝图生成：主进程可用时优先后台执行，否则 renderer 内联生成 */
   static async generateBlueprint(
     projectId: string,
     modelPrefs?: import('./project-model').ProjectModelPrefs | null,
@@ -332,79 +358,38 @@ export class NovelAPI {
       onProgress?: (progress: import('./writing-service').BlueprintGenerationProgress) => void
     }
   ): Promise<BlueprintGenerationResponse> {
+    return generateBlueprintForProject(projectId, modelPrefs, options)
+  }
+
+  static async saveBlueprint(
+    projectId: string,
+    blueprint: Blueprint,
+    options?: { source?: BlueprintCommitSource }
+  ): Promise<NovelProject> {
     const project = await novelClient.getProject(projectId)
-    applyProjectModelPrefs(project, modelPrefs)
-    const response = await writing.generateBlueprint(project, {
-      signal: options?.signal,
-      onProgress: options?.onProgress,
+    recordBlueprintCommit(project, {
+      source: options?.source ?? 'confirm',
+      fullBlueprint: ensureBlueprintAssetIds(blueprint),
     })
-    await novelClient.saveProject(project)
-    return response
+    return saveNovelProject(project)
   }
 
-  static async saveBlueprint(projectId: string, blueprint: Blueprint): Promise<NovelProject> {
-    const project = await novelClient.getProject(projectId)
-    project.blueprint = blueprint
-    return novelClient.saveProject(project)
-  }
-
+  /** 章节生成：主进程可用时优先后台执行，否则 renderer 内联生成 */
   static async generateChapter(
     projectId: string,
     chapterNumber: number,
     options?: { signal?: AbortSignal; fastMode?: boolean }
   ): Promise<NovelProject> {
-    const project = await novelClient.getProject(projectId)
-    writing.upsertChapterStatus(project, chapterNumber, 'generating')
-    await novelClient.saveProject(project)
-
-    try {
-      await writing.generateChapterContent(project, chapterNumber, {
-        signal: options?.signal,
-        fastMode: options?.fastMode,
-      })
-      return novelClient.saveProject(project)
-    } catch (error) {
-      if (isAbortError(error)) {
-        writing.upsertChapterStatus(project, chapterNumber, 'not_generated')
-      } else {
-        const chapter = project.chapters?.find((item) => item.chapter_number === chapterNumber)
-        if (!chapter?.generation_error_message) {
-          writing.markChapterGenerationFailed(
-            project,
-            chapterNumber,
-            error,
-            getChapterGenProgressSnapshot()?.streamPreview
-          )
-        } else {
-          writing.upsertChapterStatus(project, chapterNumber, 'failed')
-        }
-      }
-      await novelClient.saveProject(project)
-      throw error
-    }
+    return generateChapterForProject(projectId, chapterNumber, options)
   }
 
+  /** 章节评审：主进程可用时优先后台执行 */
   static async evaluateChapter(
     projectId: string,
     chapterNumber: number,
     options?: { signal?: AbortSignal }
   ): Promise<NovelProject> {
-    const project = await novelClient.getProject(projectId)
-    writing.upsertChapterStatus(project, chapterNumber, 'evaluating')
-    await novelClient.saveProject(project)
-
-    try {
-      await writing.evaluateChapter(project, chapterNumber, { signal: options?.signal })
-      return novelClient.saveProject(project)
-    } catch (error) {
-      writing.upsertChapterStatus(
-        project,
-        chapterNumber,
-        isAbortError(error) ? 'waiting_for_confirm' : 'evaluation_failed'
-      )
-      await novelClient.saveProject(project)
-      throw error
-    }
+    return evaluateChapterForProject(projectId, chapterNumber, options)
   }
 
   static async selectChapterVersion(
@@ -418,7 +403,12 @@ export class NovelAPI {
     chapter.content = chapter.versions[versionIndex]
     chapter.word_count = countChapterChars(chapter.content)
     chapter.generation_status = 'waiting_for_confirm'
-    return novelClient.saveProject(project)
+    recordChapterCommit(project, {
+      chapterNumber,
+      event: 'version_selected',
+      chapter: { ...chapter },
+    })
+    return saveNovelProject(project)
   }
 
   static async confirmChapter(projectId: string, chapterNumber: number): Promise<NovelProject> {
@@ -440,7 +430,12 @@ export class NovelAPI {
     }
 
     chapter.generation_status = 'successful'
-    return novelClient.saveProject(project)
+    recordChapterCommit(project, {
+      chapterNumber,
+      event: 'confirmed',
+      chapter: { ...chapter },
+    })
+    return saveNovelProject(project)
   }
 
   static getAllNovels(): Promise<NovelProjectSummary[]> {
@@ -463,7 +458,11 @@ export class NovelAPI {
     if (idx >= 0) outline[idx] = chapterOutline
     else outline.push(chapterOutline)
     project.blueprint.chapter_outline = outline.sort((a, b) => a.chapter_number - b.chapter_number)
-    return novelClient.saveProject(project)
+    recordBlueprintCommit(project, {
+      source: 'manual',
+      patch: { chapter_outline: project.blueprint.chapter_outline },
+    })
+    return saveNovelProject(project)
   }
 
   static async deleteChapter(projectId: string, chapterNumbers: number[]): Promise<NovelProject> {
@@ -473,8 +472,12 @@ export class NovelAPI {
       project.blueprint.chapter_outline = project.blueprint.chapter_outline.filter(
         (c) => !chapterNumbers.includes(c.chapter_number)
       )
+      recordBlueprintCommit(project, {
+        source: 'manual',
+        patch: { chapter_outline: project.blueprint.chapter_outline },
+      })
     }
-    return novelClient.saveProject(project)
+    return saveNovelProject(project)
   }
 
   /** 清除章节正文记录，保留大纲，便于选择性重写 */
@@ -484,8 +487,24 @@ export class NovelAPI {
   ): Promise<NovelProject> {
     const project = await novelClient.getProject(projectId)
     const toClear = new Set(chapterNumbers)
+    for (const chapterNumber of chapterNumbers) {
+      const outline = project.blueprint?.chapter_outline?.find((c) => c.chapter_number === chapterNumber)
+      recordChapterCommit(project, {
+        chapterNumber,
+        event: 'manual',
+        chapter: {
+          chapter_number: chapterNumber,
+          title: outline?.title || `第${chapterNumber}章`,
+          summary: outline?.summary || '',
+          content: null,
+          versions: null,
+          evaluation: null,
+          generation_status: 'not_generated',
+        },
+      })
+    }
     project.chapters = (project.chapters || []).filter((c) => !toClear.has(c.chapter_number))
-    return novelClient.saveProject(project)
+    return saveNovelProject(project)
   }
 
   /** 清除全部已写章节正文，保留章节大纲 */
@@ -505,17 +524,36 @@ export class NovelAPI {
   ): Promise<NovelProject> {
     const project = await novelClient.getProject(projectId)
     await writing.generateChapterOutline(project, startChapter, numChapters, { signal: options?.signal })
-    return novelClient.saveProject(project)
+    return saveNovelProject(project)
+  }
+
+  static async regeneratePlaceholderChapterOutlines(
+    projectId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<NovelProject> {
+    const project = await novelClient.getProject(projectId)
+    await writing.regeneratePlaceholderChapterOutlines(project, { signal: options?.signal })
+    return saveNovelProject(project)
   }
 
   static async updateBlueprint(
     projectId: string,
-    data: Record<string, unknown>
+    data: Record<string, unknown>,
+    options?: { source?: BlueprintCommitSource }
   ): Promise<NovelProject> {
     const project = await novelClient.getProject(projectId)
-    const merged = { ...(project.blueprint || {}), ...(data as Blueprint) }
-    project.blueprint = ensureBlueprintAssetIds(merged)
-    return novelClient.saveProject(project)
+    recordBlueprintCommit(project, {
+      source: options?.source ?? 'manual',
+      patch: data as Blueprint,
+    })
+    if (project.blueprint) {
+      project.blueprint = ensureBlueprintAssetIds(project.blueprint)
+    }
+    return saveNovelProject(project)
+  }
+
+  static runStorySystemDoctor(project: NovelProject) {
+    return runStorySystemDoctor(project)
   }
 
   static async updateProjectModels(
@@ -531,14 +569,14 @@ export class NovelAPI {
       if (models.image_model_id) project.image_model_id = models.image_model_id
       else delete project.image_model_id
     }
-    return novelClient.saveProject(project)
+    return saveNovelProject(project)
   }
 
   static async updateProjectCover(projectId: string, coverUrl: string | null): Promise<NovelProject> {
     const project = await novelClient.getProject(projectId)
     if (coverUrl) project.cover_url = coverUrl
     else delete project.cover_url
-    return novelClient.saveProject(project)
+    return saveNovelProject(project)
   }
 
   static async updateCharacterPortrait(
@@ -552,7 +590,7 @@ export class NovelAPI {
     if (!character) throw new Error('角色不存在')
     if (portraitUrl) character.portrait_url = portraitUrl
     else delete character.portrait_url
-    return novelClient.saveProject(project)
+    return saveNovelProject(project)
   }
 
   static async editChapterContent(
@@ -565,7 +603,12 @@ export class NovelAPI {
     if (!chapter) throw new Error('章节不存在')
     chapter.content = content
     chapter.word_count = countChapterChars(content)
-    await novelClient.saveProject(project)
+    recordChapterCommit(project, {
+      chapterNumber,
+      event: 'manual',
+      chapter: { ...chapter },
+    })
+    await saveNovelProject(project)
     return chapter
   }
 

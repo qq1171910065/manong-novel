@@ -144,10 +144,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, onUnmounted } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { ChevronDown } from 'lucide-vue-next'
 import NovelModalShell from '@renderer/novel/components/shared/NovelModalShell.vue'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
+import { useI18n } from '@renderer/composables/useI18n'
+import { cleanVersionContent } from '@shared/novel/chapter-content-utils'
+import { isMainGenerationAvailable } from '@renderer/services/novel/generation-availability'
 import { formatChapterList, getLaterStartedChapterNumbers } from '@renderer/novel/utils/chapter-progress'
 import type { ChapterGenerationResponse, ChapterVersion, NovelProject } from '@renderer/services/novel/api'
 import WorkspaceInitial from './workspace/WorkspaceInitial.vue'
@@ -175,6 +178,8 @@ const props = withDefaults(defineProps<Props>(), {
   embedded: false,
   autoWriteLocked: false,
 })
+
+const { t } = useI18n()
 
 const emit = defineEmits([
   'regenerateChapter',
@@ -241,46 +246,7 @@ watch(
   }
 )
 
-// 清理版本内容的辅助函数
-const cleanVersionContent = (content: string): string => {
-  if (!content) return ''
-  try {
-    const parsed = JSON.parse(content)
-    const extractContent = (value: any): string | null => {
-      if (!value) return null
-      if (typeof value === 'string') return value
-      if (Array.isArray(value)) {
-        for (const item of value) {
-          const nested = extractContent(item)
-          if (nested) return nested
-        }
-        return null
-      }
-      if (typeof value === 'object') {
-        for (const key of ['content', 'chapter_content', 'chapter_text', 'text', 'body', 'story']) {
-          if (value[key]) {
-            const nested = extractContent(value[key])
-            if (nested) return nested
-          }
-        }
-      }
-      return null
-    }
-    const extracted = extractContent(parsed)
-    if (extracted) {
-      content = extracted
-    }
-  } catch (error) {
-    // not a json
-  }
-  let cleaned = content.replace(/^"|"$/g, '')
-  cleaned = cleaned.replace(/\\n/g, '\n')
-  cleaned = cleaned.replace(/\\"/g, '"')
-  cleaned = cleaned.replace(/\\t/g, '\t')
-  cleaned = cleaned.replace(/\\\\/g, '\\')
-  return cleaned
-}
-
+// 清理版本内容的辅助函数 — 使用 shared 工具
 const openEditModal = () => {
   if (selectedChapter.value?.content) {
     editingContent.value = cleanVersionContent(selectedChapter.value.content)
@@ -305,7 +271,10 @@ const saveEditedContent = async () => {
     })
     closeEditModal()
   } catch (error) {
-    console.error('保存章节内容失败:', error)
+    globalAlert.showError(
+      error instanceof Error ? error.message : t('writingDesk.saveFailed'),
+      t('writingDesk.saveFailed')
+    )
   } finally {
     isSaving.value = false
   }
@@ -329,7 +298,7 @@ const isChapterCompleted = (chapterNumber: number) => {
 
 const chapterHeaderStatus = computed(() => {
   if (props.selectedChapterNumber === null) {
-    return { label: '未完成', tone: 'neutral' as const }
+    return { label: t('writingDesk.statusIncomplete'), tone: 'neutral' as const }
   }
 
   const chapterNumber = props.selectedChapterNumber
@@ -343,27 +312,27 @@ const chapterHeaderStatus = computed(() => {
     props.evaluatingChapter === chapterNumber
   ) {
     if (status === 'evaluating' || props.evaluatingChapter === chapterNumber) {
-      return { label: '评审中', tone: 'active' as const }
+      return { label: t('writingDesk.statusEvaluating'), tone: 'active' as const }
     }
     if (status === 'selecting') {
-      return { label: '确认中', tone: 'active' as const }
+      return { label: t('writingDesk.statusConfirming'), tone: 'active' as const }
     }
-    return { label: '生成中', tone: 'active' as const }
+    return { label: t('writingDesk.statusGenerating'), tone: 'active' as const }
   }
 
   if (status === 'waiting_for_confirm' || status === 'evaluation_failed') {
-    return { label: '待确认', tone: 'active' as const }
+    return { label: t('writingDesk.statusPending'), tone: 'active' as const }
   }
 
   if (status === 'failed') {
-    return { label: '生成失败', tone: 'neutral' as const }
+    return { label: t('writingDesk.statusFailed'), tone: 'neutral' as const }
   }
 
   if (isChapterCompleted(chapterNumber)) {
-    return { label: '已完成', tone: 'done' as const }
+    return { label: t('writingDesk.statusDone'), tone: 'done' as const }
   }
 
-  return { label: '未完成', tone: 'neutral' as const }
+  return { label: t('writingDesk.statusIncomplete'), tone: 'neutral' as const }
 })
 
 const isChapterFailed = (chapterNumber: number) => {
@@ -381,7 +350,9 @@ const isChapterEvaluationFailed = (chapterNumber: number) => {
 const canGenerateChapter = (chapterNumber: number | null) => {
   if (chapterNumber === null || !props.project?.blueprint?.chapter_outline) return false
 
-  const outlines = props.project.blueprint.chapter_outline.sort((a, b) => a.chapter_number - b.chapter_number)
+  const outlines = [...props.project.blueprint.chapter_outline].sort(
+    (a, b) => a.chapter_number - b.chapter_number
+  )
   
   for (const outline of outlines) {
     if (outline.chapter_number >= chapterNumber) break
@@ -429,14 +400,26 @@ const currentComponent = computed(() => {
   return ChapterEmpty
 })
 
-// Polling for chapter status updates
+// 章节状态刷新：主进程 generation 事件驱动 + 低频轮询兜底
+const FALLBACK_POLL_MS = 30_000
+const EVENT_THROTTLE_MS = 1_500
 const pollingTimer = ref<number | null>(null)
+let lastEventRefreshAt = 0
+let unsubProgress: (() => void) | undefined
+let unsubFinished: (() => void) | undefined
+
+const requestStatusRefresh = () => {
+  const now = Date.now()
+  if (now - lastEventRefreshAt < EVENT_THROTTLE_MS) return
+  lastEventRefreshAt = now
+  emit('fetchChapterStatus')
+}
 
 const startPolling = () => {
   stopPolling()
   pollingTimer.value = window.setInterval(() => {
     emit('fetchChapterStatus')
-  }, 10000)
+  }, FALLBACK_POLL_MS)
 }
 
 const stopPolling = () => {
@@ -445,6 +428,19 @@ const stopPolling = () => {
     pollingTimer.value = null
   }
 }
+
+onMounted(() => {
+  if (!isMainGenerationAvailable()) return
+  unsubProgress = window.api.onNovelGenerationProgress?.((progress) => {
+    if (progress.projectId !== props.project?.id) return
+    if (progress.chapterNumber != null && progress.chapterNumber !== props.selectedChapterNumber) return
+    requestStatusRefresh()
+  })
+  unsubFinished = window.api.onNovelGenerationFinished?.((result) => {
+    if (result.projectId !== props.project?.id) return
+    requestStatusRefresh()
+  })
+})
 
 watch(
   () => [selectedChapter.value?.generation_status, props.evaluatingChapter, props.isSelectingVersion, props.selectedChapterNumber],
@@ -468,6 +464,8 @@ watch(
 
 onUnmounted(() => {
   stopPolling()
+  unsubProgress?.()
+  unsubFinished?.()
 })
 
 const currentComponentProps = computed(() => {

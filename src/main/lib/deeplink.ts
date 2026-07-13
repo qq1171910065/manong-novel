@@ -1,6 +1,5 @@
-import { app, ipcMain, protocol, net } from 'electron'
+import { ipcMain, protocol, net } from 'electron'
 import type { BrowserWindow } from 'electron'
-import { join } from 'node:path'
 
 export function findDeeplinkInArgv(argv: string[]): string | null {
   for (const arg of argv) {
@@ -25,7 +24,7 @@ export function initDeeplinkProtocol(protocolName: string): void {
   })
 }
 
-export function registerDeeplinkHandlers(getMainWindow: () => BrowserWindow | null): void {
+export function registerDeeplinkHandlers(_getMainWindow: () => BrowserWindow | null): void {
   ipcMain.removeHandler('deeplink:register')
   ipcMain.handle('deeplink:register', (_event, protocolName: string): void => {
     initDeeplinkProtocol(protocolName)

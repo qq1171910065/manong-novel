@@ -33,7 +33,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { resolveDisplayAiMessage } from '@renderer/services/novel/json-utils'
+import { resolveDisplayAiMessage, UNRESOLVED_AI_MESSAGE_PLACEHOLDER } from '@renderer/services/novel/json-utils'
 import { stripChoiceOptionsFromMessage } from '@renderer/novel/utils/chat-options'
 import type { ChatStreamStatus } from '@renderer/services/novel/writing-service'
 
@@ -99,6 +99,9 @@ const renderedMessage = computed(() => {
   }
   if (props.streamStatus === 'streaming' && !display.trim()) {
     return '<p class="novel-chat-bubble__thinking">文思正在组织语言…</p>'
+  }
+  if (props.streamStatus === 'done' && !display.trim()) {
+    return `<p class="novel-chat-bubble__thinking">${UNRESOLVED_AI_MESSAGE_PLACEHOLDER}</p>`
   }
   return parseMarkdown(display)
 })

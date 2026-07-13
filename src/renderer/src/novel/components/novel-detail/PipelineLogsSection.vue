@@ -1,31 +1,36 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { ChevronDown } from 'lucide-vue-next'
-import {
-  formatPipelineDuration,
-  pipelineLogService,
-  PIPELINE_STEP_LABELS,
-  pipelineStatusLabel,
-  type PipelineLogEntry,
-} from '@renderer/services/pipeline-log-service'
+import { pipelineLogService, type PipelineLogEntry } from '@renderer/services/pipeline-log-service'
 import { getCreationWorkflowPrefs } from '@renderer/services/creation-workflow-prefs'
+import {
+  formatLogDuration,
+  resolveLocaleDateString,
+  translatePipelineStatus,
+  translatePipelineStep,
+} from '@renderer/i18n/log-labels'
+import { useI18n } from '@renderer/composables/useI18n'
 import DetailEmptyState from './DetailEmptyState.vue'
 
 const props = defineProps<{
   projectId: string
 }>()
 
+const { t, currentLocale } = useI18n()
+
 const entries = ref<PipelineLogEntry[]>([])
 const expandedId = ref<string | null>(null)
 const loggingEnabled = ref(getCreationWorkflowPrefs().enablePipelineLog)
+
+const dateLocale = computed(() => resolveLocaleDateString(currentLocale.value))
 
 const groupedLogs = computed(() => {
   const map = new Map<string, PipelineLogEntry[]>()
   for (const entry of entries.value) {
     const date = new Date(entry.startedAt)
     const key = Number.isNaN(date.getTime())
-      ? '未知日期'
-      : date.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })
+      ? t('novelDetail.pipelineLogs.unknownDate')
+      : date.toLocaleDateString(dateLocale.value, { year: 'numeric', month: 'long', day: 'numeric' })
     const list = map.get(key) || []
     list.push(entry)
     map.set(key, list)
@@ -45,15 +50,19 @@ function toggleExpand(id: string) {
 function formatPipelineTime(iso: string): string {
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return '—'
-  return date.toLocaleString('zh-CN', {
+  return date.toLocaleString(dateLocale.value, {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
   })
 }
 
+function stepLabel(entry: PipelineLogEntry): string {
+  return entry.label || translatePipelineStep(t, entry.step)
+}
+
 function logMetaLine(entry: PipelineLogEntry): string {
-  const parts = [formatPipelineDuration(entry.durationMs)]
+  const parts = [formatLogDuration(entry.durationMs)]
   if (entry.totalTokens) parts.push(`${entry.totalTokens} tok`)
   if (entry.model) parts.push(entry.model)
   return parts.join(' · ')
@@ -74,11 +83,11 @@ defineExpose({ reload })
       <DetailEmptyState
         v-if="!entries.length"
         class="nd-split-page__empty"
-        :title="loggingEnabled ? '暂无调用记录' : '调用记录未开启'"
+        :title="loggingEnabled ? t('novelDetail.pipelineLogs.emptyEnabled') : t('novelDetail.pipelineLogs.emptyDisabled')"
         :description="
           loggingEnabled
-            ? '进行灵感对话、蓝图生成或章节写作后，AI 调用会保留在这里'
-            : '请在「创作流水线」中开启「记录 AI 调用详情」'
+            ? t('novelDetail.pipelineLogs.emptyEnabledDesc')
+            : t('novelDetail.pipelineLogs.emptyDisabledDesc')
         "
       />
 
@@ -94,12 +103,10 @@ defineExpose({ reload })
             >
               <button type="button" class="pipeline-log-item__head" @click="toggleExpand(entry.id)">
                 <span class="pipeline-log-item__badge" :data-status="entry.status">
-                  {{ pipelineStatusLabel(entry.status) }}
+                  {{ translatePipelineStatus(t, entry.status) }}
                 </span>
                 <div class="pipeline-log-item__main">
-                  <p class="pipeline-log-item__step">
-                    {{ entry.label || PIPELINE_STEP_LABELS[entry.step] }}
-                  </p>
+                  <p class="pipeline-log-item__step">{{ stepLabel(entry) }}</p>
                   <p class="pipeline-log-item__meta">{{ logMetaLine(entry) }}</p>
                 </div>
                 <time class="pipeline-log-item__time">{{ formatPipelineTime(entry.startedAt) }}</time>
@@ -113,11 +120,11 @@ defineExpose({ reload })
                   <pre class="pipeline-log-detail__pre">{{ entry.systemPromptPreview }}</pre>
                 </div>
                 <div v-if="entry.userPromptPreview" class="pipeline-log-detail__block">
-                  <p class="pipeline-log-detail__label">User 消息</p>
+                  <p class="pipeline-log-detail__label">{{ t('novelDetail.pipelineLogs.userMessage') }}</p>
                   <pre class="pipeline-log-detail__pre">{{ entry.userPromptPreview }}</pre>
                 </div>
                 <div v-if="entry.responsePreview" class="pipeline-log-detail__block">
-                  <p class="pipeline-log-detail__label">AI 响应</p>
+                  <p class="pipeline-log-detail__label">{{ t('novelDetail.pipelineLogs.aiResponse') }}</p>
                   <pre class="pipeline-log-detail__pre">{{ entry.responsePreview }}</pre>
                 </div>
               </div>

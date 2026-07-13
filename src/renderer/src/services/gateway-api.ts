@@ -11,6 +11,41 @@ import type { PortalGatewayConfig } from './portal-api'
 
 const GATEWAY_KEY_STORAGE = 'wb_gateway_api_key'
 
+let gatewayKeyCache: string | null = null
+let gatewayKeyHydrated = false
+
+async function hydrateGatewayKeyFromSecureStore(): Promise<void> {
+  if (gatewayKeyHydrated) return
+  gatewayKeyHydrated = true
+  if (typeof window.api?.gatewayGetStoredKey === 'function') {
+    try {
+      const result = await window.api.gatewayGetStoredKey()
+      if (result.ok && result.key) {
+        gatewayKeyCache = result.key
+        return
+      }
+    } catch {
+      // 降级到 legacy localStorage
+    }
+  }
+  const legacy = localStorage.getItem(GATEWAY_KEY_STORAGE)
+  if (legacy) {
+    gatewayKeyCache = legacy
+    if (typeof window.api?.gatewaySetStoredKey === 'function') {
+      try {
+        await window.api.gatewaySetStoredKey(legacy)
+        localStorage.removeItem(GATEWAY_KEY_STORAGE)
+      } catch {
+        // 保留 legacy 副本直至下次成功写入
+      }
+    }
+  }
+}
+
+export async function initGatewayKeyStorage(): Promise<void> {
+  await hydrateGatewayKeyFromSecureStore()
+}
+
 export interface GatewayEndpointConfig {
   configured: boolean
   mode: 'direct' | 'proxy'
@@ -40,11 +75,21 @@ export interface GatewayTokenUsage {
   total_tokens?: number
 }
 
+export interface GatewayToolCall {
+  id?: string
+  type?: string
+  function?: {
+    name: string
+    arguments: string
+  }
+}
+
 export interface GatewayChatResult {
   content: string
   /** 推理模型可能将思考过程放在此字段，正文 content 为空时需从中提取 */
   reasoning?: string
   usage?: GatewayTokenUsage
+  tool_calls?: GatewayToolCall[]
 }
 
 export interface GatewayConnectivityReport {
@@ -97,17 +142,26 @@ export function getGatewayBaseUrl(): string {
 }
 
 export function getStoredGatewayKey(): string {
-  return localStorage.getItem(GATEWAY_KEY_STORAGE) || ''
+  return gatewayKeyCache || localStorage.getItem(GATEWAY_KEY_STORAGE) || ''
 }
 
 export function setStoredGatewayKey(key: string): void {
   const k = String(key || '').trim()
-  if (k) localStorage.setItem(GATEWAY_KEY_STORAGE, k)
-  else localStorage.removeItem(GATEWAY_KEY_STORAGE)
+  gatewayKeyCache = k || null
+  localStorage.removeItem(GATEWAY_KEY_STORAGE)
+  if (typeof window.api?.gatewaySetStoredKey === 'function') {
+    void window.api.gatewaySetStoredKey(k)
+  } else if (k) {
+    localStorage.setItem(GATEWAY_KEY_STORAGE, k)
+  }
 }
 
 export function clearStoredGatewayKey(): void {
+  gatewayKeyCache = null
   localStorage.removeItem(GATEWAY_KEY_STORAGE)
+  if (typeof window.api?.gatewayClearStoredKey === 'function') {
+    void window.api.gatewayClearStoredKey()
+  }
   modelsCache = null
 }
 
@@ -121,6 +175,7 @@ export function getAppKeyName(): string {
 }
 
 export async function ensureGatewayKey(appKeyName = getAppKeyName(), forceRefresh = false): Promise<string> {
+  await hydrateGatewayKeyFromSecureStore()
   if (!forceRefresh) {
     const existing = getStoredGatewayKey()
     if (existing) return existing
@@ -837,6 +892,8 @@ export async function gatewayChatCompletion(
   if (params?.presence_penalty != null) body.presence_penalty = params.presence_penalty
   if (params?.frequency_penalty != null) body.frequency_penalty = params.frequency_penalty
   if (params?.max_tokens != null) body.max_tokens = params.max_tokens
+  if (params?.tools?.length) body.tools = params.tools
+  if (params?.tool_choice != null) body.tool_choice = params.tool_choice
   const res = await gatewayFetch('chat/completions', {
     method: 'POST',
     body,
@@ -853,11 +910,19 @@ export async function gatewayChatCompletion(
   const reasoning =
     readStreamTextField(message?.reasoning_content) ||
     readStreamTextField(message?.reasoning) ||
-    readStreamTextField(message?.thinking)
+    readStreamTextField(message?.thinking) ||
+    readStreamTextField(message?.reasoning_summary)
+  const toolCallsRaw = message?.tool_calls
+  const tool_calls = Array.isArray(toolCallsRaw)
+    ? (toolCallsRaw as GatewayToolCall[]).filter(
+        (item) => item && typeof item === 'object' && item.function?.name
+      )
+    : undefined
   return {
     content,
     reasoning: reasoning || undefined,
     usage: data?.usage,
+    tool_calls,
   }
 }
 
@@ -911,9 +976,11 @@ function extractStreamDeltaParts(parsed: StreamChoicePayload): {
     readStreamTextField(delta?.reasoning_content) ||
     readStreamTextField(delta?.reasoning) ||
     readStreamTextField(delta?.thinking) ||
+    readStreamTextField(delta?.reasoning_summary) ||
     readStreamTextField(message?.reasoning_content) ||
     readStreamTextField(message?.reasoning) ||
-    readStreamTextField(message?.thinking)
+    readStreamTextField(message?.thinking) ||
+    readStreamTextField(message?.reasoning_summary)
   const finishReason =
     typeof choice?.finish_reason === 'string' ? choice.finish_reason : null
   return { content, reasoning, finishReason }
@@ -1013,6 +1080,8 @@ export async function gatewayChatStream(
     if (params?.presence_penalty != null) bodyPayload.presence_penalty = params.presence_penalty
     if (params?.frequency_penalty != null) bodyPayload.frequency_penalty = params.frequency_penalty
     if (params?.max_tokens != null) bodyPayload.max_tokens = params.max_tokens
+    if (params?.tools?.length) bodyPayload.tools = params.tools
+    if (params?.tool_choice != null) bodyPayload.tool_choice = params.tool_choice
     const body = JSON.stringify(bodyPayload)
 
     const seenLines = new Set<string>()

@@ -4,8 +4,8 @@
     <DetailEmptyState
       v-if="!hasRelationshipEntries"
       class="nd-split-page__empty"
-      title="暂无人际关系"
-      description="点击此处添加第一条人物关系"
+      :title="t('novelDetail.relationships.emptyTitle')"
+      :description="t('novelDetail.relationships.emptyDesc')"
       :clickable="editable"
       @activate="openCreateForm"
     />
@@ -34,35 +34,35 @@
             <div class="nd-rel-card__header">
               <div class="nd-rel-card__person">
                 <span class="nd-rel-card__avatar nd-rel-card__avatar--from">
-                  {{ popover.relation.character_from?.slice(0, 1) || '角' }}
+                  {{ popover.relation.character_from?.slice(0, 1) || t('novelDetail.common.characterFallback') }}
                 </span>
-                <span class="nd-rel-card__name">{{ popover.relation.character_from || '未知角色' }}</span>
+                <span class="nd-rel-card__name">{{ popover.relation.character_from || t('novelDetail.relationships.unknownCharacter') }}</span>
               </div>
               <div class="nd-rel-card__link">
-                <span class="nd-rel-card__type">{{ popover.relation.relationship_type || '关系未定义' }}</span>
+                <span class="nd-rel-card__type">{{ popover.relation.relationship_type || t('novelDetail.common.relationUndefined') }}</span>
                 <svg class="nd-rel-card__arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14M13 6l6 6-6 6" />
                 </svg>
               </div>
               <div class="nd-rel-card__person nd-rel-card__person--end">
                 <span class="nd-rel-card__avatar nd-rel-card__avatar--to">
-                  {{ popover.relation.character_to?.slice(0, 1) || '角' }}
+                  {{ popover.relation.character_to?.slice(0, 1) || t('novelDetail.common.characterFallback') }}
                 </span>
-                <span class="nd-rel-card__name">{{ popover.relation.character_to || '未知角色' }}</span>
+                <span class="nd-rel-card__name">{{ popover.relation.character_to || t('novelDetail.relationships.unknownCharacter') }}</span>
               </div>
             </div>
-            <p class="nd-rel-card__desc">{{ popover.relation.description || '暂无关系描述' }}</p>
+            <p class="nd-rel-card__desc">{{ popover.relation.description || t('novelDetail.relationships.noDescription') }}</p>
           </template>
 
           <template v-else-if="popover.kind === 'node'">
             <h4 class="nd-rel-popover__title">{{ popover.name }}</h4>
-            <p class="nd-rel-popover__subtitle">关联 {{ popover.nodeRelations.length }} 条关系</p>
+            <p class="nd-rel-popover__subtitle">{{ t('novelDetail.relationships.relatedCount', { count: popover.nodeRelations.length }) }}</p>
             <ul class="nd-rel-popover__list">
               <li v-for="(rel, ri) in popover.nodeRelations" :key="rel.id || ri" class="nd-rel-popover__item">
                 <span class="nd-rel-popover__peer">
                   {{ rel.character_from === popover.name ? rel.character_to : rel.character_from }}
                 </span>
-                <span class="nd-rel-popover__type">{{ rel.relationship_type || '关系' }}</span>
+                <span class="nd-rel-popover__type">{{ rel.relationship_type || t('novelDetail.relationships.relationFallback') }}</span>
                 <p v-if="rel.description" class="nd-rel-popover__desc">{{ rel.description }}</p>
               </li>
             </ul>
@@ -103,10 +103,10 @@
 
     <NovelPreviewDialog
       :show="showPreview"
-      :title="previewRelation ? relationPreviewTitle : '关系预览'"
+      :title="previewRelation ? relationPreviewTitle : t('novelDetail.relationships.previewTitle')"
       :badge="previewRelation?.relationship_type || undefined"
       :show-hero="false"
-      aria-label="人物关系预览"
+      :aria-label="t('novelDetail.relationships.previewAria')"
       @close="showPreview = false"
     >
       <template v-if="previewRelation">
@@ -116,7 +116,7 @@
           <strong>{{ previewRelation.character_to }}</strong>
         </p>
         <p v-if="previewRelation.description" class="nd-preview-text">{{ previewRelation.description }}</p>
-        <p v-else class="nd-preview-text nd-preview-text--empty">暂无关系描述</p>
+        <p v-else class="nd-preview-text nd-preview-text--empty">{{ t('novelDetail.relationships.noDescription') }}</p>
       </template>
     </NovelPreviewDialog>
   </div>
@@ -131,9 +131,11 @@ import RelationshipGraphChart from './RelationshipGraphChart.vue'
 import RelationshipFormModal from './RelationshipFormModal.vue'
 import { NovelAPI } from '@renderer/services/novel/api'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
+import { useI18n } from '@renderer/composables/useI18n'
 import { randomUUID } from '@renderer/utils/id'
-
 import type { ProjectModelPrefs } from '@renderer/services/novel/project-model'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   data: { relationships?: Relationship[] } | null
@@ -226,8 +228,11 @@ const previewRelation = computed(() => {
 
 const relationPreviewTitle = computed(() => {
   const rel = previewRelation.value
-  if (!rel) return '关系预览'
-  return `${rel.character_from || '?'} 与 ${rel.character_to || '?'}`
+  if (!rel) return t('novelDetail.relationships.previewTitle')
+  return t('novelDetail.relationships.previewPair', {
+    from: rel.character_from || '?',
+    to: rel.character_to || '?',
+  })
 })
 
 async function clampPopoverPosition(x: number, y: number) {
@@ -295,12 +300,12 @@ function onEdgeClick(payload: { index: number; x: number; y: number }) {
 
 function edgeContextMenuItems(index: number): ContextMenuItem[] {
   if (!props.editable) {
-    return [{ id: 'preview', label: '预览', onClick: () => openPreview(index) }]
+    return [{ id: 'preview', label: t('novelDetail.common.preview'), onClick: () => openPreview(index) }]
   }
   return [
-    { id: 'preview', label: '预览', onClick: () => openPreview(index) },
-    { id: 'edit', label: '编辑', onClick: () => openEdit(index) },
-    { id: 'delete', label: '删除', onClick: () => void deleteRelationship(index) },
+    { id: 'preview', label: t('novelDetail.common.preview'), onClick: () => openPreview(index) },
+    { id: 'edit', label: t('novelDetail.common.edit'), onClick: () => openEdit(index) },
+    { id: 'delete', label: t('novelDetail.common.delete'), onClick: () => void deleteRelationship(index) },
   ]
 }
 
@@ -324,7 +329,7 @@ function onNodeContextMenu(payload: { name: string; clientX: number; clientY: nu
     items: [
       {
         id: 'preview',
-        label: '预览',
+        label: t('novelDetail.common.preview'),
         onClick: () => {
           highlightName.value = payload.name
           popover.value = {
@@ -435,7 +440,7 @@ async function onFormSave(relationship: Relationship) {
     emit('asset-saved', 'relationships')
     showForm.value = false
   } catch (error) {
-    globalAlert.showError(error instanceof Error ? error.message : '保存失败', '关系保存失败')
+    globalAlert.showError(error instanceof Error ? error.message : t('novelDetail.common.saveFailed'), t('novelDetail.relationships.saveFailed'))
   }
 }
 
@@ -444,8 +449,8 @@ async function deleteRelationship(index: number) {
   const rel = relationships.value[index]
   const label = rel
     ? `${rel.character_from || '?'} → ${rel.character_to || '?'}`
-    : '该关系'
-  const confirmed = await globalAlert.showConfirm(`确定删除「${label}」吗？此操作不可撤销。`, '删除关系')
+    : t('novelDetail.relationships.thisRelation')
+  const confirmed = await globalAlert.showConfirm(t('novelDetail.common.confirmDelete', { name: label }), t('novelDetail.relationships.deleteTitle'))
   if (!confirmed) return
 
   const list = relationships.value.filter((_, i) => i !== index)
@@ -453,7 +458,7 @@ async function deleteRelationship(index: number) {
     await NovelAPI.updateBlueprint(props.projectId, { relationships: list })
     emit('asset-saved', 'relationships')
   } catch (error) {
-    globalAlert.showError(error instanceof Error ? error.message : '删除失败', '删除关系失败')
+    globalAlert.showError(error instanceof Error ? error.message : t('novelDetail.common.deleteFailed'), t('novelDetail.relationships.deleteFailed'))
   }
 }
 

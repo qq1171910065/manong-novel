@@ -11,9 +11,9 @@ export const appConfig = {
   features: {
     platform: true,
     tray: true,
-    autoUpdate: false,
-    i18n: false,
-    deeplink: false,
+    autoUpdate: true,
+    i18n: true,
+    deeplink: true,
   } as const,
   login: {
     emailCode: true,

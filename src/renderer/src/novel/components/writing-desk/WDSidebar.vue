@@ -412,7 +412,9 @@ const isChapterSelecting = (chapterNumber: number) => {
 const canGenerateChapter = (chapterNumber: number) => {
   if (!props.project?.blueprint?.chapter_outline) return false
 
-  const outlines = props.project.blueprint.chapter_outline.sort((a, b) => a.chapter_number - b.chapter_number)
+  const outlines = [...props.project.blueprint.chapter_outline].sort(
+    (a, b) => a.chapter_number - b.chapter_number
+  )
   
   for (const outline of outlines) {
     if (outline.chapter_number >= chapterNumber) break

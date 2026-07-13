@@ -6,17 +6,16 @@ import {
   type PromptWiringStatus,
 } from '@shared/novel/prompt-registry'
 import { getPromptFileContent } from '@renderer/services/novel/prompt-content'
+import { useI18n } from '@renderer/composables/useI18n'
 import NovelModalShell from '@renderer/novel/components/shared/NovelModalShell.vue'
 import MarkdownContent from '@renderer/components/common/MarkdownContent.vue'
 
-const STATUS_LABELS: Record<PromptWiringStatus, string> = {
-  wired: '已接入',
-  unwired: '未接入',
-  deprecated: '已弃用',
-}
+const { t } = useI18n()
 
 const previewOpen = ref(false)
 const activeEntry = ref<PromptRegistryEntry | null>(null)
+
+const statusLabel = (status: PromptWiringStatus) => t(`novelDetail.promptRegistry.${status}`)
 
 const previewContent = computed(() => {
   if (!activeEntry.value) return ''
@@ -51,7 +50,7 @@ function closePreview() {
       @click="openPreview(entry)"
     >
       <span class="prompt-registry__badge" :data-status="entry.status">
-        {{ STATUS_LABELS[entry.status] }}
+        {{ statusLabel(entry.status) }}
       </span>
       <span class="prompt-registry__title">{{ entry.file }}</span>
       <span class="prompt-registry__purpose">{{ entry.purpose }}</span>
@@ -60,9 +59,9 @@ function closePreview() {
     <NovelModalShell
       :show="previewOpen"
       size="lg"
-      :title="activeEntry?.file || 'Prompt 模板'"
+      :title="activeEntry?.file || t('novelDetail.promptRegistry.previewTitle')"
       :subtitle="modalSubtitle"
-      aria-label="Prompt 模板预览"
+      :aria-label="t('novelDetail.promptRegistry.previewAria')"
       body-class="prompt-registry-modal__body"
       @close="closePreview"
     >
@@ -70,7 +69,7 @@ function closePreview() {
         <MarkdownContent :source="previewContent" />
       </div>
       <p v-else class="prompt-registry-modal__missing">
-        未找到模板文件 {{ activeEntry?.file }}
+        {{ t('novelDetail.promptRegistry.missingFile', { file: activeEntry?.file ?? '' }) }}
       </p>
     </NovelModalShell>
   </div>

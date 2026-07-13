@@ -23,8 +23,8 @@ export const novelDomain = {
       data?: NovelProject
       error?: string
     }>,
-  novelSaveProject: (userId: string, project: NovelProject) =>
-    ipcRenderer.invoke('novel:projects:save', userId, project) as Promise<{
+  novelSaveProject: (userId: string, project: NovelProject, expectedUpdatedAt?: string) =>
+    ipcRenderer.invoke('novel:projects:save', userId, project, expectedUpdatedAt) as Promise<{
       ok: boolean
       data?: NovelProject
       error?: string
@@ -51,6 +51,12 @@ export const novelDomain = {
     ipcRenderer.invoke('novel:store:stats', userId) as Promise<import('@shared/novel/types').NovelStoreStats>,
   novelExportStore: (userId: string) =>
     ipcRenderer.invoke('novel:store:export', userId) as Promise<import('@shared/novel/types').NovelStoreData>,
+  novelMergeImportStore: (userId: string, payload: import('@shared/novel/types').NovelStoreData) =>
+    ipcRenderer.invoke('novel:store:mergeImport', userId, payload) as Promise<{
+      ok: boolean
+      data?: { imported: number; skipped: number }
+      error?: string
+    }>,
   novelClearStoreProjects: (userId: string) =>
     ipcRenderer.invoke('novel:store:clearProjects', userId) as Promise<boolean>,
   novelFactoryResetStore: (userId: string) =>

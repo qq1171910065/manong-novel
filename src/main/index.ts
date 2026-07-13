@@ -8,8 +8,8 @@ createMntoolsApp({
   appName: 'Manong Novel',
   modules,
   features: {
-    autoUpdate: false,
-    platform: true,
+    autoUpdate: true,
+    deeplink: true,
     tray: true,
   },
   login: {

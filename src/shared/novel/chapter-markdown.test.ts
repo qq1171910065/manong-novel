@@ -35,6 +35,25 @@ describe('chapter markdown', () => {
     expect(entityNames).toEqual(['林逸', '旧城区'])
   })
 
+  it('keeps plain text between highlighted entities', () => {
+    const entities = buildBlueprintEntityIndex({
+      characters: [{ name: '陆辰', description: '主角' }],
+    })
+
+    const segments = splitParagraphWithEntities('海浪拍打着岸边，陆辰猛地睁开眼睛，继续往前走。', entities)
+    const plainText = segments
+      .filter((item) => item.kind === 'html')
+      .map((item) => item.html.replace(/<[^>]+>/g, ''))
+      .join('')
+
+    expect(plainText).toContain('海浪拍打着岸边')
+    expect(plainText).toContain('猛地睁开眼睛')
+    expect(plainText).toContain('继续往前走')
+    expect(segments.filter((item) => item.kind === 'entity').map((item) => item.entity.name)).toEqual([
+      '陆辰',
+    ])
+  })
+
   it('strips markdown for word count', () => {
     expect(stripMarkdownInline('**林逸**说')).toBe('林逸说')
     expect(countChapterChars('**林逸**说')).toBe(3)

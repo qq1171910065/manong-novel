@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, h, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue'
 import {
   Activity,
@@ -218,6 +218,7 @@ const boolOptions = [
 
 const usagePageSummary = computed(() => ({
   records: usageTotal.value,
+  pageRecords: usage.value.length,
   cost: usage.value.reduce((sum, row) => sum + Number(row.costYuan || 0), 0),
   tokens: usage.value.reduce(
     (sum, row) => sum + (row.promptTokens || 0) + (row.completionTokens || 0),
@@ -307,10 +308,20 @@ const securityItems = computed(() => [
 const usageChartOption = computed(() => {
   const labels = usage.value.map((r) => formatShortTime(r.calledAt || r.createTime || ''))
   const costs = usage.value.map((r) => Number(r.costYuan || 0))
+  const rotateLabels = labels.length > 8
   return {
     tooltip: { trigger: 'axis' as const },
-    grid: { left: 48, right: 16, top: 28, bottom: 32 },
-    xAxis: { type: 'category' as const, data: labels, axisLabel: { rotate: labels.length > 8 ? 35 : 0 } },
+    grid: { left: 48, right: 16, top: 28, bottom: rotateLabels ? 56 : 40, containLabel: true },
+    xAxis: {
+      type: 'category' as const,
+      data: labels,
+      axisLabel: {
+        rotate: rotateLabels ? 35 : 0,
+        margin: 12,
+        interval: 0,
+        hideOverlap: true,
+      },
+    },
     yAxis: { type: 'value' as const, name: '\u5143' },
     series: [
       {
@@ -1277,7 +1288,7 @@ onBeforeUnmount(() => {
 }
 
 .profile-panel :deep(.portal-plain-block__desc) {
-  margin: 0 0 12px;
+  margin: 0;
   color: var(--muted);
   font-size: var(--text-sm);
   line-height: 1.45;

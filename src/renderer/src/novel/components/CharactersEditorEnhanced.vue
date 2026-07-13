@@ -234,6 +234,7 @@
 
 <script setup lang="ts">
 import { ref, watch, reactive, nextTick } from 'vue';
+import { useDebouncedSave } from '@renderer/composables/useDebouncedSave';
 import ImageAssetField from '@renderer/novel/components/shared/ImageAssetField.vue';
 import SubmitToLibraryButton from '@renderer/novel/components/shared/SubmitToLibraryButton.vue';
 import { buildCharacterPortraitPrompt, generateCharacterPortrait } from '@renderer/services/image-service';
@@ -330,6 +331,7 @@ const isPortraitGenerating = (index: number) => {
   return isImageUiKeyRunning(portraitUiKey(pid, index));
 };
 let syncing = false;
+const { schedule } = useDebouncedSave(400);
 
 function characterPrompt(character: Character) {
   return buildCharacterPortraitPrompt({
@@ -424,7 +426,9 @@ watch(() => props.modelValue, (newVal) => {
 
 watch(localCharacters, (newVal) => {
   if (syncing) return;
-  emit('update:modelValue', JSON.parse(JSON.stringify(newVal)));
+  schedule(async () => {
+    emit('update:modelValue', JSON.parse(JSON.stringify(newVal)));
+  });
 }, { deep: true });
 
 const addCharacter = () => {

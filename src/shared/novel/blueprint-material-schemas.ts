@@ -335,7 +335,7 @@ export function normalizeCharacterRecord(raw: Record<string, unknown>): Record<s
     if (value) record[field.key] = value
   }
 
-  const sanitized = sanitizeMaterialCharacter(record as Character)
+  const sanitized = sanitizeMaterialCharacter(record as unknown as Character)
   if (!sanitized) return null
 
   return {
