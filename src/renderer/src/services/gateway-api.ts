@@ -7,6 +7,7 @@ import {
   shouldRetryImageWithoutResponseFormat,
 } from './gateway-image-error'
 import { DEFAULT_IMAGE_MODEL_ID, DEFAULT_SYSTEM_ROLE_MODEL_ID, IMAGE_GENERATION_TIMEOUT_MS, MIMO_TTS_MODEL_ID } from '@shared/gateway/constants'
+import { formatGatewayApiError } from '@shared/gateway/format-error'
 import type { PortalGatewayConfig } from './portal-api'
 
 const GATEWAY_KEY_STORAGE = 'wb_gateway_api_key'
@@ -174,6 +175,13 @@ export function getAppKeyName(): string {
   return getRuntimeConfig().appId
 }
 
+export function isInvalidGatewayTokenError(status?: number, error?: string): boolean {
+  if (status === 401 || status === 403) return true
+  return /无效的令牌|invalid\s*(api[_\s-]?)?key|invalid\s*token|unauthorized|authentication|api key.*invalid|令牌.*无效/i.test(
+    String(error || '')
+  )
+}
+
 export async function ensureGatewayKey(appKeyName = getAppKeyName(), forceRefresh = false): Promise<string> {
   await hydrateGatewayKeyFromSecureStore()
   if (!forceRefresh) {
@@ -253,17 +261,27 @@ async function gatewayFetch(
       (data as { error?: { message?: string } })?.error?.message || '钱包余额不足，请先充值'
     return { ok: false, status, data, error: msg }
   }
-  if (status === 401) {
-    return { ok: false, status, data, error: 'API Key 无效，请在用户中心重新创建' }
+  const bodyError = extractGatewayResponseError(data)
+  if (status === 401 || isInvalidGatewayTokenError(status, bodyError || undefined)) {
+    return {
+      ok: false,
+      status: status === 200 ? 401 : status,
+      data,
+      error: bodyError || 'API Key 无效，请在用户中心重新创建',
+    }
   }
   if (status >= 400) {
     const msg =
+      bodyError ||
       (data as { error?: { message?: string }; message?: string })?.error?.message ||
       (data as { message?: string })?.message ||
       (status === 503
         ? '模型网关暂时不可用（503），请确认账户后台「New API → 网关配置」上游已启动，且对应模型渠道已启用'
         : `HTTP ${status}`)
     return { ok: false, status, data, error: msg }
+  }
+  if (bodyError) {
+    return { ok: false, status, data, error: bodyError }
   }
   return { ok: true, status, data }
 }
@@ -425,10 +443,7 @@ export async function resolveChatModelId(
 }
 
 /** 将网关 content_filter 类错误转为更易理解的提示 */
-export function formatGatewayContentFilterError(raw: string): string {
-  if (!/content_filter|high risk|considered high/i.test(raw)) return raw
-  return `${raw}。部分模型对小说创作类系统提示较敏感，请换用其他写作模型（如 DeepSeek、GPT 等）后重试。`
-}
+export { formatGatewayContentFilterError, formatGatewayApiError } from '@shared/gateway/format-error'
 
 export function isLikelyChatModel(model: GatewayModelInfo): boolean {
   const hay = `${model.id} ${model.tags.join(' ')} ${model.endpointTypes.join(' ')}`.toLowerCase()
@@ -894,12 +909,29 @@ export async function gatewayChatCompletion(
   if (params?.max_tokens != null) body.max_tokens = params.max_tokens
   if (params?.tools?.length) body.tools = params.tools
   if (params?.tool_choice != null) body.tool_choice = params.tool_choice
-  const res = await gatewayFetch('chat/completions', {
-    method: 'POST',
-    body,
-    timeoutMs: params?.timeoutMs,
-  })
-  if (!res.ok) throw new Error(res.error || '对话失败')
+
+  const fetchOnce = () =>
+    gatewayFetch('chat/completions', {
+      method: 'POST',
+      body,
+      timeoutMs: params?.timeoutMs,
+    })
+
+  let res = await fetchOnce()
+  if (!res.ok && isInvalidGatewayTokenError(res.status, res.error)) {
+    await ensureGatewayKey(getAppKeyName(), true)
+    res = await fetchOnce()
+  }
+  if (!res.ok) {
+    throw new Error(
+      formatGatewayApiError(
+        res.error ||
+          (isInvalidGatewayTokenError(res.status, res.error)
+            ? 'API Key 无效或已过期，请在用户中心重新创建'
+            : '对话失败')
+      )
+    )
+  }
   const data = res.data as {
     choices?: Array<{ message?: Record<string, unknown> }>
     usage?: GatewayTokenUsage
@@ -1101,20 +1133,20 @@ export async function gatewayChatStream(
     const offError = window.api.onSSEError((err: string) => {
       cleanup()
       ended = true
-      if (!cancelled && !forceRefreshKey && /401/.test(err)) {
+      if (!cancelled && !forceRefreshKey && isInvalidGatewayTokenError(undefined, err)) {
         void runStream(true).catch((e) => {
           handlers.onError(e instanceof Error ? e.message : '流式请求失败')
         })
         return
       }
       handlers.onError(
-        /401/.test(err)
+        isInvalidGatewayTokenError(undefined, err)
           ? 'API Key 无效或已过期，已尝试自动刷新。请在用户中心检查 Key 与邮箱验证状态'
           : /503|网关暂时不可用|无可用渠道|no available channel/i.test(err)
             ? (err.includes('503') && err.length < 80
               ? '模型网关暂时不可用（503），请确认账户后台「New API → 网关配置」上游已启动，且对应模型渠道已启用'
-              : err)
-            : formatGatewayContentFilterError(err)
+              : formatGatewayApiError(err))
+            : formatGatewayApiError(err)
       )
     })
 
@@ -1142,14 +1174,14 @@ export async function gatewayChatStream(
       cleanup()
       ended = true
       const msg = err instanceof Error ? err.message : '流式请求失败'
-      if (!cancelled && !forceRefreshKey && /401/.test(msg)) {
+      if (!cancelled && !forceRefreshKey && isInvalidGatewayTokenError(undefined, msg)) {
         await runStream(true)
         return
       }
       handlers.onError(
-        /401/.test(msg)
+        isInvalidGatewayTokenError(undefined, msg)
           ? 'API Key 无效或已过期，已尝试自动刷新。请在用户中心检查 Key 与邮箱验证状态'
-          : msg
+          : formatGatewayApiError(msg)
       )
     }
   }

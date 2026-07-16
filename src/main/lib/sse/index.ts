@@ -1,4 +1,5 @@
 import { ipcMain, BrowserWindow } from 'electron'
+import { formatGatewayApiError } from '../../../shared/gateway/format-error'
 
 const DEFAULT_SSE_TIMEOUT_MS = 120_000
 /** 单次 SSE 静默上限（智能解析等大上下文任务可能长时间无首 token） */
@@ -137,18 +138,31 @@ export function registerSseHandlers(): void {
           try {
             const text = await response.text()
             if (text.trim()) {
-              try {
-                const parsed = JSON.parse(text) as { error?: { message?: string }; message?: string }
-                errMsg = parsed?.error?.message || parsed?.message || text.trim().slice(0, 240)
-              } catch {
-                errMsg = text.trim().slice(0, 240)
+              errMsg = formatGatewayApiError(text.trim().slice(0, 800))
+              if (/^HTTP \d+$/i.test(errMsg) && text.trim()) {
+                try {
+                  const parsed = JSON.parse(text) as {
+                    error?: { message?: string; type?: string }
+                    message?: string
+                  }
+                  errMsg =
+                    formatGatewayApiError(
+                      parsed?.error?.message ||
+                        parsed?.message ||
+                        parsed?.error?.type ||
+                        text.trim()
+                    )
+                } catch {
+                  errMsg = formatGatewayApiError(text.trim().slice(0, 240))
+                }
               }
             }
           } catch {
             /* ignore body read errors */
           }
-          if (response.status === 503 && /^HTTP 503$/i.test(errMsg)) {
-            errMsg = '模型网关暂时不可用（503），请确认 Platform「New API → 网关配置」上游已启动，且对应模型渠道已启用'
+          if (response.status === 503 && /HTTP 503|请求失败/i.test(errMsg)) {
+            errMsg =
+              '模型网关暂时不可用（503），请确认 Platform「New API → 网关配置」上游已启动，且对应模型渠道已启用'
           }
           win.webContents.send('sse:error', errMsg)
           throw new Error(errMsg)

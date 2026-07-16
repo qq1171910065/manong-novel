@@ -27,6 +27,14 @@ export {
   STYLE_COVER_FRAME_PROMPT,
 } from './image-prompt-builder'
 
+export type ImageGenerateStage = 'prompt' | 'draw'
+
+export interface ImageGenerateOptions {
+  /** 已是可提交提示词时跳过对话模型精炼 */
+  skipPromptRefine?: boolean
+  onStage?: (stage: ImageGenerateStage) => void
+}
+
 /** 用对话模型将草稿信息整理为可提交的绘图提示词 */
 export async function analyzeImagePrompt(
   kind: ImagePromptKind,
@@ -57,6 +65,21 @@ export async function analyzeImagePrompt(
   }
 }
 
+async function resolveFinalPrompt(
+  kind: ImagePromptKind,
+  draft: string,
+  project?: ProjectModelPrefs | null,
+  options?: ImageGenerateOptions
+): Promise<string> {
+  const base = draft.trim()
+  if (!base) return ''
+  if (options?.skipPromptRefine) {
+    return appendFrameToPrompt(kind, base)
+  }
+  options?.onStage?.('prompt')
+  return analyzeImagePrompt(kind, base, project)
+}
+
 export async function generateStyleCoverImage(
   input: {
     title?: string
@@ -67,10 +90,12 @@ export async function generateStyleCoverImage(
     writingHints?: string
     tags?: string[]
   },
-  project?: ProjectModelPrefs | null
+  project?: ProjectModelPrefs | null,
+  options?: ImageGenerateOptions
 ): Promise<string> {
   const baseDraft = buildStyleCoverPrompt(input)
-  const prompt = await analyzeImagePrompt('style', baseDraft, project)
+  const prompt = await resolveFinalPrompt('style', baseDraft, project, options)
+  options?.onStage?.('draw')
   const model = await resolveProjectImageModelId(project)
   const dataUrl = await gatewayImageGenerate({ prompt, size: '1792x1024', model })
   return ensureLocalImageDataUrl(dataUrl)
@@ -79,9 +104,12 @@ export async function generateStyleCoverImage(
 export async function generateCoverImage(
   context: NovelVisualContext,
   promptOverride?: string,
-  project?: ProjectModelPrefs | null
+  project?: ProjectModelPrefs | null,
+  options?: ImageGenerateOptions
 ): Promise<string> {
-  const prompt = promptOverride?.trim() || buildCoverPrompt(context)
+  const draft = promptOverride?.trim() || buildCoverPrompt(context)
+  const prompt = await resolveFinalPrompt('cover', draft, project, options)
+  options?.onStage?.('draw')
   const model = await resolveProjectImageModelId(project)
   const dataUrl = await gatewayImageGenerate({ prompt, size: '1024x1792', model })
   return ensureLocalImageDataUrl(dataUrl)
@@ -92,15 +120,14 @@ export async function generateCharacterPortrait(
   context?: Pick<NovelVisualContext, 'genre' | 'style'>,
   promptOverride?: string,
   project?: ProjectModelPrefs | null,
-  options?: { portraitDraft?: string; skipPromptRefine?: boolean }
+  options?: ImageGenerateOptions & { portraitDraft?: string }
 ): Promise<string> {
   const baseDraft =
     options?.portraitDraft?.trim() ||
     promptOverride?.trim() ||
     buildCharacterPortraitPrompt(character, context)
-  const prompt = options?.skipPromptRefine
-    ? appendFrameToPrompt('portrait', baseDraft)
-    : await analyzeImagePrompt('portrait', baseDraft, project)
+  const prompt = await resolveFinalPrompt('portrait', baseDraft, project, options)
+  options?.onStage?.('draw')
   const model = await resolveProjectImageModelId(project)
   const dataUrl = await gatewayImageGenerate({ prompt, size: '1024x1024', model })
   return ensureLocalImageDataUrl(dataUrl)

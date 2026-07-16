@@ -1,4 +1,5 @@
 import {
+  isProjectSaveConflictError,
   prepareProjectForSave,
   PROJECT_SAVE_CONFLICT,
 } from '@shared/novel/project-persistence'
@@ -9,9 +10,7 @@ export class ProjectSaveConflictError extends Error {
   readonly latestProject: NovelProject
 
   constructor(latestProject: NovelProject) {
-    super(
-      `${PROJECT_SAVE_CONFLICT}：作品已被其他操作更新，请刷新后重试`
-    )
+    super(`${PROJECT_SAVE_CONFLICT}：作品已被其他操作更新，请刷新后重试`)
     this.name = 'ProjectSaveConflictError'
     this.latestProject = latestProject
   }
@@ -29,10 +28,14 @@ export async function persistProject(
   options?: SaveProjectOptions
 ): Promise<NovelProject> {
   const prepared = options?.skipReplay ? project : prepareProjectForSave(project)
-  const expected = options?.skipReplay
-    ? undefined
-    : (options?.expectedUpdatedAt ?? prepared.updated_at)
+  // skipReplay 的 checkpoint 默认不校验乐观锁；若显式传入 expectedUpdatedAt 仍校验
+  const expected =
+    options?.expectedUpdatedAt !== undefined
+      ? options.expectedUpdatedAt
+      : options?.skipReplay
+        ? undefined
+        : prepared.updated_at
   return novelClient.saveProject(prepared, { expectedUpdatedAt: expected ?? undefined })
 }
 
-export { prepareProjectForSave, PROJECT_SAVE_CONFLICT }
+export { isProjectSaveConflictError, prepareProjectForSave, PROJECT_SAVE_CONFLICT }

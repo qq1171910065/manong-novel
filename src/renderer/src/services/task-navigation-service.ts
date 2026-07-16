@@ -2,9 +2,12 @@ import { readonly, ref } from 'vue'
 
 export type TaskViewPhase = 'chat' | 'generating' | 'preview' | 'confirm'
 
+export type ImportParseViewMode = 'continue' | 'optimize' | 'restart'
+
 export type TaskViewTarget =
   | { type: 'inspiration'; phase?: TaskViewPhase }
   | { type: 'writing_desk'; chapterNumber?: number }
+  | { type: 'import_parse'; mode?: ImportParseViewMode }
 
 export interface TaskNavigationRequest {
   projectId: string

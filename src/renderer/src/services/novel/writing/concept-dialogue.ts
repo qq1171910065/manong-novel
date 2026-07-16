@@ -13,6 +13,10 @@ import type {
   NovelProject,
 } from '@shared/novel/types'
 import {
+  applyOnboardingInspirationTurn,
+  isOnboardingDemoProject,
+} from '@shared/novel/onboarding-inspiration-script'
+import {
   CONCEPT_REFINEMENT_SYSTEM,
   CONCEPT_GATEWAY_TOOLS,
   assertConceptRefinementSucceeded,
@@ -226,6 +230,11 @@ export async function converseConcept(
   conversationState: Record<string, unknown> = {},
   options?: ConversationRequestOptions
 ): Promise<ConverseResponse> {
+  // 引导演示：写死问答，不走模型
+  if (isOnboardingDemoProject(project)) {
+    return applyOnboardingInspirationTurn(project, userInput)
+  }
+
   return runAgentWorkflow(
     {
       workflowId: 'concept_turn',

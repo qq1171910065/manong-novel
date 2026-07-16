@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
-import { ChevronDown, Feather, Layers } from 'lucide-vue-next'
+import { computed, ref, watch } from 'vue'
+import { ChevronDown, Feather, FlaskConical, Layers } from 'lucide-vue-next'
 import NovelModalShell from '@renderer/novel/components/shared/NovelModalShell.vue'
 import CreateProjectChatModelPicker from '@renderer/novel/components/shared/CreateProjectChatModelPicker.vue'
 import CreateProjectMaterialPicker from '@renderer/novel/components/shared/CreateProjectMaterialPicker.vue'
 import type { CreateProjectMaterialSelection } from '@renderer/services/novel/material-library-apply'
 import type { WritingMode } from '@shared/novel/types'
 import { WRITING_MODE_DESCRIPTIONS } from '@shared/novel/writing-mode'
+import { useI18n } from '@renderer/composables/useI18n'
 
 const props = defineProps<{
   show: boolean
@@ -16,7 +17,12 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: []
   confirm: [mode: WritingMode, materials: CreateProjectMaterialSelection]
+  'confirm-dev-test': []
 }>()
+
+const { t } = useI18n()
+const isDev = import.meta.env.DEV
+const showDevTest = computed(() => isDev)
 
 const selectedMode = ref<WritingMode>('simple')
 const selectedStyleId = ref<string | null>(null)
@@ -55,6 +61,11 @@ function onConfirm() {
     chatModelId: selectedChatModelId.value,
   })
 }
+
+function onConfirmDevTest() {
+  if (!showDevTest.value || props.creating) return
+  emit('confirm-dev-test')
+}
 </script>
 
 <template>
@@ -76,6 +87,7 @@ function onConfirm() {
         type="button"
         class="writing-mode-card"
         :class="{ 'writing-mode-card--active': selectedMode === option.id }"
+        :data-onboarding="option.id === 'simple' ? 'mode-simple' : 'mode-full'"
         :disabled="creating"
         @click="selectedMode = option.id"
       >
@@ -93,6 +105,20 @@ function onConfirm() {
         </div>
       </button>
     </div>
+
+    <button
+      v-if="showDevTest"
+      type="button"
+      class="writing-mode-dev-test"
+      :disabled="creating"
+      @click="onConfirmDevTest"
+    >
+      <FlaskConical :size="18" aria-hidden="true" />
+      <span class="writing-mode-dev-test__body">
+        <strong>{{ t('bookshelf.devTest.title') }}</strong>
+        <small>{{ t('bookshelf.devTest.desc') }}</small>
+      </span>
+    </button>
 
     <div v-if="showMoreConfig" class="writing-mode-more-config">
       <CreateProjectChatModelPicker
@@ -127,6 +153,7 @@ function onConfirm() {
         <button
           type="button"
           class="md-btn md-btn-filled md-ripple"
+          data-onboarding="mode-confirm"
           :disabled="creating"
           @click="onConfirm"
         >
@@ -274,5 +301,49 @@ function onConfirm() {
 
 .writing-mode-more-btn.is-open .writing-mode-more-btn__chevron {
   transform: rotate(180deg);
+}
+
+.writing-mode-dev-test {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px dashed color-mix(in srgb, var(--brand, var(--primary)) 35%, var(--line));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--brand, var(--primary)) 6%, transparent);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.writing-mode-dev-test:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--brand, var(--primary)) 55%, transparent);
+  background: color-mix(in srgb, var(--brand, var(--primary)) 10%, transparent);
+}
+
+.writing-mode-dev-test:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.writing-mode-dev-test__body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.writing-mode-dev-test__body strong {
+  font-size: var(--text-sm);
+  font-weight: 650;
+}
+
+.writing-mode-dev-test__body small {
+  font-size: var(--text-xs, 12px);
+  line-height: 1.45;
+  color: var(--muted);
 }
 </style>

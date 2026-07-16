@@ -15,6 +15,40 @@ export interface PageLayoutMetrics {
 
 export type PaginationInput = number | PageLayoutMetrics
 
+/** 超过此字数时改用字符估算分页，避免 DOM 测量阻塞主线程 */
+const LAYOUT_PAGINATION_CHAR_LIMIT = 48_000
+
+const paginationCache = new Map<string, string[]>()
+const PAGINATION_CACHE_MAX = 24
+
+function buildPaginationCacheKey(text: string, input: PaginationInput): string {
+  if (typeof input === 'number') return `${input}:${text.length}:${text.slice(0, 64)}`
+  return [
+    input.contentWidth,
+    input.contentHeight,
+    input.fontSize,
+    input.lineHeight,
+    text.length,
+    text.slice(0, 64),
+  ].join(':')
+}
+
+function readPaginationCache(key: string): string[] | undefined {
+  const cached = paginationCache.get(key)
+  if (!cached) return undefined
+  paginationCache.delete(key)
+  paginationCache.set(key, cached)
+  return cached
+}
+
+function writePaginationCache(key: string, pages: string[]): void {
+  if (paginationCache.size >= PAGINATION_CACHE_MAX) {
+    const oldest = paginationCache.keys().next().value
+    if (oldest) paginationCache.delete(oldest)
+  }
+  paginationCache.set(key, pages)
+}
+
 export interface BookPage {
   chapterIndex: number
   pageIndex: number
@@ -45,16 +79,31 @@ export function resolvePageLayoutMetrics(
 }
 
 export function paginateChapter(text: string, input: PaginationInput): string[] {
+  const cacheKey = buildPaginationCacheKey(text, input)
+  const cached = readPaginationCache(cacheKey)
+  if (cached) return cached
+
+  let pages: string[]
   if (typeof input === 'number') {
-    return paginateChapterText(text, input)
+    pages = paginateChapterText(text, input)
+  } else {
+    const normalized = text.replace(/\r\n/g, '\n').trim()
+    if (
+      typeof document !== 'undefined'
+      && document.body
+      && normalized.length <= LAYOUT_PAGINATION_CHAR_LIMIT
+    ) {
+      pages = paginateChapterTextByLayout(text, input)
+    } else {
+      const chars = Math.floor(
+        estimateCharsPerPage(input.fontSize, input.lineHeight, input.contentWidth, input.contentHeight) * 0.9
+      )
+      pages = paginateChapterText(text, chars)
+    }
   }
-  if (typeof document !== 'undefined' && document.body) {
-    return paginateChapterTextByLayout(text, input)
-  }
-  const chars = Math.floor(
-    estimateCharsPerPage(input.fontSize, input.lineHeight, input.contentWidth, input.contentHeight) * 0.9
-  )
-  return paginateChapterText(text, chars)
+
+  writePaginationCache(cacheKey, pages)
+  return pages
 }
 
 export function paginateChapterText(text: string, charsPerPage: number): string[] {
@@ -312,4 +361,66 @@ export function estimateCharsPerPage(
   const lineChars = Math.max(12, Math.floor(width / (fontSize * 0.92)))
   const lines = Math.max(8, Math.floor(height / (fontSize * lineHeight)))
   return Math.floor(lineChars * lines * 0.92)
+}
+
+const FAST_PAGINATION_THRESHOLD = 80_000
+
+function resolveCharsPerPage(input: PaginationInput): number {
+  if (typeof input === 'number') return Math.max(240, input)
+  return Math.max(
+    240,
+    Math.floor(
+      estimateCharsPerPage(input.fontSize, input.lineHeight, input.contentWidth, input.contentHeight) * 0.9
+    )
+  )
+}
+
+function resolveFastPageSlice(normalized: string, pageIndex: number, charsPerPage: number): {
+  text: string
+  totalPages: number
+} {
+  const totalPages = Math.max(1, Math.ceil(normalized.length / charsPerPage))
+  const safeIndex = Math.min(Math.max(0, pageIndex), totalPages - 1)
+  const start = safeIndex * charsPerPage
+  let end = Math.min(normalized.length, start + charsPerPage)
+
+  if (end < normalized.length) {
+    const paragraphBreak = normalized.indexOf('\n\n', Math.max(start + 1, end - 240))
+    if (paragraphBreak > start && paragraphBreak <= end + 240) {
+      end = paragraphBreak
+    } else {
+      const lineBreak = normalized.lastIndexOf('\n', end)
+      if (lineBreak > start + Math.floor(charsPerPage * 0.55)) end = lineBreak
+    }
+  }
+
+  const text = normalized.slice(start, end).trim()
+  return {
+    text: text || normalized.slice(start, Math.min(normalized.length, start + charsPerPage)),
+    totalPages,
+  }
+}
+
+/** 获取单页正文，超长章节走 O(1) 切片，避免全书分页阻塞主线程 */
+export function resolveChapterPageView(
+  text: string,
+  pageIndex: number,
+  input: PaginationInput
+): { text: string; totalPages: number } {
+  const normalized = text.replace(/\r\n/g, '\n').trim()
+  if (!normalized) {
+    return { text: '本章暂无正文，可在创作台继续写作。', totalPages: 1 }
+  }
+
+  const charsPerPage = resolveCharsPerPage(input)
+  if (normalized.length > FAST_PAGINATION_THRESHOLD) {
+    return resolveFastPageSlice(normalized, pageIndex, charsPerPage)
+  }
+
+  const pages = paginateChapter(normalized, input)
+  const safeIndex = Math.min(Math.max(0, pageIndex), pages.length - 1)
+  return {
+    text: pages[safeIndex] ?? '本章暂无正文，可在创作台继续写作。',
+    totalPages: Math.max(1, pages.length),
+  }
 }

@@ -6,6 +6,7 @@ export type AgentId =
   | 'blueprint_synthesizer'
   | 'blueprint_architect'
   | 'outline_planner'
+  | 'import_analyst'
   | 'chapter_director'
   | 'chapter_writer'
   | 'constitution_guard'
@@ -20,6 +21,7 @@ export type AgentWorkflowId =
   | 'chapter_evaluation'
   | 'section_polish'
   | 'auto_write'
+  | 'import_parse'
 
 export type AgentTaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
 
@@ -80,6 +82,15 @@ export interface AgentStepEvent {
   lockedResources: ResourceLockKey[]
 }
 
+export interface AgentWorkflowProgressPatch {
+  message?: string
+  /** 0-100 细粒度进度；设置后后台任务优先使用 */
+  progressPercent?: number
+  completedCount?: number
+  totalCount?: number
+  currentChapter?: number | null
+}
+
 export interface AgentWorkflowRun {
   id: string
   workflowId: AgentWorkflowId
@@ -90,6 +101,10 @@ export interface AgentWorkflowRun {
   currentAgentLabel?: string
   currentStepId?: string
   currentMessage?: string
+  /** 细粒度进度（如智能解析章批），覆盖粗步百分比 */
+  progressPercent?: number
+  progressCompleted?: number
+  progressTotal?: number
   steps: AgentStepEvent[]
   lockedResources: ResourceLock[]
   startedAt: number

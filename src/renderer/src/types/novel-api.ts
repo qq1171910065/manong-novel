@@ -17,6 +17,11 @@ export interface NovelApi {
     data?: NovelProject
     error?: string
   }>
+  novelGetProjectForReading: (userId: string, projectId: string) => Promise<{
+    ok: boolean
+    data?: NovelProject
+    error?: string
+  }>
   novelCreateProject: (
     userId: string,
     payload: { title: string; initialPrompt: string; writingMode?: import('@shared/novel/types').WritingMode }

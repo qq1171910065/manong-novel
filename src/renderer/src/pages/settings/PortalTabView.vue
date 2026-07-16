@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { inject } from 'vue'
 import AppKeyPanel from '@renderer/components/settings/AppKeyPanel.vue'
 import NovelSettingsShell from '@renderer/components/settings/NovelSettingsShell.vue'
@@ -7,6 +7,7 @@ import BugReportPanel from '@renderer/components/settings/BugReportPanel.vue'
 import DataSettingsPanel from '@renderer/components/settings/DataSettingsPanel.vue'
 import DisplaySettingsPanel from '@renderer/components/settings/DisplaySettingsPanel.vue'
 import HelpChatPanel from '@renderer/components/settings/HelpChatPanel.vue'
+import LanguageSettingsPanel from '@renderer/components/settings/LanguageSettingsPanel.vue'
 import ModelDebugPanel from '@renderer/components/settings/ModelDebugPanel.vue'
 import ModelOverviewPanel from '@renderer/components/settings/ModelOverviewPanel.vue'
 import ModelServiceShell from '@renderer/components/settings/ModelServiceShell.vue'
@@ -156,6 +157,7 @@ const {
       :title="settingsTabMeta[tab].title"
       :desc="settingsTabMeta[tab].desc"
       :saving="appSettingsSaving"
+      :show-reset="tab !== 'settings-language'"
       @reset="shell.resetAppSettings()"
     >
       <DisplaySettingsPanel
@@ -163,6 +165,8 @@ const {
         :settings="appSettings"
         @update="(key, value) => shell.setAppSetting(key, value)"
       />
+
+      <LanguageSettingsPanel v-else-if="tab === 'settings-language'" />
 
       <AudioSettingsPanel
         v-else-if="tab === 'settings-audio'"

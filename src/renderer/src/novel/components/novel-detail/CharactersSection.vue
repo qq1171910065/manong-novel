@@ -91,7 +91,6 @@
                 :editable="editable"
                 :generating="isPortraitGeneratingAt(selectedIndex)"
                 :default-prompt="characterPrompt(selectedCharacter)"
-                :project-model="projectModel"
                 @update:model-value="(value) => emitPortraitUpdate(selectedIndex, value)"
                 @generate="(prompt) => emitPortraitGenerate(selectedIndex, prompt)"
                 @remove="emitPortraitUpdate(selectedIndex, null)"
@@ -203,6 +202,7 @@ import { buildCharacterPortraitPrompt } from '@renderer/services/image-service'
 import { NovelAPI } from '@renderer/services/novel/api'
 import { submitCharacterToLibrary } from '@renderer/services/novel/material-library-submit'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
+import { confirmDelete } from '@renderer/composables/useAppDialog'
 import { useI18n } from '@renderer/composables/useI18n'
 import { randomUUID } from '@renderer/utils/id'
 
@@ -381,7 +381,12 @@ async function onFormSave(character: Character) {
 async function deleteCharacter(index: number) {
   if (!props.editable || !props.projectId) return
   const name = characters.value[index]?.name?.trim() || t('novelDetail.characters.thisCharacter')
-  const confirmed = await globalAlert.showConfirm(t('novelDetail.common.confirmDelete', { name }), t('novelDetail.characters.deleteTitle'))
+  const confirmed = await confirmDelete({
+    title: t('novelDetail.common.confirmDeleteTitle'),
+    message: t('novelDetail.common.confirmDelete', { name }),
+    detail: t('novelDetail.common.confirmDeleteDetail'),
+    confirmText: t('novelDetail.common.confirmDeleteBtn'),
+  })
   if (!confirmed) return
 
   const list = characters.value.filter((_, i) => i !== index)

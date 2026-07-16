@@ -110,8 +110,7 @@ const {
   currentChapter,
   isPageMode,
   pageLayoutMetrics,
-  globalPageIndex,
-  bookPages,
+  getAdjacentPageText,
   currentPageText,
   scrollBlocks,
   canPrevPage,
@@ -203,7 +202,7 @@ watch(ttsActive, (active) => {
   resetAutoTurn()
 }, { immediate: true })
 
-watch(globalPageIndex, () => {
+watch([chapterIndex, pageIndex], () => {
   if (pageDragActive.value || pageMotionSettling.value) return
   resetPageMotion(false)
 })
@@ -262,17 +261,14 @@ function clearPageMotion() {
 }
 
 function setAdjacentPreview(side: 'prev' | 'next') {
-  const targetIndex = side === 'next'
-    ? globalPageIndex.value + 1
-    : globalPageIndex.value - 1
-  const target = bookPages.value[targetIndex]
-  if (!target) {
+  const text = getAdjacentPageText(side)
+  if (!text) {
     pageAdjacentText.value = ''
     pageAdjacentSide.value = null
     return
   }
   pageAdjacentSide.value = side
-  pageAdjacentText.value = target.text
+  pageAdjacentText.value = text
 }
 
 function applyPageDragOffset(rawOffset: number) {
@@ -573,6 +569,19 @@ function onViewportClick(event: MouseEvent) {
   if (event.detail > 1) return
 
   if (!readingStarted.value) {
+    if (isPageMode.value) {
+      const tapAction = resolvePageTapAction(event)
+      if (tapAction === 'prev' && canPrevPage.value) {
+        enterImmersiveReading()
+        turnPrevPage()
+        return
+      }
+      if (tapAction === 'next' && canNextPage.value) {
+        enterImmersiveReading()
+        turnNextPage()
+        return
+      }
+    }
     enterImmersiveReading()
     return
   }
@@ -792,7 +801,10 @@ function onWheel(event: WheelEvent) {
 
 function onScroll() {
   if (isPageMode.value) return
-  if (isAutoScrollDriving()) return
+  if (isAutoScrollDriving()) {
+    syncChapterFromScroll()
+    return
+  }
   pauseAutoScroll()
   syncChapterFromScroll()
   if (scrollSaveTimer) window.clearTimeout(scrollSaveTimer)
@@ -800,6 +812,26 @@ function onScroll() {
     persistProgress(pageViewportRef.value?.scrollTop ?? 0)
   }, 180)
 }
+
+const viewportCompact = ref(false)
+
+watch(pageViewportRef, (el, _, onCleanup) => {
+  let compactObserver: ResizeObserver | undefined
+  if (!el) {
+    viewportCompact.value = false
+    return
+  }
+  const updateCompact = () => {
+    viewportCompact.value = el.clientWidth < 260 || el.clientHeight < 200
+  }
+  updateCompact()
+  compactObserver = new ResizeObserver(updateCompact)
+  compactObserver.observe(el)
+  onCleanup(() => {
+    compactObserver?.disconnect()
+    compactObserver = undefined
+  })
+})
 
 async function loadReader() {
   loading.value = true
@@ -809,14 +841,22 @@ async function loadReader() {
   settings.value = { ...readingSettingsService.get(), autoScroll: false }
   try {
     if (!projectId.value) throw new Error('未指定作品')
-    await novelStore.loadProject(projectId.value, true)
-    await restoreProgress()
+    await novelStore.loadProject(projectId.value, true, true)
+    if (novelStore.error) throw new Error(novelStore.error)
+    if (!novelStore.currentProject) throw new Error('作品数据为空')
   } catch (error) {
     loadError.value = error instanceof Error ? error.message : '加载失败'
   } finally {
     loading.value = false
     applyWindowEffects()
     resetAutoTurn()
+  }
+  if (!loadError.value) {
+    try {
+      await restoreProgress()
+    } catch (error) {
+      loadError.value = error instanceof Error ? error.message : '恢复阅读进度失败'
+    }
   }
 }
 
@@ -957,6 +997,7 @@ onUnmounted(() => {
         'reader--scroll-mode': !isPageMode,
         'reader--page-mode': isPageMode,
         'reader--listening': ttsActive,
+        'reader--compact': viewportCompact,
       },
     ]"
     :data-theme="settings.theme"
@@ -1066,18 +1107,24 @@ onUnmounted(() => {
               <div
                 v-if="block.type === 'chapter-spacer-top'"
                 class="reader-chapter-spacer-top"
-                :data-chapter-marker="block.chapterIndex"
               />
               <div
                 v-else-if="block.type === 'chapter-start'"
                 class="reader-chapter-marker"
                 :class="{ 'reader-chapter-marker--hidden': !settings.showChapterDividers }"
+                :data-chapter-marker="block.chapterIndex"
               >
                 {{ settings.showChapterDividers ? block.title : '' }}
               </div>
               <div
                 v-else-if="block.type === 'chapter-spacer-bottom'"
                 class="reader-chapter-spacer-bottom"
+                :data-chapter-end="block.chapterIndex"
+              />
+              <div
+                v-else-if="block.type === 'chapter-join'"
+                class="reader-chapter-join"
+                aria-hidden="true"
               />
               <p v-else>
                 {{ block.text }}

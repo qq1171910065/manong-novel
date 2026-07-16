@@ -31,8 +31,6 @@ const props = withDefaults(
 
     defaultPrompt?: string
 
-    projectModel?: { chat_model_id?: string; image_model_id?: string } | null
-
   }>(),
 
   {
@@ -48,8 +46,6 @@ const props = withDefaults(
     generating: false,
 
     defaultPrompt: '',
-
-    projectModel: null,
 
   }
 
@@ -275,13 +271,9 @@ function closePreview() {
 
       :title="dialogTitle"
 
-      :kind="variant === 'portrait-hero' ? 'portrait' : variant"
-
       :draft-prompt="defaultPrompt"
 
       :submitting="generating"
-
-      :project-model="projectModel"
 
       @submit="submitGenerate"
 

@@ -1,5 +1,10 @@
 export { getApiBaseUrl, getDefaultApiBaseUrl, saveApiBaseUrlFromInput, API_BASE_URL_STORAGE_KEY } from './config'
-export { isSuccessBusinessCode, parseCoolApiEnvelope, refreshSessionFromStorage } from './api'
+export {
+  isSuccessBusinessCode,
+  parseCoolApiEnvelope,
+  describeUnexpectedPortalResponse,
+  refreshSessionFromStorage,
+} from './api'
 export type { RefreshSessionResult, ApiResponse } from './api'
 export { isAuthError } from './api'
 export {

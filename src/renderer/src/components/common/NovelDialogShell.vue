@@ -1,8 +1,8 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed } from 'vue'
 import { X } from 'lucide-vue-next'
 
-export type NovelDialogVariant = 'form' | 'preview'
+export type NovelDialogVariant = 'form' | 'preview' | 'confirm'
 export type NovelDialogSize = 'md' | 'lg' | 'xl' | 'full'
 
 const show = defineModel<boolean>({ default: false })
@@ -42,7 +42,9 @@ const canCloseOnMask = computed(() => props.maskClosable !== false)
 
 const dialogClass = computed(() => {
   const classes = ['novel-dialog']
-  if (props.variant === 'form') {
+  if (props.variant === 'confirm') {
+    classes.push('novel-dialog--confirm')
+  } else if (props.variant === 'form') {
     classes.push('novel-dialog--form')
   } else {
     classes.push(`novel-dialog--preview-${props.size}`)

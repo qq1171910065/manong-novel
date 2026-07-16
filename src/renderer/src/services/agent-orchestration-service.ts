@@ -9,10 +9,12 @@ import {
   getWorkflowDefinition,
   NESTED_WORKFLOW_ALLOWED,
   runAgentStep,
+  shouldReapStaleAgentLock,
   startAgentWorkflow,
   type AgentOrchestratorState,
   type AgentId,
   type AgentWorkflowId,
+  type AgentWorkflowProgressPatch,
   type AgentWorkflowRun,
   type ResourceKind,
   type ResourceLock,
@@ -21,7 +23,7 @@ import {
   ResourceLockRequiredError,
 } from '@shared/novel/agent-orchestration'
 import { computed, readonly, ref, shallowRef } from 'vue'
-import { dismissBackgroundTask, upsertBackgroundTask } from './background-task-service'
+import { dismissBackgroundTask, upsertBackgroundTask, collapseImportParseBackgroundTasks, importParseBackgroundTaskId } from './background-task-service'
 import { getBlueprintGenSession } from '@renderer/novel/composables/blueprint-generation-session'
 import { agentLogService } from './agent-log-service'
 import { isAbortError } from './novel/async-task-registry'
@@ -64,9 +66,11 @@ async function ipcAcquireLocks(
   chapterNumber?: number
 ): Promise<void> {
   if (typeof window.api?.agentLockAcquire !== 'function') return
+  await reconcileStaleAgentLocks()
+
   const agentLabel = getAgentLabel(step.agentId)
   for (const kind of step.resources ?? []) {
-    const result = await window.api.agentLockAcquire({
+    let result = await window.api.agentLockAcquire({
       key: kind,
       projectId,
       chapterNumber: step.chapterNumber ?? chapterNumber,
@@ -76,6 +80,30 @@ async function ipcAcquireLocks(
       workflowId,
       label: step.label,
     })
+
+    // 冲突方已无活跃工作流时强制回收，避免取消后的孤儿锁挡住续跑
+    if (!result.ok && result.data?.ownerTaskId) {
+      const activeIds = new Set(
+        state.value.runs
+          .filter((run) => run.status === 'running' || run.status === 'pending')
+          .map((run) => run.id)
+      )
+      const conflictOwner = result.data.ownerTaskId
+      if (conflictOwner !== runId && !activeIds.has(conflictOwner)) {
+        await ipcReleaseTaskLocks(conflictOwner)
+        result = await window.api.agentLockAcquire({
+          key: kind,
+          projectId,
+          chapterNumber: step.chapterNumber ?? chapterNumber,
+          ownerTaskId: runId,
+          ownerAgentId: step.agentId,
+          ownerAgentLabel: agentLabel,
+          workflowId,
+          label: step.label,
+        })
+      }
+    }
+
     if (!result.ok) {
       throw new ResourceLockConflictError(
         result.error || `资源锁定失败：${kind}`,
@@ -94,9 +122,51 @@ async function ipcAcquireLocks(
   }
 }
 
+async function syncLocksFromIpc(): Promise<void> {
+  if (typeof window.api?.agentLockList !== 'function') return
+  const result = await window.api.agentLockList()
+  if (result.ok && result.data) {
+    state.value = { ...state.value, locks: result.data }
+    bumpLocks()
+  }
+}
+
 async function ipcReleaseTaskLocks(taskId: string): Promise<void> {
   if (typeof window.api?.agentLockRelease !== 'function') return
-  await window.api.agentLockRelease(taskId)
+  const result = await window.api.agentLockRelease(taskId)
+  if (result.ok && result.data) {
+    state.value = { ...state.value, locks: result.data }
+    bumpLocks()
+  } else {
+    await syncLocksFromIpc()
+  }
+}
+
+async function reconcileStaleAgentLocks(): Promise<void> {
+  if (typeof window.api?.agentLockList !== 'function') return
+  await ensureIpcLockBridge()
+
+  const activeTaskIds = new Set(
+    state.value.runs
+      .filter((run) => run.status === 'running' || run.status === 'pending')
+      .map((run) => run.id)
+  )
+  const runStatusByTaskId = new Map(state.value.runs.map((run) => [run.id, run.status]))
+
+  const list = await window.api.agentLockList()
+  if (!list.ok || !list.data?.length) return
+
+  const staleTaskIds = new Set<string>()
+  for (const lock of list.data) {
+    if (shouldReapStaleAgentLock(lock, activeTaskIds, runStatusByTaskId)) {
+      staleTaskIds.add(lock.ownerTaskId)
+    }
+  }
+  if (!staleTaskIds.size) return
+
+  for (const taskId of staleTaskIds) {
+    await ipcReleaseTaskLocks(taskId)
+  }
 }
 
 function syncBackgroundTask(run: AgentWorkflowRun): void {
@@ -106,6 +176,14 @@ function syncBackgroundTask(run: AgentWorkflowRun): void {
   const stepPercent = Math.min(99, Math.round((completedSteps / totalSteps) * 100))
   const blueprintSession =
     run.workflowId === 'blueprint_generation' ? getBlueprintGenSession(run.projectId) : null
+  const finePercent =
+    typeof run.progressPercent === 'number' && Number.isFinite(run.progressPercent)
+      ? Math.max(0, Math.min(99, Math.round(run.progressPercent)))
+      : null
+  const useFineCounts =
+    typeof run.progressTotal === 'number' && run.progressTotal > 0
+  const clearedFineCounts =
+    typeof run.progressTotal === 'number' && run.progressTotal === 0
 
   const kind =
     run.workflowId === 'auto_write'
@@ -121,7 +199,9 @@ function syncBackgroundTask(run: AgentWorkflowRun): void {
         ? 'writing_desk'
         : run.workflowId === 'chapter_generation'
           ? 'writing_desk'
-          : undefined
+          : run.workflowId === 'import_parse'
+            ? 'detail'
+            : undefined
 
   const viewPhase =
     run.workflowId === 'blueprint_generation'
@@ -130,8 +210,20 @@ function syncBackgroundTask(run: AgentWorkflowRun): void {
         : 'generating'
       : undefined
 
+  const runningPercent =
+    blueprintSession?.percent ?? finePercent ?? stepPercent
+
+  const taskId =
+    run.workflowId === 'import_parse'
+      ? importParseBackgroundTaskId(run.projectId)
+      : run.id
+
+  if (run.workflowId === 'import_parse') {
+    collapseImportParseBackgroundTasks(run.projectId)
+  }
+
   upsertBackgroundTask({
-    id: run.id,
+    id: taskId,
     kind,
     projectId: run.projectId,
     projectTitle: run.projectTitle,
@@ -146,12 +238,20 @@ function syncBackgroundTask(run: AgentWorkflowRun): void {
     message: blueprintSession?.message ?? run.currentMessage ?? workflow?.label ?? '智能体协作中…',
     progressPercent:
       run.status === 'running'
-        ? blueprintSession?.percent ?? stepPercent
+        ? runningPercent
         : run.status === 'completed'
           ? 100
-          : blueprintSession?.percent ?? stepPercent,
-    completedCount: completedSteps,
-    totalCount: totalSteps,
+          : blueprintSession?.percent ?? finePercent ?? stepPercent,
+    completedCount: useFineCounts
+      ? (run.progressCompleted ?? 0)
+      : clearedFineCounts
+        ? 0
+        : completedSteps,
+    totalCount: useFineCounts
+      ? (run.progressTotal ?? 0)
+      : clearedFineCounts
+        ? 0
+        : totalSteps,
     currentChapter: run.chapterNumber ?? null,
     agentId: run.currentAgentId,
     agentLabel: run.currentAgentLabel,
@@ -178,6 +278,7 @@ export interface AgentWorkflowContext {
   projectId: string
   runStep<T>(step: RunAgentStepInput, fn: () => Promise<T>): Promise<T>
   updateMessage(message: string): void
+  updateProgress?(patch: AgentWorkflowProgressPatch): void
 }
 
 export interface RunAgentWorkflowOptions {
@@ -189,9 +290,53 @@ export interface RunAgentWorkflowOptions {
 }
 
 function canStartNestedWorkflow(active: AgentWorkflowRun, next: AgentWorkflowId): boolean {
-  if (active.workflowId === next) return true
+  // 同类型工作流不允许并行（取消后的僵尸 run 也不应挡真正嵌套子流）
+  if (active.workflowId === next) return false
   const allowed = NESTED_WORKFLOW_ALLOWED[active.workflowId]
   return Boolean(allowed?.includes(next))
+}
+
+export async function cancelProjectAgentWorkflows(
+  projectId: string,
+  workflowId?: AgentWorkflowId
+): Promise<void> {
+  await ensureIpcLockBridge()
+  const targets = state.value.runs.filter(
+    (run) =>
+      run.projectId === projectId &&
+      (workflowId == null || run.workflowId === workflowId) &&
+      (run.status === 'running' || run.status === 'pending')
+  )
+
+  const callbacks = {
+    onRunUpdate: handleRunUpdate,
+    onLocksChange: handleLocksChange,
+  }
+
+  for (const run of targets) {
+    finishAgentWorkflow(state.value, run.id, 'cancelled', callbacks)
+    await ipcReleaseTaskLocks(run.id)
+    const finished = state.value.runs.find((item) => item.id === run.id)
+    if (finished) {
+      syncBackgroundTask(finished)
+      agentLogService.recordWorkflowFinish(finished)
+    }
+  }
+
+  // 再清一遍该作品上无主/非活跃持有者的锁
+  await reconcileStaleAgentLocks()
+  const remaining = getLocksForProject(state.value.locks, projectId)
+  const activeIds = new Set(
+    state.value.runs
+      .filter((run) => run.status === 'running' || run.status === 'pending')
+      .map((run) => run.id)
+  )
+  for (const lock of remaining) {
+    if (workflowId && lock.workflowId !== workflowId) continue
+    if (!activeIds.has(lock.ownerTaskId)) {
+      await ipcReleaseTaskLocks(lock.ownerTaskId)
+    }
+  }
 }
 
 export async function runAgentWorkflow<T>(
@@ -199,6 +344,7 @@ export async function runAgentWorkflow<T>(
   handler: (ctx: AgentWorkflowContext) => Promise<T>
 ): Promise<T> {
   await ensureIpcLockBridge()
+  await reconcileStaleAgentLocks()
 
   const active = getActiveWorkflowForProject(state.value, options.projectId)
   if (active && !canStartNestedWorkflow(active, options.workflowId)) {
@@ -241,13 +387,45 @@ export async function runAgentWorkflow<T>(
     workflowId: options.workflowId,
     projectId: options.projectId,
     runStep: async (step, fn) => {
+      const current = state.value.runs.find((item) => item.id === run.id)
+      if (!current || (current.status !== 'running' && current.status !== 'pending')) {
+        throw new DOMException('Aborted', 'AbortError')
+      }
       await ipcAcquireLocks(run.id, options.workflowId, step, options.projectId, options.chapterNumber)
       return runAgentStep(state.value, run.id, step, fn, callbacks)
     },
     updateMessage: (message) => {
       const current = state.value.runs.find((item) => item.id === run.id)
-      if (!current) return
+      if (!current || current.status !== 'running') return
       const next = { ...current, currentMessage: message, updatedAt: Date.now() }
+      state.value = {
+        ...state.value,
+        runs: state.value.runs.map((item) => (item.id === run.id ? next : item)),
+      }
+      handleRunUpdate(next)
+    },
+    updateProgress: (patch) => {
+      const current = state.value.runs.find((item) => item.id === run.id)
+      if (!current || current.status !== 'running') return
+      const next: AgentWorkflowRun = {
+        ...current,
+        currentMessage: patch.message ?? current.currentMessage,
+        progressPercent:
+          typeof patch.progressPercent === 'number'
+            ? patch.progressPercent
+            : current.progressPercent,
+        progressCompleted:
+          typeof patch.completedCount === 'number'
+            ? patch.completedCount
+            : current.progressCompleted,
+        progressTotal:
+          typeof patch.totalCount === 'number' ? patch.totalCount : current.progressTotal,
+        chapterNumber:
+          patch.currentChapter === undefined
+            ? current.chapterNumber
+            : patch.currentChapter ?? undefined,
+        updatedAt: Date.now(),
+      }
       state.value = {
         ...state.value,
         runs: state.value.runs.map((item) => (item.id === run.id ? next : item)),
@@ -257,7 +435,10 @@ export async function runAgentWorkflow<T>(
   }
 
   const onAbort = async (): Promise<void> => {
-    finishAgentWorkflow(state.value, run.id, 'cancelled', callbacks)
+    const current = state.value.runs.find((item) => item.id === run.id)
+    if (current && (current.status === 'running' || current.status === 'pending')) {
+      finishAgentWorkflow(state.value, run.id, 'cancelled', callbacks)
+    }
     await ipcReleaseTaskLocks(run.id)
     const cancelled = state.value.runs.find((item) => item.id === run.id)
     if (cancelled) {
@@ -281,7 +462,15 @@ export async function runAgentWorkflow<T>(
     return result
   } catch (error) {
     const status = isAbortError(error) || options.signal?.aborted ? 'cancelled' : 'failed'
-    finishAgentWorkflow(state.value, run.id, status, callbacks)
+    const current = state.value.runs.find((item) => item.id === run.id)
+    if (current && (current.status === 'running' || current.status === 'pending')) {
+      finishAgentWorkflow(state.value, run.id, status, callbacks)
+    }
+    state.value = {
+      ...state.value,
+      locks: state.value.locks.filter((lock) => lock.ownerTaskId !== run.id),
+    }
+    bumpLocks()
     await ipcReleaseTaskLocks(run.id)
     const finished = state.value.runs.find((item) => item.id === run.id)
     if (finished) {
@@ -300,8 +489,13 @@ export async function assertAgentResourceWritable(
   chapterNumber?: number
 ): Promise<void> {
   void lockVersion.value
+  await reconcileStaleAgentLocks()
   if (typeof window.api?.agentLockAssert === 'function') {
-    const result = await window.api.agentLockAssert({ kind, projectId, chapterNumber })
+    let result = await window.api.agentLockAssert({ kind, projectId, chapterNumber })
+    if (!result.ok) {
+      await reconcileStaleAgentLocks()
+      result = await window.api.agentLockAssert({ kind, projectId, chapterNumber })
+    }
     if (!result.ok) {
       throw new ResourceLockRequiredError(
         result.error || '资源已被智能体锁定',
@@ -337,6 +531,24 @@ export function getProjectActiveAgentRun(projectId: string): AgentWorkflowRun | 
 
 export function dismissAgentWorkflowTask(taskId: string): void {
   dismissBackgroundTask(taskId)
+
+  if (taskId.startsWith('import_parse:')) {
+    const projectId = taskId.slice('import_parse:'.length)
+    const relatedRuns = state.value.runs.filter(
+      (run) => run.projectId === projectId && run.workflowId === 'import_parse'
+    )
+    for (const run of relatedRuns) {
+      void ipcReleaseTaskLocks(run.id)
+    }
+    state.value = {
+      ...state.value,
+      runs: state.value.runs.filter(
+        (run) => !(run.projectId === projectId && run.workflowId === 'import_parse')
+      ),
+    }
+    return
+  }
+
   void ipcReleaseTaskLocks(taskId)
   state.value = {
     ...state.value,

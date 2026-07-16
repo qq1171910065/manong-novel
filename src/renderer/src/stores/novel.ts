@@ -15,7 +15,7 @@ import {
 } from '@renderer/services/novel/async-task-registry'
 import { resolveProjectConceptState } from '@shared/novel/story-system'
 import { resolveWritingMode } from '@shared/novel/writing-mode'
-import { assertAgentResourceWritable } from '@renderer/services/agent-orchestration-service'
+import { assertAgentResourceWritable, cancelProjectAgentWorkflows } from '@renderer/services/agent-orchestration-service'
 import { createNovelProjectActions } from '@renderer/stores/novel/project-actions'
 import { createNovelBlueprintActions } from '@renderer/stores/novel/blueprint-actions'
 import { createNovelChapterActions } from '@renderer/stores/novel/chapter-actions'
@@ -42,7 +42,7 @@ export const useNovelStore = defineStore('novel', () => {
   }
 
   // Actions
-  const { loadProjects, createProject, loadProject } = createNovelProjectActions({
+  const { loadProjects, createProject, loadProject, ensureProjectLoaded } = createNovelProjectActions({
     projects,
     currentProject,
     currentConversationState,
@@ -88,27 +88,30 @@ export const useNovelStore = defineStore('novel', () => {
 
   async function sendConversation(
     userInput: any,
-    options?: ConversationRequestOptions
+    options?: ConversationRequestOptions,
+    projectId?: string
   ): Promise<ConverseResponse> {
     isLoading.value = true
     error.value = null
     try {
-      if (!currentProject.value) {
+      const resolvedProjectId = projectId?.trim() || currentProject.value?.id
+      if (!resolvedProjectId) {
         throw new Error('未选择项目')
       }
-      await assertAgentResourceWritable('concept', currentProject.value.id)
+      const project = await ensureProjectLoaded(resolvedProjectId)
+      await assertAgentResourceWritable('concept', project.id)
       const response = await NovelAPI.converseConcept(
-        currentProject.value.id,
+        project.id,
         userInput,
         currentConversationState.value,
         options,
         {
-          chat_model_id: currentProject.value.chat_model_id,
-          image_model_id: currentProject.value.image_model_id,
+          chat_model_id: project.chat_model_id,
+          image_model_id: project.image_model_id,
         }
       )
       currentConversationState.value = response.conversation_state
-      const refreshed = await NovelAPI.getNovel(currentProject.value.id)
+      const refreshed = await NovelAPI.getNovel(project.id)
       currentProject.value = refreshed
       currentConversationState.value = resolveProjectConceptState(
         refreshed,
@@ -125,7 +128,8 @@ export const useNovelStore = defineStore('novel', () => {
   }
 
   async function runImportParse(
-    onProgress?: (progress: ImportParseProgress) => void
+    onProgress?: (progress: ImportParseProgress) => void,
+    mode: import('@renderer/services/novel/import-service').ImportParseMode = 'continue'
   ): Promise<NovelProject> {
     if (!currentProject.value) {
       throw new Error('未选择项目')
@@ -137,7 +141,10 @@ export const useNovelStore = defineStore('novel', () => {
     }
     const controller = registerAsyncTask(taskRef)
     try {
+      // 清孤儿锁与僵尸 run；智能解析后台任务按作品稳定 id 复用，续跑不会新开一行
+      await cancelProjectAgentWorkflows(projectId, 'import_parse')
       const project = await NovelAPI.parseImportedNovel(projectId, {
+        mode,
         modelPrefs: {
           chat_model_id: currentProject.value.chat_model_id,
           image_model_id: currentProject.value.image_model_id,
@@ -154,7 +161,9 @@ export const useNovelStore = defineStore('novel', () => {
 
   function cancelImportParse(): void {
     if (!currentProject.value) return
-    cancelAsyncTask({ kind: 'import_parse', projectId: currentProject.value.id })
+    const projectId = currentProject.value.id
+    cancelAsyncTask({ kind: 'import_parse', projectId })
+    void cancelProjectAgentWorkflows(projectId, 'import_parse')
   }
 
   async function deleteProjects(projectIds: string[]): Promise<DeleteNovelsResponse> {
@@ -215,6 +224,7 @@ export const useNovelStore = defineStore('novel', () => {
     loadProjects,
     createProject,
     loadProject,
+    ensureProjectLoaded,
     loadChapter,
     sendConversation,
     generateBlueprint,

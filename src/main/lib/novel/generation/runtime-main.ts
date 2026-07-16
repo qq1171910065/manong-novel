@@ -52,7 +52,7 @@ const DEFAULT_PREFS: CreationWorkflowPrefs = {
 }
 
 function canStartNestedWorkflow(activeWorkflowId: AgentWorkflowId, next: AgentWorkflowId): boolean {
-  if (activeWorkflowId === next) return true
+  if (activeWorkflowId === next) return false
   const allowed = NESTED_WORKFLOW_ALLOWED[activeWorkflowId]
   return Boolean(allowed?.includes(next))
 }
@@ -154,6 +154,40 @@ function buildMainWritingRuntime(options: MainRuntimeOptions): WritingRuntime {
           const current = orchestratorState.runs.find((item) => item.id === run.id)
           if (!current) return
           const next = { ...current, currentMessage: message, updatedAt: Date.now() }
+          orchestratorState = {
+            ...orchestratorState,
+            runs: orchestratorState.runs.map((item) => (item.id === run.id ? next : item)),
+          }
+          callbacks.onRunUpdate?.(next)
+        },
+        updateProgress: (patch: {
+          message?: string
+          progressPercent?: number
+          completedCount?: number
+          totalCount?: number
+          currentChapter?: number | null
+        }) => {
+          const current = orchestratorState.runs.find((item) => item.id === run.id)
+          if (!current) return
+          const next = {
+            ...current,
+            currentMessage: patch.message ?? current.currentMessage,
+            progressPercent:
+              typeof patch.progressPercent === 'number'
+                ? patch.progressPercent
+                : current.progressPercent,
+            progressCompleted:
+              typeof patch.completedCount === 'number'
+                ? patch.completedCount
+                : current.progressCompleted,
+            progressTotal:
+              typeof patch.totalCount === 'number' ? patch.totalCount : current.progressTotal,
+            chapterNumber:
+              patch.currentChapter === undefined
+                ? current.chapterNumber
+                : patch.currentChapter ?? undefined,
+            updatedAt: Date.now(),
+          }
           orchestratorState = {
             ...orchestratorState,
             runs: orchestratorState.runs.map((item) => (item.id === run.id ? next : item)),

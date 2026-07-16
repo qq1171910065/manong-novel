@@ -4,7 +4,7 @@ import { BUILTIN_PLATFORM_API_URL } from '@shared/app-release-config'
 export const API_BASE_URL_STORAGE_KEY = 'mntools-api-base-url'
 
 /** 默认 Platform API 根地址（登录页写死，生产构建亦内置此值） */
-export const DEFAULT_PLATFORM_API_URL = 'http://local.czmanong.com'
+export const DEFAULT_PLATFORM_API_URL = 'https://www.czmanong.com'
 
 export function getDefaultApiBaseUrl(): string {
   const isDev = typeof import.meta !== 'undefined' && Boolean(import.meta.env?.DEV)

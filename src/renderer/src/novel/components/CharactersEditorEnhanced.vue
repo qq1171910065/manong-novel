@@ -354,7 +354,7 @@ function generatePortrait(index: number, prompt: string) {
     projectTitle,
     subject: `角色·${name}`,
     uiKey: portraitUiKey(projectId, index),
-    generate: () =>
+    generate: (progress) =>
       generateCharacterPortrait(
         toSharedCharacter(character),
         undefined,
@@ -362,7 +362,8 @@ function generatePortrait(index: number, prompt: string) {
         {
           chat_model_id: props.chatModelId || undefined,
           image_model_id: props.imageModelId || undefined,
-        }
+        },
+        { onStage: progress.setStage }
       ),
     onSuccess: async (portraitUrl) => {
       character.portrait_url = portraitUrl;

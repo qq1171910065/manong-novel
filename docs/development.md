@@ -39,7 +39,7 @@ pnpm dev
 
 ```bash
 # Platform API（登录与 AI 网关）
-# VITE_PLATFORM_API_URL=http://local.czmanong.com
+# VITE_PLATFORM_API_URL=https://www.czmanong.com
 ```
 
 ---
@@ -83,7 +83,7 @@ manong-novel/
 **发布流程** — 更新 `package.json` 中的 `version` 后：
 
 ```bash
-git tag v0.3.0
+git tag v0.4.0
 pnpm publish:github
 ```
 

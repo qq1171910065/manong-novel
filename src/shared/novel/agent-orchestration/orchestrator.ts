@@ -201,6 +201,7 @@ export async function runAgentStep<T>(
     emit(state, callbacks)
     return result
   } catch (error) {
+    state.locks = releaseTaskLocks(state.locks, runId)
     const failedStep: AgentStepEvent = {
       ...stepEvent,
       status: 'failed',
@@ -210,6 +211,7 @@ export async function runAgentStep<T>(
     run = state.runs.find((item) => item.id === runId)!
     run = touchRun({
       ...run,
+      lockedResources: [],
       steps: run.steps.map((item) =>
         item.stepId === step.stepId && item.startedAt === stepEvent.startedAt ? failedStep : item
       ),

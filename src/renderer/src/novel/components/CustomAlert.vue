@@ -4,7 +4,6 @@ import {
   AlertCircle,
   AlertTriangle,
   Check,
-  HelpCircle,
   Info,
 } from 'lucide-vue-next'
 import NovelDialogShell from '@renderer/components/common/NovelDialogShell.vue'
@@ -71,7 +70,7 @@ const iconComponent = computed(() => {
     case 'warning':
       return AlertTriangle
     case 'confirmation':
-      return HelpCircle
+      return AlertTriangle
     default:
       return Info
   }
@@ -82,6 +81,11 @@ const confirmButtonClass = computed(() => {
     return 'novel-dialog__btn novel-dialog__btn--danger'
   }
   return 'novel-dialog__btn novel-dialog__btn--primary'
+})
+
+const iconToneClass = computed(() => {
+  if (props.type === 'confirmation') return 'is-warning'
+  return iconClass.value
 })
 
 function handleConfirm() {
@@ -103,29 +107,36 @@ function handleClose() {
   <NovelDialogShell
     :model-value="visible"
     :title="titleText"
-    variant="form"
+    variant="confirm"
     :mask-closable="!showCancel"
+    :z-index="type === 'confirmation' ? 13050 : 1200"
     show-footer
     @update:model-value="(value) => { if (!value) handleClose() }"
     @close="handleClose"
   >
-    <div class="custom-alert__head">
-      <div class="novel-dialog__icon" :class="iconClass">
+    <div class="custom-alert__content">
+      <div class="novel-dialog__icon" :class="iconToneClass">
         <component :is="iconComponent" :size="20" />
       </div>
+      <p class="custom-alert__message">{{ message }}</p>
     </div>
-    <p class="custom-alert__message">{{ message }}</p>
 
     <template #footer-actions>
       <button
         v-if="showCancel"
         type="button"
         class="novel-dialog__btn"
+        data-onboarding="alert-cancel"
         @click="handleCancel"
       >
         {{ cancelText }}
       </button>
-      <button type="button" :class="confirmButtonClass" @click="handleConfirm">
+      <button
+        type="button"
+        :class="confirmButtonClass"
+        data-onboarding="alert-confirm"
+        @click="handleConfirm"
+      >
         {{ confirmText }}
       </button>
     </template>
@@ -133,8 +144,11 @@ function handleClose() {
 </template>
 
 <style scoped>
-.custom-alert__head {
-  margin-bottom: 12px;
+.custom-alert__content {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
 }
 
 .custom-alert__message {

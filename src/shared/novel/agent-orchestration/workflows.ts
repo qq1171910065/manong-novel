@@ -154,6 +154,35 @@ export const AGENT_WORKFLOWS: Record<string, AgentWorkflowDefinition> = {
       },
     ],
   },
+  import_parse: {
+    id: 'import_parse',
+    label: '智能解析',
+    description:
+      '长任务：分片语义实体子代理 → 校验子代理 → 蓝图架构 → 并行章节摘要（含断点续跑）',
+    steps: [
+      {
+        id: 'characters',
+        agentId: 'import_analyst',
+        label: '子代理抽取并校验实体',
+        resources: ['blueprint'],
+        pipelineStep: 'import_parse',
+      },
+      {
+        id: 'blueprint',
+        agentId: 'blueprint_architect',
+        label: '分析世界观与蓝图',
+        resources: ['blueprint'],
+        pipelineStep: 'import_parse',
+      },
+      {
+        id: 'summaries',
+        agentId: 'outline_planner',
+        label: '分批生成章节摘要',
+        resources: ['blueprint'],
+        pipelineStep: 'import_parse',
+      },
+    ],
+  },
 }
 
 export function getWorkflowDefinition(workflowId: string): AgentWorkflowDefinition | undefined {

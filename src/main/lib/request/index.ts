@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { ipcMain, net } from 'electron'
 import { assertPublicHttpUrl } from '../path-safety'
 
 const TIMEOUT_MS = 30_000
@@ -41,6 +41,25 @@ function parseJsonLikeResponseBody(
   return { ok: true, data: rawText }
 }
 
+function resolveTimeoutMs(rawTimeout: unknown): number {
+  return Math.min(
+    Math.max(1000, Number(rawTimeout) > 0 ? Number(rawTimeout) : TIMEOUT_MS),
+    TIMEOUT_MS_MAX
+  )
+}
+
+/**
+ * 使用 Electron net.fetch（Chromium 网络栈），避免 Node/undici 默认
+ * headersTimeout（约 5 分钟）在文生图长排队时触发 Headers Timeout Error。
+ */
+async function electronFetch(url: string, init: RequestInit): Promise<Response> {
+  const { signal, ...rest } = init
+  return net.fetch(url, {
+    ...rest,
+    ...(signal ? { signal } : {}),
+  })
+}
+
 export function registerRequestHandlers(): void {
   ipcMain.removeHandler('request:fetch-binary')
   ipcMain.handle(
@@ -63,15 +82,12 @@ export function registerRequestHandlers(): void {
       }
 
       const startAt = Date.now()
-      const timeoutMs = Math.min(
-        Math.max(1000, Number(rawTimeout) > 0 ? Number(rawTimeout) : TIMEOUT_MS),
-        TIMEOUT_MS_MAX
-      )
+      const timeoutMs = resolveTimeoutMs(rawTimeout)
 
       try {
         const controller = new AbortController()
         const timer = setTimeout(() => controller.abort(), timeoutMs)
-        const response = await fetch(url, {
+        const response = await electronFetch(url, {
           method: 'GET',
           signal: controller.signal,
           headers: { 'User-Agent': 'mntools-electron/1.0' },
@@ -134,10 +150,7 @@ export function registerRequestHandlers(): void {
       }
 
       const startAt = Date.now()
-      const timeoutMs = Math.min(
-        Math.max(1000, Number(rawTimeout) > 0 ? Number(rawTimeout) : TIMEOUT_MS),
-        TIMEOUT_MS_MAX
-      )
+      const timeoutMs = resolveTimeoutMs(rawTimeout)
 
       try {
         const controller = new AbortController()
@@ -158,7 +171,7 @@ export function registerRequestHandlers(): void {
           fetchOptions.body = body
         }
 
-        const response = await fetch(url, fetchOptions)
+        const response = await electronFetch(url, fetchOptions)
         clearTimeout(timer)
 
         const elapsed = Date.now() - startAt

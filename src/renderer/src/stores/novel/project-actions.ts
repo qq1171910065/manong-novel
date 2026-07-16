@@ -45,12 +45,20 @@ export function createNovelProjectActions(slice: NovelProjectStoreSlice) {
     }
   }
 
-  async function loadProject(projectId: string, silent = false) {
+  async function loadProject(projectId: string, silent = false, forReading = false) {
     if (!silent) slice.isLoading.value = true
     slice.error.value = null
     try {
       const switched = slice.currentProject.value?.id !== projectId
-      const project = await NovelAPI.getNovel(projectId)
+      let project: NovelProject
+      try {
+        project = forReading
+          ? await NovelAPI.getNovelForReading(projectId)
+          : await NovelAPI.getNovel(projectId)
+      } catch (error) {
+        if (!forReading) throw error
+        project = await NovelAPI.getNovel(projectId)
+      }
       slice.currentProject.value = project
       if (switched) slice.currentConversationState.value = {}
       if (!silent) {
@@ -58,10 +66,28 @@ export function createNovelProjectActions(slice: NovelProjectStoreSlice) {
       }
     } catch (err) {
       slice.error.value = err instanceof Error ? err.message : '加载项目失败'
+      if (slice.currentProject.value?.id === projectId) {
+        slice.currentProject.value = null
+      }
+      if (forReading) throw err
     } finally {
       if (!silent) slice.isLoading.value = false
     }
   }
 
-  return { loadProjects, createProject, loadProject }
+  async function ensureProjectLoaded(projectId: string): Promise<NovelProject> {
+    const id = projectId.trim()
+    if (!id) throw new Error('未选择项目')
+    if (slice.currentProject.value?.id === id) {
+      return slice.currentProject.value
+    }
+    await loadProject(id, true)
+    const project = slice.currentProject.value
+    if (!project || project.id !== id) {
+      throw new Error(slice.error.value || '项目不存在')
+    }
+    return project
+  }
+
+  return { loadProjects, createProject, loadProject, ensureProjectLoaded }
 }

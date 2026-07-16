@@ -42,12 +42,14 @@
 | 模块 | 说明 |
 |------|------|
 | **书架** | 创建、导入、导出小说项目，统一管理创作资产 |
-| **灵感模式** | 对话式构思，生成概念清单与创作方向 |
+| **新手引导** | 首次登录情境式引导，用示例作品走完蓝图 → 写作 → 阅读 |
+| **灵感模式** | 对话式构思，建议芯片与概念清单，生成创作方向 |
 | **项目蓝图** | 结构化维护世界观、角色、关系网与章节大纲 |
 | **写作台** | AI 辅助章节生成、润色、多版本切换与流式输出 |
 | **素材库** | 角色库、文风库，可在多个项目间复用 |
-| **阅读窗口** | 独立阅读模式，支持章节导航与 TTS 朗读 |
+| **阅读窗口** | 独立阅读模式，支持分页导航与 TTS 朗读 |
 | **模型设置** | 在应用内选择 AI 模型并配置 API 密钥 |
+| **语言** | 内置中英文界面，设置中可随时切换 |
 | **账户** | 登录后可查看用量与充值 |
 
 ### 创作流程
@@ -74,9 +76,10 @@ flowchart LR
 ### 首次使用
 
 1. 启动应用，在登录页完成账户登录
-2. 进入 **书架**，创建或打开一个项目
-3. 在 **设置 → 模型 / 密钥** 中选择 AI 模型并完成配置
-4. 从 **灵感模式** 或 **项目蓝图** 开始构思，再进入 **写作台** 生成章节
+2. 可选：接受右下角 **新手引导**，用示例作品快速熟悉主流程（可随时跳过，设置中可重新体验）
+3. 进入 **书架**，创建、导入或打开一个项目
+4. 在 **设置 → 模型 / 密钥** 中选择 AI 模型并完成配置；需要时可在 **设置 → 语言** 切换界面语言
+5. 从 **灵感模式** 或 **项目蓝图** 开始构思，再进入 **写作台** 生成章节
 
 ---
 
@@ -116,18 +119,20 @@ flowchart LR
 ### Highlights
 
 - **Bookshelf** — Create, import, and export novel projects
-- **Inspiration Mode** — Conversational ideation with concept lists
+- **Onboarding** — Optional guided tour with a sample project after first sign-in
+- **Inspiration Mode** — Conversational ideation with suggestion chips and concept lists
 - **Blueprint** — World-building, characters, relationships, and chapter outlines
 - **Writing Desk** — AI chapter generation, polishing, and version management
 - **Material Library** — Reusable character and style libraries across projects
-- **Reading Window** — Immersive reading with chapter navigation and TTS
+- **Reading Window** — Immersive reading with pagination, chapter navigation, and TTS
+- **Language** — Built-in Chinese / English UI switching
 
 ### Getting Started
 
 1. Download the installer from [Latest Release](https://github.com/qq1171910065/manong-novel/releases/latest)
-2. Install and launch the app, then sign in
-3. Open **Bookshelf** to create or open a project
-4. Configure your AI model under **Settings → Models / Keys**
+2. Install and launch the app, then sign in (optional onboarding tour available)
+3. Open **Bookshelf** to create, import, or open a project
+4. Configure your AI model under **Settings → Models / Keys**; switch language under **Settings → Language** if needed
 
 **Screenshots:** [Full UI preview](docs/preview.md)
 

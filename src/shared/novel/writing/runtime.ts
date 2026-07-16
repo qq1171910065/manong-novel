@@ -38,6 +38,14 @@ export type PipelineLogStep =
   | 'analytics'
   | 'other'
 
+export interface AgentWorkflowProgressPatchLike {
+  message?: string
+  progressPercent?: number
+  completedCount?: number
+  totalCount?: number
+  currentChapter?: number | null
+}
+
 export interface AgentWorkflowContextLike {
   runId: string
   workflowId: AgentWorkflowId
@@ -55,6 +63,8 @@ export interface AgentWorkflowContextLike {
     fn: () => Promise<T>
   ): Promise<T>
   updateMessage(message: string): void
+  /** 细粒度进度；未实现时可由 updateMessage 退化 */
+  updateProgress?(patch: AgentWorkflowProgressPatchLike): void
 }
 
 export interface WritingRuntime {

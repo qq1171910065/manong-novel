@@ -30,17 +30,15 @@
             <div class="nd-timeline__head">
               <div class="nd-timeline__head-main">
                 <h3 class="nd-timeline__title nd-item-title">{{ chapter.title || t('novelDetail.common.chapterN', { n: chapter.chapter_number }) }}</h3>
-                <span v-if="isPlaceholderChapter(chapter)" class="nd-timeline__placeholder-badge">{{ t('novelDetail.common.placeholder') }}</span>
               </div>
               <span class="nd-timeline__index">#{{ chapter.chapter_number }}</span>
             </div>
-            <DetailEmptyState
-              v-if="!chapter.summary"
-              compact
-              :title="t('novelDetail.chapterOutline.summaryEmpty')"
-              :description="t('novelDetail.chapterOutline.summaryHint')"
-            />
-            <p v-else class="nd-timeline__summary">{{ chapter.summary }}</p>
+            <p
+              class="nd-timeline__summary"
+              :class="{ 'nd-timeline__summary--empty': !chapter.summary?.trim() }"
+            >
+              {{ chapter.summary?.trim() || t('novelDetail.chapterOutline.summaryEmpty') }}
+            </p>
           </div>
         </DetailEditableZone>
       </li>
@@ -87,8 +85,8 @@ import ListPagination from '@renderer/components/shared/ListPagination.vue'
 import { useListPagination } from '@renderer/composables/useListPagination'
 import { NovelAPI } from '@renderer/services/novel/api'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
+import { confirmDelete } from '@renderer/composables/useAppDialog'
 import { useI18n } from '@renderer/composables/useI18n'
-import { isSubstantiveChapterOutline } from '@shared/novel/chapter-outline-quality'
 import type { ProjectModelPrefs } from '@renderer/services/novel/project-model'
 
 const { t } = useI18n()
@@ -136,10 +134,6 @@ const previewChapter = computed(() => {
   if (previewIndex.value < 0) return null
   return props.outline[previewIndex.value] ?? null
 })
-
-function isPlaceholderChapter(chapter: ChapterOutline): boolean {
-  return !isSubstantiveChapterOutline(chapter, props.projectTitle)
-}
 
 function chapterMenuActions(chapter: ChapterOutline): DetailMenuAction[] {
   if (!props.editable) return []
@@ -189,7 +183,12 @@ async function deleteChapter(index: number) {
   if (!props.editable || !props.projectId) return
   const chapter = props.outline[index]
   const label = chapter?.title || t('novelDetail.common.chapterNTitle', { n: chapter?.chapter_number ?? 0 })
-  const confirmed = await globalAlert.showConfirm(t('novelDetail.common.confirmDelete', { name: label }), t('novelDetail.chapterOutline.deleteTitle'))
+  const confirmed = await confirmDelete({
+    title: t('novelDetail.common.confirmDeleteTitle'),
+    message: t('novelDetail.common.confirmDelete', { name: label }),
+    detail: t('novelDetail.common.confirmDeleteDetail'),
+    confirmText: t('novelDetail.common.confirmDeleteBtn'),
+  })
   if (!confirmed) return
 
   const list = props.outline
@@ -231,16 +230,15 @@ export default defineComponent({
   min-width: 0;
 }
 
-.nd-timeline__placeholder-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
-  color: #9a3412;
-  background: color-mix(in srgb, #e86b24 12%, transparent);
-  border: 1px solid color-mix(in srgb, #e86b24 24%, transparent);
+.nd-timeline__summary {
+  font-size: var(--text-xs);
+  font-weight: 400;
+  line-height: 1.55;
+}
+
+.nd-timeline__summary--empty {
+  font-style: italic;
+  color: var(--soft);
 }
 
 .nd-preview-text {

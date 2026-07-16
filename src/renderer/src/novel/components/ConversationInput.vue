@@ -1,19 +1,23 @@
 <!-- AIMETA P=对话输入_用户输入组件|R=输入框_发送|NR=不含消息展示|E=component:ConversationInput|X=internal|A=输入组件|D=vue|S=dom|RD=./README.ai -->
 <template>
-  <div class="novel-chat-composer">
+  <div class="novel-chat-composer" data-onboarding="inspiration-composer">
     <div
-      v-if="isChoiceMode"
+      v-if="showChoicesFloat"
       ref="choicesFloatRef"
       class="novel-chat-choices-float"
-      :class="{ 'novel-chat-choices-float--polish': variant === 'polish' }"
+      :class="{
+        'novel-chat-choices-float--polish': variant === 'polish',
+        'novel-chat-choices-float--suggestions': showSuggestionChips,
+      }"
     >
-      <div class="novel-chat-choices-grid">
+      <div v-if="isChoiceMode" class="novel-chat-choices-grid">
         <button
           v-for="option in effectiveUiControl.options"
           :key="option.id"
           type="button"
           class="novel-chat-choice-card"
           :class="{ 'is-selected': isMultiChoice && selectedOptionIds.has(option.id) }"
+          :data-onboarding="`inspiration-choice-${option.id}`"
           :disabled="loading"
           @click="handleOptionClick(option.id, option.label || option.description || '')"
         >
@@ -37,6 +41,22 @@
           <span class="novel-chat-choice-card__body">
             <span class="novel-chat-choice-card__title">自定义输入</span>
             <span class="novel-chat-choice-card__desc">用自己的话描述想法</span>
+          </span>
+        </button>
+      </div>
+      <div v-else-if="showSuggestionChips" class="novel-chat-choices-grid novel-chat-choices-grid--suggestions">
+        <p v-if="suggestionHint" class="novel-chat-suggestion-hint">{{ suggestionHint }}</p>
+        <button
+          v-for="chip in suggestionChips"
+          :key="chip.id"
+          type="button"
+          class="novel-chat-choice-card novel-chat-choice-card--suggestion"
+          :disabled="loading"
+          @click="handleSuggestionClick(chip.id, chip.label)"
+        >
+          <span class="novel-chat-choice-card__body">
+            <span class="novel-chat-choice-card__title">{{ chip.label }}</span>
+            <span v-if="chip.description" class="novel-chat-choice-card__desc">{{ chip.description }}</span>
           </span>
         </button>
       </div>
@@ -75,6 +95,7 @@
 import { ref, nextTick, watch, computed, onMounted, onUnmounted } from 'vue'
 import { Loader2 } from 'lucide-vue-next'
 import type { UIControl } from '@renderer/services/novel/api'
+import type { InspirationSuggestionChip } from '@shared/novel/inspiration-suggestion-chips'
 
 interface Props {
   uiControl: UIControl | null
@@ -82,6 +103,9 @@ interface Props {
   variant?: 'chat' | 'polish'
   /** 用于 sessionStorage 暂存未发送草稿，关闭弹窗后可恢复 */
   draftStorageKey?: string
+  /** AI 未给出选项时，基于当前设定的本地推荐（点击即发送） */
+  suggestionChips?: InspirationSuggestionChip[]
+  suggestionHint?: string
 }
 
 const SEND_HINT = 'Enter 发送，Shift+Enter 换行'
@@ -93,6 +117,8 @@ const DEFAULT_UI_CONTROL: UIControl = {
 
 const props = withDefaults(defineProps<Props>(), {
   variant: 'chat',
+  suggestionChips: () => [],
+  suggestionHint: '',
 })
 
 const emit = defineEmits<{
@@ -107,6 +133,10 @@ const isChoiceMode = computed(
     effectiveUiControl.value.type === 'single_choice' ||
     effectiveUiControl.value.type === 'multiple_choice'
 )
+const showSuggestionChips = computed(
+  () => !isChoiceMode.value && !props.loading && props.suggestionChips.length > 0
+)
+const showChoicesFloat = computed(() => isChoiceMode.value || showSuggestionChips.value)
 const showTextarea = computed(() => !isChoiceMode.value || isManualInput.value)
 
 const withSendHint = (placeholder: string) => {
@@ -133,7 +163,7 @@ const MAX_ROWS = 6
 let choicesResizeObserver: ResizeObserver | null = null
 
 const reportChoicesHeight = () => {
-  if (!isChoiceMode.value) {
+  if (!showChoicesFloat.value) {
     emit('choices-height', 0)
     return
   }
@@ -206,6 +236,11 @@ const handleOptionClick = (id: string, label: string) => {
   handleOptionSelect(id, label)
 }
 
+const handleSuggestionClick = (id: string, label: string) => {
+  if (props.loading) return
+  emit('submit', { id: `suggestion:${id}`, value: label })
+}
+
 const confirmMultiSelect = () => {
   if (props.loading || selectedOptionIds.value.size === 0) return
   const labels = (effectiveUiControl.value.options ?? [])
@@ -259,10 +294,19 @@ watch(
   { deep: true }
 )
 
-watch(isChoiceMode, async () => {
+watch(showChoicesFloat, async () => {
   await nextTick()
   reportChoicesHeight()
 })
+
+watch(
+  () => props.suggestionChips,
+  async () => {
+    await nextTick()
+    reportChoicesHeight()
+  },
+  { deep: true }
+)
 
 onMounted(() => {
   loadDraft()

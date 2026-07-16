@@ -7,6 +7,7 @@
           <button
             type="button"
             class="detail-sidebar-create"
+            data-onboarding="primary-action"
             :class="{ 'is-auto-writing': isAutoWriteActive }"
             :disabled="isPrimaryActionBusy"
             :title="primaryActionHint"
@@ -32,6 +33,7 @@
               class="profile-tab-btn"
               :class="{ 'is-active': activeSection === section.key }"
               :aria-selected="activeSection === section.key"
+              :data-onboarding="section.key === 'characters' ? 'nav-characters' : section.key === 'overview' ? 'nav-overview' : undefined"
               @click="switchSection(section.key)"
             >
               <component :is="section.icon" :size="20" />
@@ -48,9 +50,6 @@
                 <p class="profile-section__desc">{{ activeSectionMeta.description }}</p>
                 <p v-if="primaryActionHint" class="detail-polish-hint">
                   {{ primaryActionHint }}
-                </p>
-                <p v-if="isImportPending" class="detail-import-hint">
-                  智能解析会逐批阅读全书并填充各 Tab，请耐心等待；解析完成前不可编辑。
                 </p>
               </div>
               <div v-if="showSectionHeaderActions" class="profile-section__actions">
@@ -140,6 +139,8 @@
                 @portrait-generate="handlePortraitGenerate"
                 @asset-saved="reloadSection($event, true)"
                 @chapters-cleared="onChaptersCleared"
+                @import-parse="startImportParseWithMode"
+                @open-import-parse-modes="openImportParseModeModal"
               />
             </div>
           </div>
@@ -221,6 +222,47 @@
         </button>
       </template>
     </NovelModalShell>
+
+    <NovelModalShell
+      :show="showImportParseModeModal"
+      variant="form"
+      size="sm"
+      auto-min-width="sm"
+      :title="t('novelDetail.primaryAction.smartParse')"
+      :subtitle="t('novelDetail.importParseMode.subtitle')"
+      :aria-label="t('novelDetail.primaryAction.smartParse')"
+      @close="showImportParseModeModal = false"
+    >
+      <div class="import-parse-mode-list">
+        <button
+          v-if="importParseModeOptions.showContinue"
+          type="button"
+          class="import-parse-mode-list__btn"
+          @click="chooseImportParseMode('continue')"
+        >
+          <span class="import-parse-mode-list__title">{{ t('novelDetail.primaryAction.continueParse') }}</span>
+          <span class="import-parse-mode-list__desc">{{ t('novelDetail.importParseMode.continueDesc') }}</span>
+        </button>
+        <button
+          v-if="importParseModeOptions.showOptimize"
+          type="button"
+          class="import-parse-mode-list__btn"
+          @click="chooseImportParseMode('optimize')"
+        >
+          <span class="import-parse-mode-list__title">{{ t('novelDetail.primaryAction.optimizeParse') }}</span>
+          <span class="import-parse-mode-list__desc">{{ t('novelDetail.importParseMode.optimizeDesc') }}</span>
+        </button>
+        <button
+          v-if="importParseModeOptions.showRestart"
+          type="button"
+          class="import-parse-mode-list__btn"
+          @click="chooseImportParseMode('restart')"
+        >
+          <span class="import-parse-mode-list__title">{{ t('novelDetail.primaryAction.restartParse') }}</span>
+          <span class="import-parse-mode-list__desc">{{ t('novelDetail.importParseMode.restartDesc') }}</span>
+        </button>
+      </div>
+    </NovelModalShell>
   </div>
 </template>
 
@@ -251,6 +293,7 @@ import {
   consumeTaskViewRequest,
   useTaskNavigation,
 } from '@renderer/services/task-navigation-service'
+import { onboardingService } from '@renderer/services/novel/onboarding-service'
 import {
   countPlaceholderChapterOutlines,
   resolveOutlineChapterTarget,
@@ -305,8 +348,8 @@ import {
   canEditProjectSettingsWithAi,
   settingEditBlockReason,
 } from '@shared/novel/project-writing-guard'
-import { isTxtImportLocked, isTxtImportPending } from '@shared/novel/import-status'
-import type { ImportParseProgress } from '@renderer/services/novel/api'
+import { isTxtImportLocked, isTxtImportPending, hasImportParseCheckpoint, canOptimizeImportParse, hasSubstantialImportSettings } from '@shared/novel/import-status'
+import { resolveImportParseProgressPercent } from '@shared/novel/import-parse-progress'
 
 function resolvePolishableSection(section: SectionKey) {
   return isWorldViewSection(section) ? 'world_setting' : section
@@ -416,9 +459,7 @@ const generationOverlayText = computed(() => {
 })
 
 const showGenerationOverlay = computed(
-  () =>
-    (showBlueprintGenerating.value || showImportParsing.value) &&
-    !showInspirationModal.value
+  () => showBlueprintGenerating.value && !showInspirationModal.value
 )
 
 const isCurrentProjectAutoWriteRunning = computed(() => autoWrite.isProjectActive(projectId.value))
@@ -428,23 +469,6 @@ const isAutoWriteActive = computed(
 )
 const isWritingDeskLocked = computed(() => isAutoWriteActive.value)
 
-function resolveImportParseProgressPercent(progress: ImportParseProgress): number {
-  switch (progress.phase) {
-    case 'split':
-      return 8
-    case 'characters':
-      return 18
-    case 'blueprint':
-      return 38
-    case 'summaries': {
-      const current = progress.current ?? 0
-      const total = progress.total ?? 1
-      return 40 + Math.round((current / total) * 55)
-    }
-    default:
-      return 5
-  }
-}
 const coverGenerating = computed(() => isImageUiKeyRunning(coverUiKey(projectId.value)))
 const isPortraitGenerating = (index: number) =>
   isImageUiKeyRunning(portraitUiKey(projectId.value, index))
@@ -454,6 +478,32 @@ const novel = computed(() => novelStore.currentProject as NovelProject | null)
 const isImportPending = computed(() => isTxtImportPending(novel.value))
 const isContentLocked = computed(() => isTxtImportLocked(novel.value))
 const importedChapterCount = computed(() => novel.value?.chapters?.length ?? 0)
+const hasParseCheckpoint = computed(() => hasImportParseCheckpoint(novel.value))
+const canOptimizeParse = computed(() => canOptimizeImportParse(novel.value))
+const hasImportParseContent = computed(() =>
+  hasSubstantialImportSettings(novel.value?.blueprint) || hasParseCheckpoint.value
+)
+/** 已有断点/设定内容时：点「智能解析」先选模式，不改按钮文案 */
+const needsImportParseModeChooser = computed(() => {
+  if (!novel.value || novel.value.source_type !== 'txt_import') return false
+  if (!isImportPending.value || showImportParsing.value) return false
+  return (
+    hasParseCheckpoint.value ||
+    hasImportParseContent.value ||
+    Boolean(novel.value.import_parsed)
+  )
+})
+const showImportParseModeModal = ref(false)
+const importParseModeOptions = computed(() => {
+  const hasCheckpoint = hasParseCheckpoint.value
+  const hasContent = hasImportParseContent.value || Boolean(novel.value?.import_parsed)
+  const completed = canOptimizeParse.value && !isImportPending.value
+  return {
+    showContinue: isImportPending.value,
+    showOptimize: hasCheckpoint || hasContent || completed,
+    showRestart: hasCheckpoint || hasContent || completed,
+  }
+})
 const primaryActionLabel = computed(() => {
   if (isAutoWriteActive.value) {
     const msg = autoWrite.statusMessage.value
@@ -466,6 +516,7 @@ const primaryActionLabel = computed(() => {
     return t('novelDetail.primaryAction.blueprintGenerating')
   }
   if (showImportParsing.value) return t('novelDetail.primaryAction.parsing')
+  // 待解析时左上角固定「智能解析」；继续/优化在点击后选择
   if (isImportPending.value) return t('novelDetail.primaryAction.smartParse')
   const project = novel.value
   if (!project || needsInspirationConversation(project)) return t('novelDetail.primaryAction.completeSetup')
@@ -479,8 +530,11 @@ const primaryActionHint = computed(() => {
   if (isAutoWriteActive.value) {
     return t('novelDetail.primaryAction.autoWriteHint')
   }
-  if (isImportPending.value) {
-    return t('novelDetail.primaryAction.importHint', { count: importedChapterCount.value })
+  if (showImportParsing.value) {
+    return importParseMessage.value || t('novelDetail.shell.parseBackgroundStarted')
+  }
+  if (isImportPending.value && needsImportParseModeChooser.value) {
+    return t('novelDetail.primaryAction.smartParseChooseHint')
   }
   return ''
 })
@@ -736,44 +790,12 @@ const goToWritingDesk = async () => {
   }
 
   if (isTxtImportPending(project)) {
-    importParseMessage.value = t('novelDetail.shell.importPreparing')
-    try {
-      await importParseGen.run(
-        () =>
-          novelStore.runImportParse((progress) => {
-            importParseMessage.value = progress.message
-            importParseGen.setProgress(resolveImportParseProgressPercent(progress))
-          }),
-        { totalTimeoutMs: LONG_TASK_NO_TOTAL_TIMEOUT }
-      )
-      await novelStore.loadProject(projectId.value, true)
-      refreshDetailSections()
-      void loadSection('chapters', true)
-      activityLogService.logBlueprintGenerate(
-        projectId.value,
-        detailProjectTitle(project)
-      )
-      globalAlert.showSuccess(
-        t('novelDetail.shell.parseSuccessDetail', { count: novel.value?.chapters?.length ?? 0 }),
-        t('novelDetail.shell.parseSuccess')
-      )
-    } catch (error) {
-      if (isAbortError(error)) {
-        globalAlert.showSuccess(t('novelDetail.shell.parseCancelled'), t('novelDetail.shell.cancelled'))
-        return
-      }
-      console.error('智能解析失败:', error)
-      globalAlert.showError(
-        error instanceof Error
-          ? /超时|timeout/i.test(error.message)
-            ? t('novelDetail.shell.parseTimeoutHint', { message: error.message })
-            : error.message
-          : t('novelDetail.shell.parseFailed'),
-        t('novelDetail.shell.parseFailedTitle')
-      )
-    } finally {
-      importParseMessage.value = ''
+    if (showImportParsing.value) return
+    if (needsImportParseModeChooser.value) {
+      showImportParseModeModal.value = true
+      return
     }
+    startImportParseWithMode('continue')
     return
   }
 
@@ -783,6 +805,66 @@ const goToWritingDesk = async () => {
   }
 
   showWritingDeskModal.value = true
+}
+
+async function finalizeImportParse(
+  mode: 'continue' | 'optimize' | 'restart' = 'continue'
+): Promise<void> {
+  if (showImportParsing.value) return
+  importParseMessage.value = t('novelDetail.shell.importPreparing')
+  try {
+    await importParseGen.run(
+      () =>
+        novelStore.runImportParse((progress) => {
+          importParseMessage.value = progress.message
+          importParseGen.setProgress(resolveImportParseProgressPercent(progress))
+        }, mode),
+      { totalTimeoutMs: LONG_TASK_NO_TOTAL_TIMEOUT }
+    )
+    await novelStore.loadProject(projectId.value, true)
+    refreshDetailSections()
+    void loadSection('chapters', true)
+    activityLogService.logBlueprintGenerate(projectId.value, detailProjectTitle(novel.value))
+    globalAlert.showSuccess(
+      t('novelDetail.shell.parseSuccessDetail', { count: novel.value?.chapters?.length ?? 0 }),
+      t('novelDetail.shell.parseSuccess')
+    )
+  } catch (error) {
+    if (isAbortError(error)) {
+      globalAlert.showSuccess(t('novelDetail.shell.parseCancelled'), t('novelDetail.shell.cancelled'))
+      return
+    }
+    console.error('智能解析失败:', error)
+    globalAlert.showError(
+      error instanceof Error
+        ? /超时|timeout/i.test(error.message)
+          ? t('novelDetail.shell.parseTimeoutHint', { message: error.message })
+          : error.message
+        : t('novelDetail.shell.parseFailed'),
+      t('novelDetail.shell.parseFailedTitle')
+    )
+  } finally {
+    importParseMessage.value = ''
+  }
+}
+
+function startImportParseWithMode(mode: 'continue' | 'optimize' | 'restart') {
+  if (showImportParsing.value) return
+  showImportParseModeModal.value = false
+  globalAlert.showSuccess(
+    t('novelDetail.shell.parseBackgroundStarted'),
+    t('novelDetail.shell.backgroundParse')
+  )
+  void finalizeImportParse(mode)
+}
+
+function chooseImportParseMode(mode: 'continue' | 'optimize' | 'restart') {
+  startImportParseWithMode(mode)
+}
+
+function openImportParseModeModal() {
+  if (showImportParsing.value) return
+  showImportParseModeModal.value = true
 }
 
 const openBlueprintSetup = () => {
@@ -960,12 +1042,47 @@ async function handlePendingTaskView() {
 
   if (request.target.type === 'writing_desk') {
     showWritingDeskModal.value = true
+    return
+  }
+
+  if (request.target.type === 'import_parse') {
+    startImportParseWithMode(request.target.mode ?? 'continue')
   }
 }
 
 watch(pendingTaskView, () => {
   void handlePendingTaskView()
 })
+
+function handleOnboardingDetailCommand() {
+  let guard = 0
+  while (guard < 8) {
+    const command = onboardingService.consumeDetailCommand()
+    if (!command) break
+    guard += 1
+    if (command.type === 'section') {
+      switchSection(command.section)
+      continue
+    }
+    if (command.type === 'open_writing_desk') {
+      void goToWritingDesk()
+      continue
+    }
+    if (command.type === 'close_writing_desk') {
+      showWritingDeskModal.value = false
+      continue
+    }
+    if (command.type === 'open_inspiration') {
+      openBlueprintSetup()
+      continue
+    }
+    if (command.type === 'close_inspiration') {
+      showInspirationModal.value = false
+    }
+  }
+}
+
+let unsubscribeOnboarding: (() => void) | undefined
 
 const onBlueprintSaved = () => {
   activityLogService.logBlueprintGenerate(
@@ -1050,6 +1167,9 @@ const componentProps = computed(() => {
         editable,
         importPending: isImportPending.value,
         importedChapterCount: importedChapterCount.value,
+        hasParseCheckpoint: hasParseCheckpoint.value,
+        canOptimizeParse: canOptimizeParse.value,
+        importParsing: showImportParsing.value,
         coverGenerating: coverGenerating.value,
         projectId: projectId.value,
         projectTitle: overviewMeta.title || novel.value?.title || '',
@@ -1210,7 +1330,7 @@ const handleCoverGenerate = (prompt: string) => {
     projectTitle: title,
     subject: t('novelDetail.shell.coverSubject'),
     uiKey: coverUiKey(projectId.value),
-    generate: () =>
+    generate: (progress) =>
       generateCoverImage(
         {
           title: overview.title || overviewMeta.title,
@@ -1220,7 +1340,8 @@ const handleCoverGenerate = (prompt: string) => {
           synopsis: overview.one_sentence_summary || overview.full_synopsis,
         },
         prompt,
-        projectModelPrefs.value
+        projectModelPrefs.value,
+        { onStage: progress.setStage }
       ),
     onSuccess: async (coverUrl) => {
       await persistCover(coverUrl)
@@ -1282,12 +1403,13 @@ const handlePortraitGenerate = (payload: { index: number; prompt: string }) => {
     projectTitle: title,
     subject: t('novelDetail.shell.portraitSubject', { name }),
     uiKey: portraitUiKey(projectId.value, payload.index),
-    generate: () =>
+    generate: (progress) =>
       generateCharacterPortrait(
         character,
         { genre: overview.genre, style: overview.style },
         payload.prompt,
-        projectModelPrefs.value
+        projectModelPrefs.value,
+        { onStage: progress.setStage }
       ),
     onSuccess: async (portraitUrl) => {
       await persistCharacterPortrait(payload.index, portraitUrl)
@@ -1401,10 +1523,15 @@ onMounted(async () => {
     originalBodyOverflow.value = document.body.style.overflow
     document.body.style.overflow = 'hidden'
   }
+  unsubscribeOnboarding = onboardingService.subscribe(() => {
+    handleOnboardingDetailCommand()
+  })
   await bootstrapDetailProject(projectId.value)
+  handleOnboardingDetailCommand()
 })
 
 onBeforeUnmount(() => {
+  unsubscribeOnboarding?.()
   if (typeof document !== 'undefined') {
     document.body.style.overflow = originalBodyOverflow.value || ''
   }
@@ -1412,16 +1539,6 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.detail-import-hint {
-  margin: 10px 0 0;
-  padding: 10px 14px;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--primary) 10%, transparent);
-  color: var(--foreground);
-  font-size: 13px;
-  line-height: 1.5;
-}
-
 .detail-polish-hint {
   margin: 8px 0 0;
   font-size: 12px;

@@ -1,5 +1,11 @@
 import { getApiBaseUrl } from './config'
-import { isSuccessBusinessCode, parseCoolApiEnvelope, refreshSessionFromStorage, isAuthError } from './api'
+import {
+  isSuccessBusinessCode,
+  parseCoolApiEnvelope,
+  describeUnexpectedPortalResponse,
+  refreshSessionFromStorage,
+  isAuthError,
+} from './api'
 import { handleAuthFailure, isAuthFailureRedirectSuppressed, syncSessionToMainStore } from './auth-session'
 import { FEE_YUAN_TO_POINTS, yuanToPoints } from '../composables/fee-points'
 import type { PortalSession } from '@shared/types'
@@ -312,7 +318,9 @@ async function portalRequest<T>(
     throw new Error(msg)
   }
 
-  if (!envelope) throw new Error('接口返回格式异常')
+  if (!envelope) {
+    throw new Error(describeUnexpectedPortalResponse(status, result.data, base))
+  }
 
   if (shouldExitOnAuthFail && isAuthError(status, envelope.code, envelope.message)) {
     if (!retried) {
@@ -628,7 +636,14 @@ export async function fetchPlatformPing(
     if (!result.success) return { ok: false, error: result.error || '请求失败' }
     const envelope = parseCoolApiEnvelope(result.data)
     if (!envelope || !isSuccessBusinessCode(envelope.code)) {
-      return { ok: false, error: envelope?.message || '该地址不是 WorkBuddy 平台服务' }
+      const status = result.status ?? 0
+      return {
+        ok: false,
+        error:
+          envelope?.message ||
+          describeUnexpectedPortalResponse(status, result.data, base) ||
+          '该地址不是 WorkBuddy 平台服务',
+      }
     }
     return { ok: true }
   } catch (e) {

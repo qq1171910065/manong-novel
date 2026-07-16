@@ -1,4 +1,4 @@
-﻿<!-- AIMETA P=物料库_创作物料管理|R=筛选侧栏_卡片列表|NR=不含项目内蓝图|E=route:/library/*|X=ui|A=物料库|D=vue|S=dom|RD=./README.ai -->
+<!-- AIMETA P=物料库_创作物料管理|R=筛选侧栏_卡片列表|NR=不含项目内蓝图|E=route:/library/*|X=ui|A=物料库|D=vue|S=dom|RD=./README.ai -->
 <template>
   <NovelPageShell class="material-library-page" flow-scroll>
     <div class="material-library-layout list-flow-layout">
@@ -113,7 +113,7 @@ import MaterialLibraryCard from '@renderer/novel/components/shared/MaterialLibra
 import MaterialPreviewDialog from '@renderer/novel/components/shared/MaterialPreviewDialog.vue'
 import MaterialLibraryEditModal from '@renderer/novel/components/shared/MaterialLibraryEditModal.vue'
 import MaterialLibraryCardMenu from '@renderer/novel/components/shared/MaterialLibraryCardMenu.vue'
-import { confirm } from '@renderer/composables/useAppDialog'
+import { confirmDelete } from '@renderer/composables/useAppDialog'
 import { route, navigate } from '@renderer/router'
 import {
   buildMaterialListPath,
@@ -294,12 +294,8 @@ function removeItem(id: string) {
 
 async function confirmRemoveItem(item: MaterialItem) {
   if (isMaterialBuiltIn(item)) return
-  const accepted = await confirm({
-    title: '确认删除',
-    message: `确定要删除「${item.title}」吗？`,
-    detail: '此操作无法撤销',
-    confirmText: '确认删除',
-    tone: 'danger',
+  const accepted = await confirmDelete({
+    name: item.title,
   })
   if (!accepted) return
   removeItem(item.id)

@@ -9,7 +9,7 @@ import {
   formatBytes,
 } from '@renderer/services/novel/project-data'
 import { formatDateTimeCompact } from '@renderer/novel/utils/date'
-import { confirm } from '@renderer/composables/useAppDialog'
+import { confirm, confirmDelete } from '@renderer/composables/useAppDialog'
 import { useRouter } from '@renderer/novel/composables/useNovelRouter'
 import { useNovelStore } from '@renderer/stores/novel'
 import { useI18n } from '@renderer/composables/useI18n'
@@ -176,11 +176,10 @@ async function clearAllChapterContent() {
 async function deleteProject() {
   if (busy.value || !props.project) return
   const title = props.project.title || t('novelDetail.common.unnamedProject')
-  const ok = await confirm({
+  const ok = await confirmDelete({
     title: t('novelDetail.projectData.confirm.deleteTitle'),
     message: t('novelDetail.projectData.confirm.deleteMessage', { name: title }),
     detail: t('novelDetail.projectData.confirm.deleteDetail'),
-    tone: 'danger',
     confirmText: t('novelDetail.projectData.confirm.deleteConfirm'),
   })
   if (!ok) return

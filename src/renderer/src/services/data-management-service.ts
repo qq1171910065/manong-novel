@@ -25,6 +25,7 @@ const LOCAL_DATA_KEYS = [
   'novel_activity_log_v1',
   'novel-help-chat',
   'novel_material_library_v1',
+  'novel_onboarding_prefs_v1',
   'novel_project_stats_v1',
   'novel_reading_settings_v1',
   'novel-login-cache-v2',

@@ -1,5 +1,6 @@
 import { userInfoRef } from '@renderer/services/auth'
 import { cloneJson } from '@shared/clone-json'
+import { slimProjectForReading } from '@shared/novel/reading-project'
 import { PROJECT_SAVE_CONFLICT } from '@shared/novel/project-persistence'
 import type { NovelProject } from '@shared/novel/types'
 import { ProjectSaveConflictError } from './project-persistence'
@@ -24,6 +25,14 @@ async function unwrap<T>(promise: Promise<{ ok: boolean; data?: T; error?: strin
 export const novelClient = {
   listProjects: () => unwrap(window.api.novelListProjects(getNovelUserId())),
   getProject: (projectId: string) => unwrap(window.api.novelGetProject(getNovelUserId(), projectId)),
+  getProjectForReading: async (projectId: string) => {
+    const userId = getNovelUserId()
+    if (typeof window.api.novelGetProjectForReading === 'function') {
+      return unwrap(window.api.novelGetProjectForReading(userId, projectId))
+    }
+    const project = await unwrap(window.api.novelGetProject(userId, projectId))
+    return slimProjectForReading(project)
+  },
   createProject: (
     title: string,
     initialPrompt: string,

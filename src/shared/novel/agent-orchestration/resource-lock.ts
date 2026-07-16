@@ -1,5 +1,6 @@
 import type {
   AgentId,
+  AgentTaskStatus,
   AgentWorkflowId,
   ResourceKind,
   ResourceLock,
@@ -124,6 +125,22 @@ export function isResourceLocked(
   excludeTaskId?: string
 ): boolean {
   return Boolean(findConflictingLock(key, locks, excludeTaskId))
+}
+
+export function isActiveAgentTaskStatus(status: AgentTaskStatus): boolean {
+  return status === 'running' || status === 'pending'
+}
+
+/** 主进程 IPC 锁是否应视为孤儿并回收（对应工作流已结束或本窗口无运行记录） */
+export function shouldReapStaleAgentLock(
+  lock: ResourceLock,
+  activeTaskIds: ReadonlySet<string>,
+  knownRunStatusByTaskId: ReadonlyMap<string, AgentTaskStatus>
+): boolean {
+  if (activeTaskIds.has(lock.ownerTaskId)) return false
+  const status = knownRunStatusByTaskId.get(lock.ownerTaskId)
+  if (status != null) return !isActiveAgentTaskStatus(status)
+  return true
 }
 
 export function formatResourceLockLabel(key: ResourceLockKey): string {

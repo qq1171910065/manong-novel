@@ -60,28 +60,46 @@
           </div>
 
           <div v-else class="material-library-grid">
-            <MaterialLibraryCard
+            <div
               v-for="project in filteredProjects"
               :key="project.id"
-              :title="project.title"
-              :meta="projectMeta(project)"
-              :image-url="project.cover_url"
-              :accent="resolveAccent(project.genre || '')"
-              :placeholder-icon="BookOpen"
+              class="bookshelf-card-wrap"
+              :data-onboarding="isOnboardingProjectTitle(project.title) ? 'shelf-guide-card' : undefined"
+              :class="{ 'bookshelf-card-wrap--guide': isOnboardingProjectTitle(project.title) }"
+              @click="isOnboardingProjectTitle(project.title) ? enterProject(project) : undefined"
             >
-              <template #actions>
-                <MaterialLibraryCardMenu
-                  :show-favorite="false"
-                  :show-edit="false"
-                  :show-preview="false"
-                  show-create
-                  show-read
-                  @create="enterProject(project)"
-                  @read="openProjectReading(project)"
-                  @delete="handleDeleteProject(project.id)"
-                />
-              </template>
-            </MaterialLibraryCard>
+              <MaterialLibraryCard
+                :title="project.title"
+                :meta="projectMeta(project)"
+                :image-url="project.cover_url"
+                :accent="resolveAccent(project.genre || '')"
+                :placeholder-icon="BookOpen"
+                :interactive="false"
+              >
+                <template #actions>
+                  <button
+                    v-if="isOnboardingProjectTitle(project.title)"
+                    type="button"
+                    class="bookshelf-guide-read"
+                    data-onboarding="shelf-read"
+                    @click.stop="openProjectReading(project)"
+                  >
+                    阅读
+                  </button>
+                  <MaterialLibraryCardMenu
+                    :show-favorite="false"
+                    :show-edit="false"
+                    :show-preview="false"
+                    :show-create="!isOnboardingProjectTitle(project.title)"
+                    :show-read="!isOnboardingProjectTitle(project.title)"
+                    show-delete
+                    @create="enterProject(project)"
+                    @read="openProjectReading(project)"
+                    @delete="handleDeleteProject(project.id)"
+                  />
+                </template>
+              </MaterialLibraryCard>
+            </div>
           </div>
         </div>
       </section>
@@ -100,11 +118,14 @@
     :creating="isCreating"
     @close="closeCreateModal"
     @confirm="handleCreateWithMode"
+    @confirm-dev-test="handleCreateDevTest"
   />
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { isOnboardingProjectTitle } from '@shared/novel/onboarding'
+import { onboardingService } from '@renderer/services/novel/onboarding-service'
 import {
   BookOpen,
   CheckCircle2,
@@ -115,7 +136,7 @@ import {
   SlidersHorizontal,
   Upload,
 } from 'lucide-vue-next'
-import { confirm } from '@renderer/composables/useAppDialog'
+import { alert, confirmDelete } from '@renderer/composables/useAppDialog'
 import NovelPageShell from '@renderer/components/novel/NovelPageShell.vue'
 import NovelSelect from '@renderer/components/common/NovelSelect.vue'
 import MaterialLibraryCard from '@renderer/novel/components/shared/MaterialLibraryCard.vue'
@@ -125,6 +146,7 @@ import BookshelfImportModal from '@renderer/novel/components/shared/BookshelfImp
 import { openReadingWindow } from '@renderer/services/reading-service'
 import { useCreateNovelProject } from '@renderer/novel/composables/useCreateNovelProject'
 import { useRouter } from '@renderer/novel/composables/useNovelRouter'
+import { requestTaskView } from '@renderer/services/task-navigation-service'
 import { useNovelStore } from '@renderer/stores/novel'
 import type { NovelProjectSummary } from '@renderer/services/novel/api'
 import { NovelAPI } from '@renderer/services/novel/api'
@@ -138,7 +160,14 @@ const router = useRouter()
 const novelStore = useNovelStore()
 const { t, currentLocale } = useI18n()
 const dateLocale = computed(() => resolveLocaleDateString(currentLocale.value))
-const { showModeModal, isCreating, openCreateModal, closeCreateModal, createWithMode } = useCreateNovelProject()
+const {
+  showModeModal,
+  isCreating,
+  openCreateModal,
+  closeCreateModal,
+  createWithMode,
+  createDevTest,
+} = useCreateNovelProject()
 
 const query = ref('')
 const sortBy = ref<'updated' | 'name' | 'progress'>('updated')
@@ -236,8 +265,26 @@ async function loadProjects() {
 
 async function handleCreateWithMode(mode: WritingMode, materials: CreateProjectMaterialSelection) {
   try {
+    const onboardingState = onboardingService.getState()
+    if (onboardingState.status === 'active' && onboardingState.step === 'confirm_create') {
+      await onboardingService.createOnboardingProject()
+      closeCreateModal()
+      await loadProjects()
+      return
+    }
     const project = await createWithMode(mode, { materials, onCreated: loadProjects })
     if (project) router.push(`/detail/${project.id}`)
+  } catch (error) {
+    alert(error instanceof Error ? error.message : t('bookshelf.createFailed'))
+  }
+}
+
+async function handleCreateDevTest() {
+  try {
+    const project = await createDevTest({ onCreated: loadProjects })
+    if (!project) return
+    requestTaskView(project.id, { type: 'writing_desk' })
+    router.push(`/detail/${project.id}`)
   } catch (error) {
     alert(error instanceof Error ? error.message : t('bookshelf.createFailed'))
   }
@@ -270,12 +317,11 @@ async function handleDeleteProject(projectId: string) {
   const project = novelStore.projects.find((p) => p.id === projectId)
   if (!project || isDeleting.value) return
 
-  const accepted = await confirm({
+  const accepted = await confirmDelete({
     title: t('bookshelf.deleteConfirmTitle'),
     message: t('bookshelf.deleteConfirmMessage', { title: project.title }),
     detail: t('bookshelf.deleteConfirmDetail'),
     confirmText: t('bookshelf.deleteConfirmBtn'),
-    tone: 'danger',
   })
   if (!accepted) return
 
@@ -289,12 +335,57 @@ async function handleDeleteProject(projectId: string) {
   }
 }
 
+function handleOnboardingPrepareCommand() {
+  const command = onboardingService.consumePrepareCommand()
+  if (!command) return
+  if (command.type === 'open_create_modal') {
+    openCreateModal()
+    return
+  }
+  if (command.type === 'close_create_modal') {
+    closeCreateModal()
+  }
+}
+
+let unsubscribeOnboardingPrepare: (() => void) | undefined
+
 onMounted(() => {
   void loadProjects()
+  unsubscribeOnboardingPrepare = onboardingService.subscribe(() => {
+    handleOnboardingPrepareCommand()
+  })
+  handleOnboardingPrepareCommand()
+})
+
+onUnmounted(() => {
+  unsubscribeOnboardingPrepare?.()
 })
 </script>
 
 <style scoped>
+.bookshelf-card-wrap {
+  min-width: 0;
+}
+
+.bookshelf-card-wrap--guide {
+  cursor: pointer;
+  border-radius: 16px;
+}
+
+.bookshelf-guide-read {
+  border: none;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  background: color-mix(in srgb, var(--accent, #c4a35a) 18%, transparent);
+  color: var(--text, #1c1917);
+}
+
+.bookshelf-guide-read:hover {
+  background: color-mix(in srgb, var(--accent, #c4a35a) 28%, transparent);
+}
+
 .bookshelf-state {
   display: flex;
   flex-direction: column;

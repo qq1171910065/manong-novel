@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, Bug, Download, FileQuestion, Info, Key, LogOut, Minus, Settings, SlidersHorizontal, User, Volume2, Wallet, X } from 'lucide-vue-next'
+import { ArrowLeft, Bug, Download, FileQuestion, Info, Key, Languages, LogOut, Minus, Settings, SlidersHorizontal, User, Volume2, Wallet, X } from 'lucide-vue-next'
 import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue'
 import { goBack, navigate, route } from '../router'
 import { portalPathForTab } from '../pages/settings/portal-routes'
@@ -44,7 +44,6 @@ const taskPanelOpen = ref(false)
 const profileWrapRef = ref<HTMLElement | null>(null)
 const profileTriggerRef = ref<HTMLElement | null>(null)
 const profilePopoverRef = ref<HTMLElement | null>(null)
-const taskPanelRef = ref<InstanceType<typeof BackgroundTaskPanel> | null>(null)
 const { style: profilePopoverStyle } = useAnchoredPopover(showProfilePopover, profileTriggerRef, {
   offsetRight: -24,
 })
@@ -122,6 +121,7 @@ const profileQuickLinks = [
 
 const profileSettingLinks = [
   { id: 'display', label: '显示与界面', path: portalPathForTab('settings-display'), icon: SlidersHorizontal },
+  { id: 'language', label: '语言', path: portalPathForTab('settings-language'), icon: Languages },
   { id: 'audio', label: '声音', path: portalPathForTab('settings-audio'), icon: Volume2 },
 ] as const
 
@@ -140,6 +140,7 @@ function onRechargePaid() {
 
 function toggleProfilePopover() {
   showProfilePopover.value = !showProfilePopover.value
+  if (showProfilePopover.value) taskPanelOpen.value = false
 }
 
 function closeProfilePopover() {
@@ -148,18 +149,12 @@ function closeProfilePopover() {
 
 function closeShellPopovers() {
   closeProfilePopover()
-  taskPanelRef.value?.close?.()
-  taskPanelOpen.value = false
 }
 
-function isTaskPanelOpen(): boolean {
-  return taskPanelOpen.value || (taskPanelRef.value?.isOpen?.() ?? false)
-}
-
-const shellPopoverOpen = computed(() => showProfilePopover.value || taskPanelOpen.value)
+const shellPopoverOpen = computed(() => showProfilePopover.value)
 
 function shouldCloseShellPopovers(): boolean {
-  return showProfilePopover.value || isTaskPanelOpen()
+  return showProfilePopover.value
 }
 
 function onShellSurfaceDismiss() {
@@ -187,8 +182,6 @@ function onShellOutsidePointerDown(event: MouseEvent) {
     const profilePopover = profilePopoverRef.value
     if (profileRoot?.contains(target) || profilePopover?.contains(target)) return
   }
-
-  if (isTaskPanelOpen() && taskPanelRef.value?.containsTarget(target)) return
 
   closeShellPopovers()
 }
@@ -255,6 +248,10 @@ watch(
   () => void refreshAvailability()
 )
 
+watch(taskPanelOpen, (open) => {
+  if (open) closeProfilePopover()
+})
+
 onMounted(async () => {
   startPolling()
   document.addEventListener('mousedown', onShellOutsidePointerDown, true)
@@ -315,7 +312,7 @@ const shellBgStyle = {
         >
           <Download :size="18" />
         </button>
-        <BackgroundTaskPanel ref="taskPanelRef" v-model:open="taskPanelOpen" />
+        <BackgroundTaskPanel v-model:open="taskPanelOpen" />
         <div ref="profileWrapRef" class="novel-profile-wrap" :class="{ 'is-open': showProfilePopover }">
           <button
             ref="profileTriggerRef"

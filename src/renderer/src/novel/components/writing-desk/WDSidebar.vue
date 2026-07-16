@@ -1,6 +1,6 @@
 <!-- AIMETA P=写作台侧边栏_章节目录|R=章节列表_导航|NR=不含内容编辑|E=component:WDSidebar|X=ui|A=侧边栏|D=vue|S=dom|RD=./README.ai -->
 <template>
-  <div>
+  <div :class="embedded ? 'wd-sidebar-host--embedded' : ''">
     <!-- 侧边栏遮罩 (移动端) -->
     <div
       v-if="sidebarOpen"
@@ -12,7 +12,7 @@
     <div
       :class="[
         embedded
-          ? 'wd-sidebar--embedded h-full flex-shrink-0'
+          ? 'wd-sidebar--embedded h-full'
           : 'md-card md-card-elevated transition-all duration-300 h-full lg:relative lg:translate-x-0 lg:w-80 lg:flex-shrink-0',
         !embedded && sidebarOpen
           ? 'fixed left-4 top-20 bottom-4 w-80 z-50 translate-x-0'
@@ -489,8 +489,17 @@ function chapterBadgeClass(chapterNumber: number): string {
   }
 }
 
-.wd-sidebar--embedded {
+.wd-sidebar-host--embedded {
+  flex: 0 0 auto;
   width: 300px;
+  min-width: 300px;
+  min-height: 0;
+  height: 100%;
+}
+
+.wd-sidebar--embedded {
+  width: 100%;
+  height: 100%;
   border-right: 1px solid color-mix(in srgb, var(--line, var(--md-outline-variant)) 88%, var(--text) 12%);
   background: transparent;
 }

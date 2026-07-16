@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ChevronRight, Feather, Plus, Sparkles } from 'lucide-vue-next'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { onboardingService } from '@renderer/services/novel/onboarding-service'
 import { navigate } from '@renderer/router'
 import { useNovelStore } from '@renderer/stores/novel'
 import {
@@ -26,13 +27,21 @@ import ListPagination from '@renderer/components/shared/ListPagination.vue'
 import { openReadingWindow } from '@renderer/services/reading-service'
 import WritingModeSelectModal from '@renderer/novel/components/shared/WritingModeSelectModal.vue'
 import { useCreateNovelProject } from '@renderer/novel/composables/useCreateNovelProject'
+import { requestTaskView } from '@renderer/services/task-navigation-service'
 import type { WritingMode } from '@shared/novel/types'
 import type { CreateProjectMaterialSelection } from '@renderer/novel/composables/useCreateNovelProject'
 
 const novelStore = useNovelStore()
 const { t, currentLocale } = useI18n()
 const activityDateLocale = computed(() => resolveLocaleDateString(currentLocale.value))
-const { showModeModal, isCreating, openCreateModal, closeCreateModal, createWithMode } = useCreateNovelProject()
+const {
+  showModeModal,
+  isCreating,
+  openCreateModal,
+  closeCreateModal,
+  createWithMode,
+  createDevTest,
+} = useCreateNovelProject()
 
 const novels = ref<HomeNovelCard[]>([])
 const bookshelfNovels = ref<ReturnType<typeof mapNovelsForHomeList>>([])
@@ -173,6 +182,14 @@ function openCreateNovel() {
 
 async function handleCreateWithMode(mode: WritingMode, materials: CreateProjectMaterialSelection) {
   try {
+    const onboardingState = onboardingService.getState()
+    if (onboardingState.status === 'active' && onboardingState.step === 'confirm_create') {
+      await onboardingService.createOnboardingProject()
+      closeCreateModal()
+      await loadDashboard()
+      navigate('/bookshelf')
+      return
+    }
     const project = await createWithMode(mode, {
       materials,
       onCreated: async () => {
@@ -180,6 +197,21 @@ async function handleCreateWithMode(mode: WritingMode, materials: CreateProjectM
       },
     })
     if (project) navigate(`/detail/${project.id}`)
+  } catch (error) {
+    alert(error instanceof Error ? error.message : t('home.createFailed'))
+  }
+}
+
+async function handleCreateDevTest() {
+  try {
+    const project = await createDevTest({
+      onCreated: async () => {
+        await loadDashboard()
+      },
+    })
+    if (!project) return
+    requestTaskView(project.id, { type: 'writing_desk' })
+    navigate(`/detail/${project.id}`)
   } catch (error) {
     alert(error instanceof Error ? error.message : t('home.createFailed'))
   }
@@ -270,6 +302,20 @@ function startNovelBubble() {
   }, 680)
 }
 
+function handleOnboardingPrepareCommand() {
+  const command = onboardingService.consumePrepareCommand()
+  if (!command) return
+  if (command.type === 'open_create_modal') {
+    openCreateModal()
+    return
+  }
+  if (command.type === 'close_create_modal') {
+    closeCreateModal()
+  }
+}
+
+let unsubscribeOnboardingPrepare: (() => void) | undefined
+
 onMounted(() => {
   void loadDashboard()
   refreshActivityLogs()
@@ -281,9 +327,14 @@ onMounted(() => {
   typingTimer = window.setInterval(tickTyping, 52)
   scheduleNovelBubble(1400)
   startCarousel()
+  unsubscribeOnboardingPrepare = onboardingService.subscribe(() => {
+    handleOnboardingPrepareCommand()
+  })
+  handleOnboardingPrepareCommand()
 })
 
 onUnmounted(() => {
+  unsubscribeOnboardingPrepare?.()
   if (sloganTimer) window.clearInterval(sloganTimer)
   if (typingTimer) window.clearInterval(typingTimer)
   if (carouselTimer) window.clearInterval(carouselTimer)
@@ -315,7 +366,7 @@ watch(currentLocale, () => {
             <span class="typing-caret"></span>
           </p>
           <div class="hero-actions">
-            <button type="button" class="primary-action" @click="openCreateNovel">
+            <button type="button" class="primary-action" data-onboarding="home-create" @click="openCreateNovel">
               <Sparkles :size="25" />
               <span>{{ t('home.actions.create') }}</span>
             </button>
@@ -483,5 +534,6 @@ watch(currentLocale, () => {
     :creating="isCreating"
     @close="closeCreateModal"
     @confirm="handleCreateWithMode"
+    @confirm-dev-test="handleCreateDevTest"
   />
 </template>

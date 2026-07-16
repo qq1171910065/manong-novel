@@ -95,6 +95,26 @@ export function confirm(options: AppDialogConfirmOptions | string): Promise<bool
   })
 }
 
+export type AppDialogDeleteOptions = Omit<AppDialogConfirmOptions, 'tone' | 'message'> & {
+  /** 未传 message 时，用 name 生成默认删除文案 */
+  name?: string
+  message?: string
+}
+
+/** 危险删除确认：统一 danger 毛玻璃弹窗文案结构 */
+export function confirmDelete(options: AppDialogDeleteOptions = {}): Promise<boolean> {
+  const name = options.name?.trim()
+  return confirm({
+    title: options.title ?? '确认删除',
+    message: options.message ?? (name ? `确定要删除「${name}」吗？` : '确定要删除吗？'),
+    detail: options.detail ?? '此操作无法撤销',
+    confirmText: options.confirmText ?? '确认删除',
+    cancelText: options.cancelText ?? '取消',
+    content: options.content,
+    tone: 'danger',
+  })
+}
+
 export function choose(options: AppDialogChooseOptions): Promise<AppDialogChooseResult> {
   return new Promise((resolve) => {
     openDialog(
@@ -171,5 +191,5 @@ export function useAppDialogState() {
 }
 
 export function useAppDialog() {
-  return { confirm, choose, alert }
+  return { confirm, confirmDelete, choose, alert }
 }

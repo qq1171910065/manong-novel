@@ -52,6 +52,8 @@ function restoreTaskView(phase?: TaskViewPhase) {
 
 defineExpose({
   restoreTaskView,
+  runOnboardingConfirmAndGenerate: () => modeRef.value?.runOnboardingConfirmAndGenerate?.(),
+  handleOnboardingSubmit: (value: string) => modeRef.value?.handleOnboardingSubmit?.(value),
 })
 </script>
 
@@ -74,6 +76,7 @@ defineExpose({
           v-if="chrome.toolbarKind === 'inspiration_chat'"
           type="button"
           class="novel-modal__toolbar-btn md-ripple"
+          data-onboarding="inspiration-confirm-blueprint"
           :disabled="chrome.confirmBlueprintDisabled"
           @click="modeRef?.enterBlueprintConfirmation()"
         >
@@ -111,7 +114,12 @@ defineExpose({
         <button type="button" class="novel-btn novel-btn--text" @click="modeRef?.backToConversation()">
           返回继续改设定
         </button>
-        <button type="button" class="novel-btn novel-btn--primary" @click="modeRef?.handleStartBlueprintGeneration()">
+        <button
+          type="button"
+          class="novel-btn novel-btn--primary"
+          data-onboarding="inspiration-generate-blueprint"
+          @click="modeRef?.handleStartBlueprintGeneration()"
+        >
           生成蓝图
         </button>
       </template>
@@ -131,6 +139,7 @@ defineExpose({
         <button
           type="button"
           class="novel-btn novel-btn--primary"
+          data-onboarding="inspiration-write-blueprint"
           :disabled="chrome.footerBusy"
           @click="modeRef?.handleConfirmBlueprint()"
         >

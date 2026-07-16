@@ -51,21 +51,20 @@ function choiceButtonClass(variant?: 'default' | 'primary' | 'danger') {
   <NovelDialogShell
     :model-value="state.open"
     :title="state.title"
-    variant="form"
+    variant="confirm"
     :mask-closable="false"
     show-footer
     :footer-stack="state.mode === 'choose' && state.actionsLayout === 'stack'"
     @update:model-value="(value) => { if (!value) dismiss() }"
   >
-    <div class="app-dialog__head">
+    <div class="app-dialog__content">
       <div class="novel-dialog__icon" :class="iconClass">
         <component :is="iconComponent" :size="20" />
       </div>
+      <p class="app-dialog__message">{{ state.message }}</p>
+      <p v-if="state.detail" class="app-dialog__detail">{{ state.detail }}</p>
+      <component :is="state.content" v-if="state.content" />
     </div>
-
-    <p class="app-dialog__message">{{ state.message }}</p>
-    <p v-if="state.detail" class="app-dialog__detail">{{ state.detail }}</p>
-    <component :is="state.content" v-if="state.content" />
 
     <label v-if="state.mode === 'choose' && state.rememberLabel" class="app-dialog__remember">
       <input v-model="state.rememberChecked" type="checkbox" />
@@ -106,8 +105,11 @@ function choiceButtonClass(variant?: 'default' | 'primary' | 'danger') {
 </template>
 
 <style scoped>
-.app-dialog__head {
-  margin-bottom: 12px;
+.app-dialog__content {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
 }
 
 .app-dialog__message {
@@ -119,10 +121,10 @@ function choiceButtonClass(variant?: 'default' | 'primary' | 'danger') {
 }
 
 .app-dialog__detail {
-  margin: 10px 0 0;
+  margin: 0;
   color: #65709f;
   font-size: 13px;
-  line-height: 1.7;
+  line-height: 1.65;
   white-space: pre-wrap;
 }
 

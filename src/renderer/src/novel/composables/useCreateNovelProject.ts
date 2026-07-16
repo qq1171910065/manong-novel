@@ -8,6 +8,7 @@ import {
   type CreateProjectMaterialSelection,
 } from '@renderer/services/novel/material-library-apply'
 import { NovelAPI } from '@renderer/services/novel/api'
+import { createDevTestProject } from '@renderer/services/novel/dev-test-project-service'
 import { useNovelStore } from '@renderer/stores/novel'
 
 export type { CreateProjectMaterialSelection }
@@ -65,11 +66,31 @@ export function useCreateNovelProject() {
     }
   }
 
+  /** 仅 DEV：创建预填完整设定的测试项目，可直接写作 */
+  async function createDevTest(
+    options?: {
+      onCreated?: (project: NovelProject) => void | Promise<void>
+    }
+  ): Promise<NovelProject | null> {
+    if (!import.meta.env.DEV || isCreating.value) return null
+    isCreating.value = true
+    try {
+      const project = await createDevTestProject()
+      novelStore.currentProject = project
+      await options?.onCreated?.(project)
+      showModeModal.value = false
+      return project
+    } finally {
+      isCreating.value = false
+    }
+  }
+
   return {
     showModeModal,
     isCreating,
     openCreateModal,
     closeCreateModal,
     createWithMode,
+    createDevTest,
   }
 }

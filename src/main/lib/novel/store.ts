@@ -5,6 +5,7 @@ import { getAppHomeDir } from '../app-home'
 import { NOVEL_STORE_KEY, NOVEL_STORE_VERSION } from '@shared/novel/constants'
 import { PROJECT_SAVE_CONFLICT } from '@shared/novel/project-persistence'
 import { reconcileStaleChapterStatuses } from '@shared/novel/stale-chapter-recovery'
+import { slimProjectForReading } from '@shared/novel/reading-project'
 import type {
   NovelResult,
   Chapter,
@@ -109,6 +110,12 @@ export class NovelStore {
       this.write(store)
     }
     return { ok: true, data: project }
+  }
+
+  getProjectForReading(projectId: string): NovelResult<NovelProject> {
+    const projectResult = this.getProject(projectId)
+    if (!projectResult.ok) return projectResult
+    return { ok: true, data: slimProjectForReading(projectResult.data) }
   }
 
   createProject(
@@ -224,7 +231,9 @@ export class NovelStore {
       return { ok: false, error: projectResult.error }
     }
     const chapter = ensureChapter(projectResult.data, chapterNumber)
-    this.saveProject(projectResult.data)
+    if (!chapter.content?.trim()) {
+      this.saveProject(projectResult.data)
+    }
     return { ok: true, data: chapter }
   }
 

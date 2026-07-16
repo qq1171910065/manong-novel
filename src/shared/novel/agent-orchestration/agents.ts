@@ -44,6 +44,13 @@ export const AGENT_REGISTRY: Record<AgentId, AgentDefinition> = {
     writeScopes: ['blueprint'],
     pipelineSteps: ['blueprint_outline'],
   },
+  import_analyst: {
+    id: 'import_analyst',
+    label: '导入分析师',
+    role: '长任务协调：分片语义抽取子代理 + 校验子代理，提取并甄别角色/地点/阵营后再交蓝图',
+    writeScopes: ['blueprint'],
+    pipelineSteps: ['import_parse'],
+  },
   chapter_director: {
     id: 'chapter_director',
     label: '章节导演',

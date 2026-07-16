@@ -48,6 +48,8 @@ let appConfig: MntoolsAppConfig | null = null
 let onLoginSuccessCallback: ((session: PortalSession) => void) | null = null
 /** 登录窗 ↔ 主窗切换期间，避免 login closed 误触发 app.quit() */
 let windowPhaseTransitionDepth = 0
+/** 登出时允许主窗真正关闭（绕过托盘/询问逻辑） */
+let allowMainWindowForceClose = false
 
 function beginWindowPhaseTransition(): () => void {
   windowPhaseTransitionDepth += 1
@@ -59,7 +61,7 @@ function beginWindowPhaseTransition(): () => void {
   }
 }
 
-function isWindowPhaseTransitioning(): boolean {
+export function isWindowPhaseTransitioning(): boolean {
   return windowPhaseTransitionDepth > 0
 }
 
@@ -237,7 +239,7 @@ export function createMainWindow(): BrowserWindow {
   mainWindow.on('unmaximize', notifyMaximized)
 
   mainWindow.on('close', (event) => {
-    if (isAppQuitting()) return
+    if (isAppQuitting() || allowMainWindowForceClose) return
     event.preventDefault()
     void handleMainWindowClose(getMainWindow)
   })
@@ -277,20 +279,33 @@ export function registerLoginSuccessHandler(): void {
   ipcMain.handle('auth:logout', () => {
     if (isScreenshotMode()) return { ok: true }
     const endTransition = beginWindowPhaseTransition()
-    try {
-      setStoredSession(null)
-      clearNovelSession()
-      const main = getMainWindow()
-      if (main && !main.isDestroyed()) {
-        main.removeAllListeners('close')
-        main.destroy()
-        mainWindow = null
-        closeDatabase()
-      }
-      createLoginWindow()
-    } finally {
+    setStoredSession(null)
+    clearNovelSession()
+    closeReadingWindow()
+    // 先建登录小窗，避免短暂无窗触发 window-all-closed → app.quit()
+    createLoginWindow()
+
+    const main = getMainWindow()
+    if (!main || main.isDestroyed()) {
       finishWindowPhaseTransition(endTransition)
+      return { ok: true }
     }
+
+    // 勿在 IPC 回调内同步销毁发起方窗口，否则 invoke 可能卡住、主窗关不掉
+    main.hide()
+    mainWindow = null
+    const win = main
+    setImmediate(() => {
+      allowMainWindowForceClose = true
+      try {
+        if (!win.isDestroyed()) win.close()
+        if (!win.isDestroyed()) win.destroy()
+      } finally {
+        allowMainWindowForceClose = false
+        closeDatabase()
+        endTransition()
+      }
+    })
     return { ok: true }
   })
 }

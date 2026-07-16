@@ -131,6 +131,7 @@ import RelationshipGraphChart from './RelationshipGraphChart.vue'
 import RelationshipFormModal from './RelationshipFormModal.vue'
 import { NovelAPI } from '@renderer/services/novel/api'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
+import { confirmDelete } from '@renderer/composables/useAppDialog'
 import { useI18n } from '@renderer/composables/useI18n'
 import { randomUUID } from '@renderer/utils/id'
 import type { ProjectModelPrefs } from '@renderer/services/novel/project-model'
@@ -450,7 +451,12 @@ async function deleteRelationship(index: number) {
   const label = rel
     ? `${rel.character_from || '?'} → ${rel.character_to || '?'}`
     : t('novelDetail.relationships.thisRelation')
-  const confirmed = await globalAlert.showConfirm(t('novelDetail.common.confirmDelete', { name: label }), t('novelDetail.relationships.deleteTitle'))
+  const confirmed = await confirmDelete({
+    title: t('novelDetail.common.confirmDeleteTitle'),
+    message: t('novelDetail.common.confirmDelete', { name: label }),
+    detail: t('novelDetail.common.confirmDeleteDetail'),
+    confirmText: t('novelDetail.common.confirmDeleteBtn'),
+  })
   if (!confirmed) return
 
   const list = relationships.value.filter((_, i) => i !== index)

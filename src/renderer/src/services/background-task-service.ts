@@ -69,17 +69,69 @@ function hydrateTasks(): void {
           message: task.message || translate('backgroundTask.restartPaused'),
         }
       })
+    // 启动时合并同一作品的多条智能解析为稳定槽
+    const importProjectIds = [
+      ...new Set(
+        tasks.value
+          .filter((task) => task.workflowId === 'import_parse')
+          .map((task) => task.projectId)
+      ),
+    ]
+    for (const projectId of importProjectIds) {
+      collapseImportParseBackgroundTasks(projectId)
+    }
   } catch {
     tasks.value = []
   }
 }
 
-hydrateTasks()
-
 function taskId(kind: BackgroundTaskKind, projectId: string, extra?: string): string {
   if (kind === 'agent_workflow' && extra) return extra
   return `${kind}:${projectId}`
 }
+
+/** 智能解析按作品固定任务槽，续跑/优化复用同一条，不新开任务行 */
+export function importParseBackgroundTaskId(projectId: string): string {
+  return `import_parse:${projectId}`
+}
+
+export function findImportParseBackgroundTask(projectId: string): BackgroundTask | undefined {
+  const stable = tasks.value.find((item) => item.id === importParseBackgroundTaskId(projectId))
+  if (stable) return stable
+  // 兼容旧版：曾用 agent_${timestamp}_n 作为 id
+  return tasks.value.find(
+    (item) => item.projectId === projectId && item.workflowId === 'import_parse'
+  )
+}
+
+/** 合并同一作品下多余的智能解析任务行，保留最早 startedAt，并升格为稳定 id */
+export function collapseImportParseBackgroundTasks(projectId: string): number | undefined {
+  const keepId = importParseBackgroundTaskId(projectId)
+  const related = tasks.value.filter(
+    (item) => item.projectId === projectId && item.workflowId === 'import_parse'
+  )
+  if (!related.length) return undefined
+
+  const earliest = Math.min(...related.map((item) => item.startedAt))
+  const keeper = related.find((item) => item.id === keepId) ?? related[0]
+  const nextKeeper: BackgroundTask = {
+    ...keeper,
+    id: keepId,
+    startedAt: earliest,
+    updatedAt: Date.now(),
+  }
+
+  tasks.value = [
+    nextKeeper,
+    ...tasks.value.filter(
+      (item) => !(item.projectId === projectId && item.workflowId === 'import_parse')
+    ),
+  ]
+  persistTasks()
+  return earliest
+}
+
+hydrateTasks()
 
 function touch(task: BackgroundTask): BackgroundTask {
   return { ...task, updatedAt: Date.now() }
@@ -162,6 +214,20 @@ function localizedWorkflowLabel(task: BackgroundTask): string | null {
 
 export function backgroundTaskProgressLabel(task: BackgroundTask): string | null {
   if (task.kind === 'agent_workflow') {
+    if (task.workflowId === 'import_parse' && task.totalCount > 0) {
+      // 摘要阶段用「章」；角色分片等用通用分数，避免蓝图阶段残留 2/3 被标成章
+      const looksLikeChapters =
+        task.totalCount >= 8 || /摘要|章/.test(task.message || '')
+      return looksLikeChapters
+        ? translate('backgroundTask.progressChapters', {
+            completed: task.completedCount,
+            total: task.totalCount,
+          })
+        : translate('backgroundTask.progressUnits', {
+            completed: task.completedCount,
+            total: task.totalCount,
+          })
+    }
     const agent = localizedAgentLabel(task)
     const workflow = localizedWorkflowLabel(task)
     if (agent && workflow) return `${workflow} · ${agent}`
@@ -268,7 +334,10 @@ export function backgroundTaskSummary(task: BackgroundTask): string {
 
 export type BackgroundTaskDetailRow = { key: string; value: string }
 
-export function backgroundTaskDetailRows(task: BackgroundTask): BackgroundTaskDetailRow[] {
+export function backgroundTaskDetailRows(
+  task: BackgroundTask,
+  nowMs: number = Date.now()
+): BackgroundTaskDetailRow[] {
   const rows: BackgroundTaskDetailRow[] = [
     { key: 'type', value: backgroundTaskKindLabel(task.kind) },
     { key: 'status', value: backgroundTaskStatusLabel(task.status) },
@@ -302,9 +371,10 @@ export function backgroundTaskDetailRows(task: BackgroundTask): BackgroundTaskDe
     rows.push({ key: 'completion', value: `${Math.round(task.progressPercent)}%` })
   }
 
+  const durationEnd = task.status === 'running' ? nowMs : task.updatedAt
   rows.push({ key: 'started', value: formatTaskTime(task.startedAt) })
   rows.push({ key: 'updated', value: formatTaskTime(task.updatedAt) })
-  rows.push({ key: 'duration', value: formatDurationMs(task.updatedAt - task.startedAt) })
+  rows.push({ key: 'duration', value: formatDurationMs(Math.max(0, durationEnd - task.startedAt)) })
 
   if (task.message) {
     rows.push({ key: 'message', value: task.message })

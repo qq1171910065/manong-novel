@@ -60,15 +60,11 @@
 </template>
 
 <script setup lang="ts">
-import { useRouter } from '@renderer/novel/composables/useNovelRouter'
-import { performAuthLogout } from '@renderer/services/auth-session'
+import { authApi } from '@renderer/services/auth'
 import type { NovelProject } from '@renderer/services/novel/api'
 
-const router = useRouter()
-
 const handleLogout = () => {
-  void performAuthLogout()
-  router.push('/login')
+  void authApi.logout()
 }
 
 interface Props {

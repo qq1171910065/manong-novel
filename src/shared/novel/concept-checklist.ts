@@ -700,8 +700,9 @@ export function buildSimpleModeAutoDesignSupplement(
 - 用户只需提供核心灵感；**其余设定由你主动设计**并写入 checklist_answers（类型、文风、主角、冲突、催化事件、篇幅）
 - **禁止**像填表一样逐项盘问；每轮须**尽可能多**勾选 checklist，一次性补齐所有可推断项
 - ai_message 以展示你的设计方案 + 邀请用户确认/微调为主，而非连续追问题
-- 仅当存在**互斥且无法推断**的关键分岔（如轻松治愈 vs 黑暗悬疑）时才用 single_choice，且一次只问 1 个分岔
-- ui_control 优先 info_display（方案汇总待确认）或 text_input（「告诉我哪里要改」）；避免连续多轮选项轰炸
+- 方案展示后**默认**用 single_choice（2–3 个）：含「就按这个继续」+ 1–2 个具体微调方向；用户应能一路点选走完设定
+- 互斥关键分岔一次只问 1 个；选项文案须可直接写入 checklist（短句、贴合已有设定）
+- 仅当无法给出有差异的方向时才用 text_input；避免无意义凑选项
 - 篇幅未指定时默认 ${SIMPLE_MODE_DEFAULT_CHAPTERS} 章左右短篇，写入 chapter_count
 - 你设计的 checklist_answers 必须是**原创提炼**（1-2 句），不得粘贴用户原话
 ${

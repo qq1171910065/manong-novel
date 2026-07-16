@@ -5,6 +5,7 @@ import {
   findConflictingLock,
   locksConflict,
   releaseTaskLocks,
+  shouldReapStaleAgentLock,
 } from './resource-lock'
 
 describe('resource-lock', () => {
@@ -55,5 +56,27 @@ describe('resource-lock', () => {
 
     locks = releaseTaskLocks(locks, 'task1')
     expect(findConflictingLock(key, locks)).toBeUndefined()
+  })
+
+  it('reaps stale locks when workflow is no longer active', () => {
+    const lock = {
+      key: buildResourceKey('concept', 'p1'),
+      keyString: 'concept:p1',
+      ownerTaskId: 'task-failed',
+      ownerAgentId: 'concept_editor' as const,
+      ownerAgentLabel: '设定编辑员',
+      workflowId: 'concept_turn' as const,
+      acquiredAt: Date.now(),
+      label: '整合设定文档',
+    }
+    const active = new Set<string>()
+    const runs = new Map([['task-failed', 'failed' as const]])
+
+    expect(shouldReapStaleAgentLock(lock, active, runs)).toBe(true)
+    expect(shouldReapStaleAgentLock(lock, new Set(['task-failed']), runs)).toBe(false)
+    expect(
+      shouldReapStaleAgentLock(lock, active, new Map([['task-failed', 'running' as const]]))
+    ).toBe(false)
+    expect(shouldReapStaleAgentLock(lock, active, new Map())).toBe(true)
   })
 })

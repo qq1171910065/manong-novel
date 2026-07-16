@@ -3,6 +3,25 @@ export type WritingMode = 'simple' | 'full'
 /** 项目来源：手动创建 或 txt 文件导入 */
 export type ProjectSourceType = 'created' | 'txt_import'
 
+/** 智能解析断点，用于长篇中断后续跑 */
+export interface ImportParseCheckpoint {
+  phase: 'characters' | 'blueprint' | 'summaries'
+  /** 蓝图阶段已完成的子步骤（含本步）；用于中断后续跑 */
+  blueprintSubstep?: 'meta' | 'world' | 'world_items' | 'cast' | 'relationships' | 'done'
+  chapterCount?: number
+  verifiedCharacters?: string[]
+  potentialCharacters?: string[]
+  potentialLocations?: string[]
+  potentialFactions?: string[]
+  /** 已生成的章节摘要 chapter_number -> summary */
+  summaries?: Record<string, string>
+  /** 摘要阶段下一待处理批号（0-based） */
+  nextBatchIndex?: number
+  updatedAt?: string
+}
+
+export type ImportBlueprintSubstep = NonNullable<ImportParseCheckpoint['blueprintSubstep']>
+
 export interface NovelProject {
   id: string
   title: string
@@ -13,6 +32,8 @@ export interface NovelProject {
   import_parsed?: boolean
   /** txt 导入的原始全文，用于重新分章与深度解析 */
   import_raw_text?: string
+  /** 智能解析中断后的断点（摘要批次等），完成后清空 */
+  import_parse_checkpoint?: ImportParseCheckpoint
   /** 书写模式：简易版快速成书，工程版完整设定 */
   writing_mode?: WritingMode
   cover_url?: string

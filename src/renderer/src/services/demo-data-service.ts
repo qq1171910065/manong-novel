@@ -75,6 +75,14 @@ function applyPolishedChapterOne(project: NovelProject, content: string): void {
   chapter.word_count = text.replace(/\s/g, '').length
 }
 
+/** 对已有项目做示例润色（引导尾步复用） */
+export async function polishDemoProjectForSeed(
+  project: NovelProject,
+  options?: DemoDataImportOptions
+): Promise<boolean> {
+  return polishDemoProject(project, options)
+}
+
 async function polishDemoProject(
   project: NovelProject,
   options?: DemoDataImportOptions

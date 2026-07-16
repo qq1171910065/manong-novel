@@ -43,6 +43,34 @@ export function parseCoolApiEnvelope(raw: unknown): ApiResponse<unknown> | null 
   return null
 }
 
+/** 平台 API 响应无法解析为 { code, data } 时的可读说明 */
+export function describeUnexpectedPortalResponse(
+  status: number,
+  raw: unknown,
+  baseUrl?: string
+): string {
+  const addr = baseUrl?.trim()
+  if (status === 502 || status === 503 || status === 504) {
+    return addr
+      ? `平台服务暂时不可用（${addr}，HTTP ${status}），请确认后台已启动`
+      : `平台服务暂时不可用（HTTP ${status}），请确认后台已启动且平台服务地址正确`
+  }
+  if (status >= 400) {
+    return addr
+      ? `平台请求失败（${addr}，HTTP ${status}）`
+      : `平台请求失败（HTTP ${status}）`
+  }
+  if (typeof raw === 'string') {
+    const t = raw.trim()
+    if (/^<!DOCTYPE/i.test(t) || /^<html/i.test(t)) {
+      return addr
+        ? `平台服务返回了网页而非 API 数据，请检查平台服务地址是否正确（当前：${addr}）`
+        : '平台服务返回了网页而非 API 数据，请检查平台服务地址是否正确'
+    }
+  }
+  return '接口返回格式异常'
+}
+
 const REFRESH_PATH = '/portal/open/refreshToken'
 
 export async function refreshSessionFromStorage(): Promise<RefreshSessionResult> {

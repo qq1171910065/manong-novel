@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { AlertTriangle } from 'lucide-vue-next'
 import NovelDialogShell from '@renderer/components/common/NovelDialogShell.vue'

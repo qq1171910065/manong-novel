@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Download, Sparkles, Trash2, Upload } from 'lucide-vue-next'
-import { confirm } from '@renderer/composables/useAppDialog'
+import { Download, Sparkles, Trash2, Upload, Compass } from 'lucide-vue-next'
+import { confirm, confirmDelete } from '@renderer/composables/useAppDialog'
+import { useI18n } from '@renderer/composables/useI18n'
 import FactoryResetDialog from './FactoryResetDialog.vue'
 import {
   dataManagementService,
@@ -9,9 +10,12 @@ import {
   type DataManagementStats,
 } from '@renderer/services/data-management-service'
 import { importDemoData } from '@renderer/services/demo-data-service'
+import { onboardingService } from '@renderer/services/novel/onboarding-service'
 import { useNovelStore } from '@renderer/stores/novel'
+import { navigate } from '@renderer/router'
 
 const novelStore = useNovelStore()
+const { t } = useI18n()
 
 const emit = defineEmits<{
   error: [message: string]
@@ -78,12 +82,11 @@ async function importData() {
 }
 
 async function clearProjects() {
-  if (!(await confirm({
+  if (!(await confirmDelete({
     title: '清除全部小说项目',
     message: '确定清除全部小说项目与阅读进度吗？',
-    detail: '此操作不可恢复。',
-    tone: 'danger',
-    confirmText: '清除',
+    detail: '此操作无法撤销',
+    confirmText: '确认清除',
   }))) return
   await runDataAction(() => dataManagementService.clearProjects(), '全部小说项目已清除。')
 }
@@ -118,6 +121,17 @@ async function importSampleData() {
     demoImportBusy.value = false
     demoImportProgress.value = ''
   }
+}
+
+async function restartOnboarding() {
+  if (!(await confirm({
+    title: t('onboarding.settings.title'),
+    message: t('onboarding.settings.desc'),
+    confirmText: t('onboarding.settings.restart'),
+  }))) return
+  onboardingService.resetForReplay()
+  dataMessage.value = t('onboarding.settings.restarted')
+  navigate('/home')
 }
 
 async function clearLogs() {
@@ -189,6 +203,22 @@ defineExpose({ reload: loadStats })
         </button>
       </div>
       <p v-if="demoImportProgress" class="data-demo-progress">{{ demoImportProgress }}</p>
+    </section>
+
+    <section class="data-block data-block--demo">
+      <h4>{{ t('onboarding.settings.title') }}</h4>
+      <p class="data-demo-desc">{{ t('onboarding.settings.desc') }}</p>
+      <div class="data-actions">
+        <button
+          type="button"
+          class="data-action data-action--demo"
+          :disabled="dataBusy || demoImportBusy"
+          @click="restartOnboarding"
+        >
+          <Compass :size="16" />
+          {{ t('onboarding.settings.restart') }}
+        </button>
+      </div>
     </section>
 
     <section class="data-block">

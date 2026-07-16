@@ -178,7 +178,7 @@ import { useNovelStore } from '@renderer/stores/novel'
 import type { ChapterGenerationResponse } from '@renderer/services/novel/api'
 import { NovelAPI } from '@renderer/services/novel/api'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
-import { confirm } from '@renderer/composables/useAppDialog'
+import { confirmDelete } from '@renderer/composables/useAppDialog'
 import * as writing from '@renderer/services/novel/writing-service'
 import { novelClient } from '@renderer/services/novel/client'
 import {
@@ -603,14 +603,12 @@ const cancelChapterTask = () => {
 const deleteChapter = async (chapterNumbers: number | number[]) => {
   const numbersToDelete = Array.isArray(chapterNumbers) ? chapterNumbers : [chapterNumbers]
   const confirmationMessage = numbersToDelete.length > 1
-    ? `您确定要删除选中的 ${numbersToDelete.length} 个章节吗？这个操作无法撤销。`
-    : `您确定要删除第 ${numbersToDelete[0]} 章吗？这个操作无法撤销。`
+    ? `确定要删除选中的 ${numbersToDelete.length} 个章节吗？`
+    : `确定要删除第 ${numbersToDelete[0]} 章吗？`
 
-  const accepted = await confirm({
+  const accepted = await confirmDelete({
     title: '确认删除章节',
     message: confirmationMessage,
-    confirmText: '确认删除',
-    tone: 'danger',
   })
   if (!accepted) return
 
@@ -645,19 +643,23 @@ function listSubsequentWrittenChapters(chapterNumber: number): number[] {
 const clearChapterForRewrite = async (chapterNumber: number) => {
   if (!project.value) return
 
-  const confirmed = await globalAlert.showConfirm(
-    `确定清除第 ${chapterNumber} 章的正文？章节大纲会保留，可重新生成。`,
-    '清除重写'
-  )
+  const confirmed = await confirmDelete({
+    title: '清除重写',
+    message: `确定清除第 ${chapterNumber} 章的正文吗？`,
+    detail: '章节大纲会保留，可重新生成。此操作无法撤销',
+    confirmText: '确认清除',
+  })
   if (!confirmed) return
 
   let numbersToClear = [chapterNumber]
   const subsequent = listSubsequentWrittenChapters(chapterNumber)
   if (subsequent.length > 0) {
-    const alsoClear = await globalAlert.showConfirm(
-      `第 ${chapterNumber} 章之后还有 ${subsequent.length} 章已写正文。为避免剧情脱节，建议一并清除。是否清除第 ${subsequent.join('、')} 章的正文？`,
-      '清除后续章节'
-    )
+    const alsoClear = await confirmDelete({
+      title: '清除后续章节',
+      message: `第 ${chapterNumber} 章之后还有 ${subsequent.length} 章已写正文。为避免剧情脱节，建议一并清除。`,
+      detail: `是否清除第 ${subsequent.join('、')} 章的正文？此操作无法撤销`,
+      confirmText: '确认清除',
+    })
     if (alsoClear) {
       numbersToClear = [chapterNumber, ...subsequent]
     }
@@ -1025,6 +1027,10 @@ onUnmounted(() => {
 }
 
 .writing-desk--embedded {
+  flex: 1 1 0;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
   border-radius: 0;
   background: transparent;
   animation: none;
@@ -1059,8 +1065,10 @@ onUnmounted(() => {
 .wd-desk__main-column {
   display: flex;
   flex-direction: column;
+  flex: 1 1 0;
   min-height: 0;
   min-width: 0;
+  width: 100%;
 }
 
 .wd-desk__footer {

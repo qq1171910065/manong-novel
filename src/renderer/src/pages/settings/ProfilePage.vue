@@ -8,6 +8,7 @@ import {
   Database,
   FileQuestion,
   Key,
+  Languages,
   Mail,
   MessageSquare,
   Shield,
@@ -183,6 +184,7 @@ const modelServiceTabs = [
 
 const settingTabs = [
   { id: 'settings-display' as PortalTab, label: '显示与界面', icon: SlidersHorizontal },
+  { id: 'settings-language' as PortalTab, label: '语言', icon: Languages },
   { id: 'settings-audio' as PortalTab, label: '声音', icon: Volume2 },
   { id: 'settings-data' as PortalTab, label: '数据管理', icon: Database },
 ]
@@ -200,6 +202,10 @@ const settingsTabMeta: Record<SettingsTab, { title: string; desc: string }> = {
   'settings-display': {
     title: '显示与界面',
     desc: '缩放、动效与界面布局。',
+  },
+  'settings-language': {
+    title: '语言',
+    desc: '界面显示语言。',
   },
   'settings-audio': {
     title: '声音',

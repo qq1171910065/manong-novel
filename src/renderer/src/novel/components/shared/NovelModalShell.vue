@@ -18,6 +18,8 @@ const props = withDefaults(
     autoMinWidth?: 'sm' | 'md' | 'lg'
     /** 关闭时保留内容 DOM，避免子组件状态丢失 */
     keepContent?: boolean
+    /** 关闭按钮 data-onboarding 标记（引导用） */
+    closeDataOnboarding?: string
   }>(),
   {
     size: 'lg',
@@ -144,6 +146,7 @@ onUnmounted(() => {
                 type="button"
                 class="novel-modal__close"
                 aria-label="关闭"
+                :data-onboarding="closeDataOnboarding || undefined"
                 @click="emit('close')"
               >
                 <X :size="18" />

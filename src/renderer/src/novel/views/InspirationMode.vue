@@ -129,7 +129,7 @@
 
         <div
           class="novel-chat-log relative"
-          :class="{ 'novel-chat-log--choice': isChoiceMode }"
+          :class="{ 'novel-chat-log--choice': hasComposerFloat }"
           :style="choicesOffset > 0 ? { paddingBottom: `${choicesOffset}px` } : undefined"
           ref="chatArea"
         >
@@ -150,7 +150,7 @@
         <div
           class="novel-chat-input-area"
           :class="{
-            'novel-chat-input-area--choice': isChoiceMode,
+            'novel-chat-input-area--choice': hasComposerFloat,
             'novel-chat-input-area--preparing': isInitialLoading,
           }"
         >
@@ -167,8 +167,9 @@
             <button
               type="button"
               class="novel-btn novel-btn--primary inspiration-confirm-gate__btn"
+              data-onboarding="inspiration-confirm-blueprint"
               :disabled="!canEnterBlueprintConfirmation"
-              @click="enterBlueprintConfirmation"
+              @click="enterBlueprintConfirmation()"
             >
               确认蓝图设定
             </button>
@@ -178,6 +179,8 @@
             :loading="inputDisabled"
             :variant="isPolishMode ? 'polish' : 'chat'"
             :draft-storage-key="composerDraftKey"
+            :suggestion-chips="suggestionChips"
+            :suggestion-hint="suggestionHint"
             @submit="handleUserInput"
             @choices-height="choicesOffset = $event"
           />
@@ -282,12 +285,18 @@ import InspirationLoading from '@renderer/novel/components/InspirationLoading.vu
 import { globalAlert } from '@renderer/novel/composables/useAlert'
 import { useInspirationBlueprintFlow } from '@renderer/novel/composables/useInspirationBlueprintFlow'
 import { useI18n } from '@renderer/composables/useI18n'
+import { onboardingService } from '@renderer/services/novel/onboarding-service'
 import { isUnresolvedPolishAiMessage, resolveDisplayAiMessage, UNRESOLVED_AI_MESSAGE_PLACEHOLDER } from '@renderer/services/novel/json-utils'
 import { polishDebug, polishDebugWarn } from '@renderer/novel/utils/section-polish-debug'
 import { resolveUiControl } from '@renderer/novel/utils/chat-options'
 import { randomUUID } from '@renderer/utils/id'
 import { formatGatewayContentFilterError } from '@renderer/services/gateway-api'
 import { resolveWritingMode } from '@shared/novel/writing-mode'
+import {
+  buildInspirationSuggestionChips,
+  inspirationSuggestionTopicLabel,
+} from '@shared/novel/inspiration-suggestion-chips'
+import { isOnboardingDemoProject } from '@shared/novel/onboarding-inspiration-script'
 import {
   buildConceptBlueprintPreview,
   resolveConceptBriefForDisplay,
@@ -511,6 +520,35 @@ const inputDisabled = computed(
   () => isInitialLoading.value || isChatRequestInFlight.value || isPolishMaterializing.value
 )
 
+const suggestionChips = computed(() => {
+  if (isPolishMode.value || isChoiceMode.value || inputDisabled.value) return []
+  // 引导演示只走脚本选项，不用本地推荐碎片
+  if (isOnboardingDemoProject(novelStore.currentProject)) return []
+  const messages = chatMessages.value
+  const hasConversation = messages.some((m) => m.type === 'user' || (m.type === 'ai' && m.content.trim()))
+  return buildInspirationSuggestionChips({
+    mode: projectWritingMode.value,
+    state: displayConversationState.value,
+    hasConversation,
+    maxChips: 3,
+  })
+})
+
+const suggestionHint = computed(() => {
+  if (isPolishMode.value || isChoiceMode.value || !suggestionChips.value.length) return ''
+  const hasUser = chatMessages.value.some((m) => m.type === 'user')
+  if (!hasUser) return t('inspiration.suggestionHintStart')
+  if (checklistProgress.value.pending <= 0) return t('inspiration.suggestionHintComplete')
+  const topic = inspirationSuggestionTopicLabel(displayConversationState.value, projectWritingMode.value)
+  return topic
+    ? t('inspiration.suggestionHintTopic', { topic })
+    : t('inspiration.suggestionHintDefault')
+})
+
+const hasComposerFloat = computed(
+  () => isChoiceMode.value || suggestionChips.value.length > 0
+)
+
 const polishMaterializeChoiceControl = buildPolishMaterializeChoiceControl
 
 const resolvePolishDisplayMessage = (rawMessage: string): string => {
@@ -644,10 +682,14 @@ const backToConversation = () => {
   resumeConceptRevision()
 }
 
-const enterBlueprintConfirmation = async () => {
+const enterBlueprintConfirmation = async (options?: { skipPendingConfirm?: boolean }) => {
   if (!canEnterBlueprintConfirmation.value) return
 
-  if (checklistProgress.value.pending > 0) {
+  // 引导演示：脚本已收束设定，跳过「未标记完成」二次确认，避免挡住教练提示
+  const skipPendingConfirm =
+    Boolean(options?.skipPendingConfirm) || isOnboardingDemoProject(novelStore.currentProject)
+
+  if (!skipPendingConfirm && checklistProgress.value.pending > 0) {
     const confirmed = await globalAlert.showConfirm(
       `还有 ${checklistProgress.value.pending} 项设定未标记完成，仍要进入蓝图确认吗？`,
       '确认蓝图设定'
@@ -668,6 +710,53 @@ const enterBlueprintConfirmation = async () => {
 
   currentUIControl.value = { ...DEFAULT_UI_CONTROL }
   showBlueprintConfirmation.value = true
+}
+
+/** 引导演示：确认设定 → 预制蓝图写入；跳过二次 saveBlueprint，避免乐观锁冲突 */
+async function runOnboardingConfirmAndGenerate() {
+  await waitOnboardingChatIdle()
+  await enterBlueprintConfirmation({ skipPendingConfirm: true })
+  showBlueprintConfirmation.value = false
+  blueprintProgressMessage.value = ''
+  blueprintProgressDetail.value = null
+  try {
+    const response = await novelStore.runBlueprintGeneration({
+      onProgress: (progress) => {
+        blueprintGen.setProgress(progress.percent)
+        blueprintProgressMessage.value = progress.message
+        blueprintProgressDetail.value = progress
+      },
+    })
+    if (!response?.blueprint) {
+      throw new Error('演示蓝图生成失败')
+    }
+    completedBlueprint.value = response.blueprint
+    blueprintMessage.value = response.ai_message ?? ''
+    // 预制蓝图已在 generate 时整库落盘，不再走 confirm 二次保存
+    showBlueprint.value = false
+    completedBlueprint.value = null
+    blueprintMessage.value = ''
+    emit('blueprint-saved')
+    emit('close')
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw new Error('已取消蓝图生成')
+    }
+    showBlueprintConfirmation.value = true
+    throw error instanceof Error ? error : new Error(String(error))
+  } finally {
+    blueprintProgressDetail.value = null
+  }
+}
+
+async function waitOnboardingChatIdle(timeoutMs = 15000) {
+  const started = Date.now()
+  while (isChatRequestInFlight.value && Date.now() - started < timeoutMs) {
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 50))
+  }
+  if (isChatRequestInFlight.value) {
+    throw new Error('灵感对话仍在进行中，请稍后再试')
+  }
 }
 
 const resumeConceptRevision = () => {
@@ -747,7 +836,8 @@ const restartConceptSession = async (projectId: string) => {
 }
 
 const prepareConversationForProject = () => {
-  conversationStarted.value = true
+  // embedded：等 modalVisible 时再 start；切勿提前标 true，否则会跳过演示开场
+  conversationStarted.value = false
   isInitialLoading.value = false
   chatMessages.value = []
   currentTurn.value = 0
@@ -1159,9 +1249,17 @@ const handlePolishInput = async (userInput: any) => {
 
 runPolishMaterializeHolder.fn = runPolishMaterialize
 
+const resolveActiveProjectId = (): string | undefined =>
+  props.embedded ? props.projectId : novelStore.currentProject?.id
+
 const handleUserInput = async (userInput: any) => {
   if (isPolishMode.value) {
     await handlePolishInput(userInput)
+    return
+  }
+  const activeProjectId = resolveActiveProjectId()
+  if (!activeProjectId) {
+    globalAlert.showError('未选择项目，请返回书架重新打开作品', '项目未就绪')
     return
   }
   const draftId = randomUUID()
@@ -1201,7 +1299,7 @@ const handleUserInput = async (userInput: any) => {
           void scrollToBottom()
         },
       },
-    })
+    }, activeProjectId)
     activeAbortController = null
 
     if (isInitialLoading.value) {
@@ -1328,6 +1426,7 @@ defineExpose({
   backToConversation,
   backFromSectionPolishConfirmation,
   enterBlueprintConfirmation,
+  runOnboardingConfirmAndGenerate,
   handleRestart,
   handleStartBlueprintGeneration,
   handleConfirmBlueprint,
@@ -1335,7 +1434,29 @@ defineExpose({
   handleApplySectionPolish,
   resumeConceptRevision,
   restoreTaskView,
+  handleOnboardingSubmit: (value: string) => handleUserInput({ id: 'text_input', value }),
 })
+
+let unsubscribeOnboardingInspiration: (() => void) | undefined
+
+async function handleOnboardingInspirationCommand() {
+  const command = onboardingService.consumeInspirationCommand()
+  if (!command) return
+  try {
+    await waitOnboardingChatIdle()
+    if (command.type === 'submit') {
+      await handleUserInput({ id: 'text_input', value: command.value })
+      onboardingService.resolveInspirationCommand()
+      return
+    }
+    if (command.type === 'confirm_and_generate') {
+      await runOnboardingConfirmAndGenerate()
+      onboardingService.resolveInspirationCommand()
+    }
+  } catch (error) {
+    onboardingService.rejectInspirationCommand(error)
+  }
+}
 
 const scrollToBottom = async () => {
   await nextTick()
@@ -1350,6 +1471,9 @@ scrollToBottomHolder.fn = scrollToBottom
 
 const bootstrapProject = async (projectId: string) => {
   await novelStore.loadProject(projectId, props.embedded)
+  if (novelStore.currentProject?.id !== projectId) {
+    throw new Error(novelStore.error || '项目不存在')
+  }
   const hasHistory = (novelStore.currentProject?.conversation_history?.length ?? 0) > 0
   if (hasHistory) {
     await restoreConversation(projectId)
@@ -1363,6 +1487,7 @@ const bootstrapProject = async (projectId: string) => {
 const refreshEmbeddedSession = async (projectId: string) => {
   if (showBlueprint.value && completedBlueprint.value) return
   await novelStore.loadProject(projectId, true)
+  if (novelStore.currentProject?.id !== projectId) return
   const hasHistory = (novelStore.currentProject?.conversation_history?.length ?? 0) > 0
   if (hasHistory) {
     if (chatMessages.value.length === 0 || !conversationStarted.value) {
@@ -1370,8 +1495,9 @@ const refreshEmbeddedSession = async (projectId: string) => {
     }
     return
   }
-  if (!conversationStarted.value) {
-    prepareConversationForProject()
+  // 无历史：未开始，或仅 prepare 过空壳（无消息）时都要走开场
+  if (!conversationStarted.value || chatMessages.value.length === 0) {
+    await startConversationForProject(projectId)
   }
 }
 
@@ -1379,13 +1505,20 @@ watch(
   () => props.modalVisible,
   (visible, wasVisible) => {
     if (!props.embedded || isPolishMode.value || !props.projectId) return
-    if (visible && wasVisible === false) {
+    // wasVisible === undefined：首次挂载时弹窗已打开也要走开场
+    if (visible && wasVisible !== true) {
       void refreshEmbeddedSession(props.projectId)
     }
-  }
+  },
+  { immediate: true }
 )
 
 onMounted(async () => {
+  unsubscribeOnboardingInspiration = onboardingService.subscribe(() => {
+    void handleOnboardingInspirationCommand()
+  })
+  void handleOnboardingInspirationCommand()
+
   if (isPolishMode.value) {
     if (props.projectId && props.polishContext) {
       await initSectionPolishSession(props.projectId, props.polishContext)
@@ -1395,13 +1528,24 @@ onMounted(async () => {
 
   const projectId = props.embedded ? props.projectId : (route.query.project_id as string)
   if (projectId) {
-    await bootstrapProject(projectId)
+    try {
+      await bootstrapProject(projectId)
+    } catch (error) {
+      if (isAbortError(error)) return
+      console.error('加载灵感对话失败:', error)
+      globalAlert.showError(
+        `无法加载作品: ${error instanceof Error ? error.message : '未知错误'}`,
+        '加载失败'
+      )
+      resetInspirationMode(false)
+    }
     return
   }
   resetInspirationMode()
 })
 
 onUnmounted(() => {
+  unsubscribeOnboardingInspiration?.()
   if (!props.embedded) {
     abortActiveRequest()
   }

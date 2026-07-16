@@ -3,11 +3,15 @@ import { RotateCcw } from 'lucide-vue-next'
 import ProfileSectionLayout from './ProfileSectionLayout.vue'
 import { NButton } from '../../ui'
 
-defineProps<{
-  title: string
-  desc: string
-  saving?: boolean
-}>()
+withDefaults(
+  defineProps<{
+    title: string
+    desc: string
+    saving?: boolean
+    showReset?: boolean
+  }>(),
+  { showReset: true }
+)
 
 defineEmits<{
   reset: []
@@ -16,7 +20,7 @@ defineEmits<{
 
 <template>
   <ProfileSectionLayout :title="title" :desc="desc">
-    <template #actions>
+    <template v-if="showReset" #actions>
       <NButton quaternary size="small" :loading="saving" @click="$emit('reset')">
         <template #icon><RotateCcw :size="14" /></template>
         恢复默认

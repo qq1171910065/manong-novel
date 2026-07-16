@@ -8,6 +8,7 @@ import {
 import AppDialogBridge from '../components/common/AppDialogBridge.vue'
 import AppDialogHost from '../components/common/AppDialogHost.vue'
 import CustomAlertHost from '../components/common/CustomAlertHost.vue'
+import OnboardingHost from '../components/onboarding/OnboardingHost.vue'
 import DeveloperWechatModal from '../components/support/DeveloperWechatModal.vue'
 import { useDeveloperWechatModal } from '../composables/useDeveloperWechatModal'
 import { buildNaiveThemeOverrides } from './naive-theme'
@@ -24,6 +25,7 @@ const { showDeveloperWechat } = useDeveloperWechatModal()
         <AppDialogHost />
         <AppDialogBridge />
         <CustomAlertHost />
+        <OnboardingHost />
         <DeveloperWechatModal v-model="showDeveloperWechat" />
       </NMessageProvider>
     </NNotificationProvider>

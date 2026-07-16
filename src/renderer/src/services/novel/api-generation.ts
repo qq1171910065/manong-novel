@@ -1,7 +1,9 @@
 import type { BlueprintGenerationResponse, NovelProject } from '@shared/novel/types'
+import { applyOnboardingFullBlueprint } from '@shared/novel/onboarding'
+import { isOnboardingDemoProject } from '@shared/novel/onboarding-inspiration-script'
 import { getChapterGenProgressSnapshot } from '@renderer/novel/composables/chapter-generation-progress'
 import { novelClient } from './client'
-import { persistProject } from './project-persistence'
+import { isProjectSaveConflictError, persistProject } from './project-persistence'
 import { isAbortError } from './async-task-registry'
 import { applyProjectModelPrefs } from './project-model'
 import * as writing from './writing-service'
@@ -17,6 +19,10 @@ async function saveNovelProject(
   project: NovelProject,
   options?: { skipReplay?: boolean; expectedUpdatedAt?: string | null }
 ): Promise<NovelProject> {
+  // skipReplay 单用时不带乐观锁；显式 expectedUpdatedAt 仍校验
+  if (options?.skipReplay && options.expectedUpdatedAt === undefined) {
+    return persistProject(project, { skipReplay: true })
+  }
   return persistProject(project, {
     skipReplay: options?.skipReplay,
     expectedUpdatedAt: options?.expectedUpdatedAt ?? project.updated_at,
@@ -32,8 +38,37 @@ export async function generateBlueprintForProject(
   }
 ): Promise<BlueprintGenerationResponse> {
   ensureWritingRuntime()
-  const project = await novelClient.getProject(projectId)
+  let project = await novelClient.getProject(projectId)
   applyProjectModelPrefs(project, modelPrefs)
+
+  // 引导演示：写入预制蓝图，不调模型
+  if (isOnboardingDemoProject(project)) {
+    options?.onProgress?.({ percent: 40, message: '正在套用演示蓝图…', phase: 'synthesizing' })
+    let lastError: unknown
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        let current = await novelClient.getProject(projectId)
+        const loadedAt = current.updated_at
+        current = applyOnboardingFullBlueprint(current)
+        project = await saveNovelProject(current, {
+          expectedUpdatedAt: loadedAt,
+          skipReplay: true,
+        })
+        lastError = null
+        break
+      } catch (error) {
+        lastError = error
+        if (!isProjectSaveConflictError(error) || attempt === 2) throw error
+      }
+    }
+    if (lastError) throw lastError
+    options?.onProgress?.({ percent: 100, message: '演示蓝图已就绪', phase: 'done' })
+    return {
+      blueprint: project.blueprint || {},
+      ai_message: '演示模式已套用预制蓝图《青玉长歌》，可确认写入项目。',
+    }
+  }
+
   if (isMainGenerationAvailable()) {
     return runMainBlueprintGeneration(project, options)
   }

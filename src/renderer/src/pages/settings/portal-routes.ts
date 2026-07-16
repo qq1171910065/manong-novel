@@ -1,4 +1,8 @@
-export type SettingsTab = 'settings-display' | 'settings-audio' | 'settings-data'
+export type SettingsTab =
+  | 'settings-display'
+  | 'settings-language'
+  | 'settings-audio'
+  | 'settings-data'
 
 export type PortalTab =
   | 'overview'
@@ -18,12 +22,14 @@ export type PortalTab =
 
 const SETTINGS_SEGMENTS: Record<string, SettingsTab> = {
   display: 'settings-display',
+  language: 'settings-language',
   audio: 'settings-audio',
   data: 'settings-data',
 }
 
 const SETTINGS_TAB_TO_SEGMENT: Record<SettingsTab, string> = {
   'settings-display': 'display',
+  'settings-language': 'language',
   'settings-audio': 'audio',
   'settings-data': 'data',
 }
@@ -43,12 +49,18 @@ const PORTAL_TABS = new Set<string>([
   'model-debug',
   'model-stream',
   'settings-display',
+  'settings-language',
   'settings-audio',
   'settings-data',
 ])
 
 export function isSettingsTab(value: unknown): value is SettingsTab {
-  return value === 'settings-display' || value === 'settings-audio' || value === 'settings-data'
+  return (
+    value === 'settings-display' ||
+    value === 'settings-language' ||
+    value === 'settings-audio' ||
+    value === 'settings-data'
+  )
 }
 
 export function isPortalTab(value: unknown): value is PortalTab {

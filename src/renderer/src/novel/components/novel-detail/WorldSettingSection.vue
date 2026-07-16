@@ -186,6 +186,7 @@ import WorldListItemFormModal from './WorldListItemFormModal.vue'
 import { ensureWorldListItem } from '@renderer/services/novel/blueprint-asset'
 import { NovelAPI } from '@renderer/services/novel/api'
 import { globalAlert } from '@renderer/novel/composables/useAlert'
+import { confirmDelete } from '@renderer/composables/useAppDialog'
 import { useI18n } from '@renderer/composables/useI18n'
 import { randomUUID } from '@renderer/utils/id'
 import type { ProjectModelPrefs } from '@renderer/services/novel/project-model'
@@ -413,11 +414,12 @@ async function deleteItem(kind: ItemKind, index: number) {
   const list = kind === 'location' ? locations.value : factions.value
   const item = list[index]
   const label = item?.title || t('novelDetail.worldSetting.thisEntry')
-  const kindLabel = kind === 'location' ? t('novelDetail.worldSetting.kindLocation') : t('novelDetail.worldSetting.kindFaction')
-  const confirmed = await globalAlert.showConfirm(
-    t('novelDetail.common.confirmDelete', { name: label }),
-    t('novelDetail.worldSetting.deleteItem', { kind: kindLabel })
-  )
+  const confirmed = await confirmDelete({
+    title: t('novelDetail.common.confirmDeleteTitle'),
+    message: t('novelDetail.common.confirmDelete', { name: label }),
+    detail: t('novelDetail.common.confirmDeleteDetail'),
+    confirmText: t('novelDetail.common.confirmDeleteBtn'),
+  })
   if (!confirmed) return
 
   const field = kind === 'location' ? 'key_locations' : 'factions'

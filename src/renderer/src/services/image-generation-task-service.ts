@@ -5,6 +5,12 @@ import {
   upsertBackgroundTask,
   type BackgroundTask,
 } from './background-task-service'
+import type { ImageGenerateStage } from './image-service'
+
+export interface ImageGenerationJobProgress {
+  setMessage: (message: string) => void
+  setStage: (stage: ImageGenerateStage) => void
+}
 
 export interface ImageGenerationJobSpec {
   /** 后台任务分组 ID（作品 ID 或 material:xxx） */
@@ -14,7 +20,7 @@ export interface ImageGenerationJobSpec {
   subject: string
   /** UI 占用键：同一键同时只允许一个任务 */
   uiKey: string
-  generate: () => Promise<string>
+  generate: (progress: ImageGenerationJobProgress) => Promise<string>
   onSuccess: (dataUrl: string) => Promise<void>
   successMessage?: string
   successTitle?: string
@@ -65,7 +71,12 @@ function formatElapsed(seconds: number): string {
   return sec > 0 ? `${min}m${sec}s` : `${min}m`
 }
 
-/** 提交后台绘图任务，支持多任务并发；同一 uiKey 不重复提交 */
+function stageBaseMessage(subject: string, stage: ImageGenerateStage): string {
+  if (stage === 'prompt') return `正在编写${subject}提示词…`
+  return `正在绘制${subject}…`
+}
+
+/** 提交后台绘图任务（提示词精炼 + 绘图在同一任务内）；同一 uiKey 不重复提交 */
 export function enqueueImageGenerationJob(spec: ImageGenerationJobSpec): boolean {
   if (runningUiKeys.value.has(spec.uiKey)) {
     void globalAlert.showError(`${spec.subject}正在绘制中，请稍候`, '绘制进行中')
@@ -75,51 +86,61 @@ export function enqueueImageGenerationJob(spec: ImageGenerationJobSpec): boolean
   const taskId = nextTaskId()
   addRunningKey(spec.uiKey)
   const startedAt = Date.now()
+  let stage: ImageGenerateStage = 'prompt'
+  let customMessage = ''
 
-  upsertBackgroundTask({
-    id: taskId,
-    kind: 'image_generate',
-    projectId: spec.taskProjectId,
-    projectTitle: spec.projectTitle,
-    subjectLabel: spec.subject,
-    status: 'running',
-    message: `正在绘制${spec.subject}…`,
-    progressPercent: 0,
-  })
-
-  void globalAlert.showSuccess(
-    `${spec.subject}已开始后台绘制，耗时较长时可在右上角任务列表查看进度`,
-    '已转入后台'
-  )
-
-  let elapsedTimer: ReturnType<typeof setInterval> | undefined
-
-  const tickMessage = () => {
-    const sec = Math.round((Date.now() - startedAt) / 1000)
+  const patchTask = (partial: Partial<BackgroundTask> & { status?: BackgroundTask['status'] }) => {
     upsertBackgroundTask({
       id: taskId,
       kind: 'image_generate',
       projectId: spec.taskProjectId,
       projectTitle: spec.projectTitle,
       subjectLabel: spec.subject,
-      status: 'running',
-      message: `正在绘制${spec.subject}… 已等待 ${formatElapsed(sec)}`,
+      status: partial.status ?? 'running',
+      message: partial.message,
+      progressPercent: partial.progressPercent,
     })
   }
 
-  elapsedTimer = setInterval(tickMessage, 5000)
+  const currentMessage = () => {
+    if (customMessage) return customMessage
+    const sec = Math.round((Date.now() - startedAt) / 1000)
+    return `${stageBaseMessage(spec.subject, stage)} 已等待 ${formatElapsed(sec)}`
+  }
+
+  patchTask({
+    message: `正在编写提示词并绘制${spec.subject}…`,
+    progressPercent: 0,
+  })
+
+  void globalAlert.showSuccess(
+    `${spec.subject}已开始后台生成（含提示词编写与绘图），耗时较长时可在右上角任务列表查看进度`,
+    '已转入后台'
+  )
+
+  let elapsedTimer: ReturnType<typeof setInterval> | undefined
+  elapsedTimer = setInterval(() => {
+    patchTask({ message: currentMessage() })
+  }, 5000)
+
+  const progress: ImageGenerationJobProgress = {
+    setMessage: (message) => {
+      customMessage = message.trim()
+      patchTask({ message: currentMessage() })
+    },
+    setStage: (next) => {
+      stage = next
+      customMessage = ''
+      patchTask({ message: currentMessage() })
+    },
+  }
 
   void (async () => {
     try {
-      const dataUrl = await spec.generate()
+      const dataUrl = await spec.generate(progress)
       await spec.onSuccess(dataUrl)
       const elapsed = formatElapsed(Math.round((Date.now() - startedAt) / 1000))
-      upsertBackgroundTask({
-        id: taskId,
-        kind: 'image_generate',
-        projectId: spec.taskProjectId,
-        projectTitle: spec.projectTitle,
-        subjectLabel: spec.subject,
+      patchTask({
         status: 'completed',
         message: `${spec.subject}绘制完成（${elapsed}）`,
         progressPercent: 100,
@@ -130,12 +151,7 @@ export function enqueueImageGenerationJob(spec: ImageGenerationJobSpec): boolean
       )
     } catch (error) {
       const message = error instanceof Error ? error.message : '图像生成失败'
-      upsertBackgroundTask({
-        id: taskId,
-        kind: 'image_generate',
-        projectId: spec.taskProjectId,
-        projectTitle: spec.projectTitle,
-        subjectLabel: spec.subject,
+      patchTask({
         status: 'failed',
         message,
       })

@@ -19,6 +19,11 @@ export function registerNovelHandlers(appId: string): void {
     getNovelStore(appId, requireUserId(userId)).getProject(projectId)
   )
 
+  ipcMain.removeHandler('novel:projects:getForReading')
+  ipcMain.handle('novel:projects:getForReading', (_event, userId: string, projectId: string) =>
+    getNovelStore(appId, requireUserId(userId)).getProjectForReading(projectId)
+  )
+
   ipcMain.removeHandler('novel:projects:create')
   ipcMain.handle(
     'novel:projects:create',

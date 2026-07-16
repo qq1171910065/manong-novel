@@ -1,8 +1,8 @@
 <!-- AIMETA P=写作台工作区_主编辑区域|R=章节编辑_生成|NR=不含侧边栏|E=component:WDWorkspace|X=ui|A=工作区|D=vue|S=dom,net|RD=./README.ai -->
 <template>
-  <div class="flex-1 min-w-0 min-h-0 h-full">
+  <div class="flex-1 min-w-0 min-h-0 h-full w-full">
     <div
-      class="h-full flex flex-col min-h-0"
+      class="h-full flex flex-col min-h-0 w-full"
       :class="embedded ? 'wd-workspace--embedded' : 'md-card md-card-elevated'"
       :style="embedded ? undefined : 'border-radius: var(--md-radius-xl);'"
     >
@@ -470,7 +470,9 @@ onUnmounted(() => {
 
 const currentComponentProps = computed(() => {
   if (!props.selectedChapterNumber) {
-    return {}
+    return {
+      embedded: props.embedded,
+    }
   }
   const status = selectedChapter.value?.generation_status
   if (
@@ -560,6 +562,12 @@ defineExpose({ openChapterOptimizer, openChapterEditor })
 }
 
 .wd-workspace--embedded {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
   background: transparent;
 }
 
@@ -698,6 +706,8 @@ defineExpose({ openChapterOptimizer, openChapterEditor })
 }
 
 .wd-workspace__body {
+  display: flex;
+  flex-direction: column;
   padding: 14px 18px;
 }
 

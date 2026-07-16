@@ -11,6 +11,7 @@ export {
   fromGlobalPageIndex,
   paginateChapter,
   paginateChapterText,
+  resolveChapterPageView,
   resolvePageLayoutMetrics,
   toGlobalPageIndex,
   type BookPage,
@@ -52,7 +53,7 @@ export const READING_DEFAULTS: ReadingSettings = {
   autoTurn: false,
   autoTurnSeconds: 12,
   autoScroll: false,
-  autoScrollSpeed: 320,
+  autoScrollSpeed: 72,
   showChapterDividers: false,
   pageTurnAnimation: true,
   bossKeyEnabled: true,
@@ -74,11 +75,11 @@ function normalizeSettings(parsed: Partial<ReadingSettings>): ReadingSettings {
     opacity: clamp(Number(parsed.opacity) || READING_DEFAULTS.opacity, 0.55, 1),
     autoTurnSeconds: clamp(Number(parsed.autoTurnSeconds) || READING_DEFAULTS.autoTurnSeconds, 5, 120),
     autoScroll: parsed.autoScroll ?? READING_DEFAULTS.autoScroll,
-    autoScrollSpeed: clamp(
-      Number(parsed.autoScrollSpeed) || READING_DEFAULTS.autoScrollSpeed,
-      120,
-      600
-    ),
+    autoScrollSpeed: (() => {
+      const raw = Number(parsed.autoScrollSpeed) || READING_DEFAULTS.autoScrollSpeed
+      const migrated = raw > 160 ? Math.round(raw * 0.35) : raw
+      return clamp(migrated, 24, 160)
+    })(),
     showChapterDividers: parsed.showChapterDividers ?? READING_DEFAULTS.showChapterDividers,
     pageTurnAnimation: parsed.pageTurnAnimation ?? READING_DEFAULTS.pageTurnAnimation,
     bossKeyEnabled: parsed.bossKeyEnabled ?? READING_DEFAULTS.bossKeyEnabled,

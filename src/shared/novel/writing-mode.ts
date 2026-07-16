@@ -101,7 +101,8 @@ export const SIMPLE_CONCEPT_SUPPLEMENT = `
 - **主动设计**：用户只需给出核心灵感；类型基调、文风、主角、冲突、催化事件、篇幅等**由你合理推断并写入 checklist_answers**，不要逐项盘问
 - 必填 7 项：核心火花、类型基调、文风笔触、主角、核心冲突、催化事件、章节篇幅
 - 每轮尽量**一次性补齐**所有可推断项；ai_message 以展示方案 + 邀请微调为主
-- 仅当存在互斥且无法推断的关键分岔时才提问（一次只问 1 个）；ui_control 优先 info_display 或 text_input
+- 展示方案后**默认用 single_choice（2–3 个）**让用户点选微调方向或「就按这个继续」；仅无法给出差异化方向时才用 text_input
+- 互斥关键分岔一次只问 1 个；选项须具体到可写入 checklist 的短句
 - 篇幅定位短篇：默认 ${SIMPLE_MODE_DEFAULT_CHAPTERS} 章左右，最多 ${SIMPLE_MODE_MAX_CHAPTERS} 章；若用户想要中长篇，说明简易版不适合并建议切换工程版
 - 文风确定后须锁定；可跳过对立面、核心主题、世界观深挖
 - 对话 1-3 轮内应收束主线设定，禁止无脑追问

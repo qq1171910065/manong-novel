@@ -14,6 +14,12 @@ export const novelDomain = {
       data?: NovelProject
       error?: string
     }>,
+  novelGetProjectForReading: (userId: string, projectId: string) =>
+    ipcRenderer.invoke('novel:projects:getForReading', userId, projectId) as Promise<{
+      ok: boolean
+      data?: NovelProject
+      error?: string
+    }>,
   novelCreateProject: (
     userId: string,
     payload: { title: string; initialPrompt: string; writingMode?: import('@shared/novel/types').WritingMode }

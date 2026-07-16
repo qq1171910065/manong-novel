@@ -138,6 +138,7 @@ onUnmounted(() => {
     :title="headerTitle"
     :subtitle="headerSubtitle"
     aria-label="章节创作"
+    close-data-onboarding="writing-desk-close"
     @close="emit('close')"
   >
     <template #toolbar>
@@ -204,14 +205,16 @@ onUnmounted(() => {
       </div>
     </template>
 
-    <WritingDesk
-      ref="deskRef"
-      :key="projectId"
-      :project-id="projectId"
-      :auto-write-locked="autoWriteLocked"
-      embedded
-      @close="emit('close')"
-    />
+    <div data-onboarding="writing-desk-root" class="writing-desk-modal__anchor">
+      <WritingDesk
+        ref="deskRef"
+        :key="projectId"
+        :project-id="projectId"
+        :auto-write-locked="autoWriteLocked"
+        embedded
+        @close="emit('close')"
+      />
+    </div>
   </NovelModalShell>
 </template>
 
@@ -221,5 +224,21 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.writing-desk-modal__anchor {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+}
+
+.writing-desk-modal__anchor > :deep(.writing-desk--embedded) {
+  flex: 1 1 0;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
 }
 </style>

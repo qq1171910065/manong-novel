@@ -15,6 +15,7 @@ import {
 } from '@renderer/services/novel/material-library-service'
 import {
   emptyMaterialDraft,
+  emptyCharacterDraft,
   itemToDraft,
   draftToSavePatch,
   type MaterialDraft,
@@ -221,28 +222,121 @@ function applyAiDraft(next: MaterialDraft) {
   draft.value = next
 }
 
+/** 同步草稿快照中的配图字段，保留其余未保存编辑的 dirty 状态 */
+function patchSavedSnapshot(partial: Partial<MaterialDraft>) {
+  try {
+    const snap = JSON.parse(savedSnapshot.value || '{}') as MaterialDraft
+    savedSnapshot.value = JSON.stringify({ ...snap, ...partial })
+  } catch {
+    /* ignore corrupt snapshot */
+  }
+}
+
+function isStillEditingTarget(itemId: string | null): boolean {
+  if (itemId) return editingId.value === itemId
+  return isNew.value && !editingId.value
+}
+
+async function persistGeneratedStyleCover(coverUrl: string, itemId: string | null): Promise<void> {
+  if (isStillEditingTarget(itemId)) {
+    draft.value.coverUrl = coverUrl
+  }
+
+  if (!itemId) return
+
+  const existing = materialLibraryService.get(itemId)
+  if (!existing) throw new Error('素材不存在，文风配图未能写入库')
+  if (isMaterialBuiltIn(existing)) throw new Error('内置素材无法写入配图')
+
+  const updated = materialLibraryService.update(itemId, {
+    payload: {
+      ...existing.payload,
+      cover_url: coverUrl,
+    },
+  })
+  if (!updated) throw new Error('文风配图保存失败')
+
+  if (editingId.value === itemId) {
+    sourceItem.value = updated
+    patchSavedSnapshot({ coverUrl })
+  }
+  emit('saved')
+}
+
+async function persistGeneratedPortrait(portraitUrl: string, itemId: string | null): Promise<void> {
+  if (isStillEditingTarget(itemId)) {
+    draft.value.character.portrait_url = portraitUrl
+  }
+
+  if (!itemId) return
+
+  const existing = materialLibraryService.get(itemId)
+  if (!existing) throw new Error('素材不存在，头像未能写入库')
+  if (isMaterialBuiltIn(existing)) throw new Error('内置素材无法写入头像')
+
+  const prevCharacter =
+    existing.payload?.character && typeof existing.payload.character === 'object'
+      ? (existing.payload.character as Record<string, unknown>)
+      : {}
+
+  const updated = materialLibraryService.update(itemId, {
+    payload: {
+      ...existing.payload,
+      character: {
+        ...prevCharacter,
+        portrait_url: portraitUrl,
+      },
+    },
+  })
+  if (!updated) throw new Error('头像保存失败')
+
+  if (editingId.value === itemId) {
+    sourceItem.value = updated
+    try {
+      const snap = JSON.parse(savedSnapshot.value || '{}') as MaterialDraft
+      snap.character = {
+        ...(snap.character ?? emptyCharacterDraft()),
+        portrait_url: portraitUrl,
+      }
+      savedSnapshot.value = JSON.stringify(snap)
+    } catch {
+      /* ignore corrupt snapshot */
+    }
+  }
+  emit('saved')
+}
+
 function generateStyleCover() {
   if (readonlyMode.value || coverLoading.value) return
+
+  const targetItemId = editingId.value
+  const willPersist = Boolean(targetItemId)
 
   enqueueImageGenerationJob({
     taskProjectId: materialTaskProjectId.value,
     projectTitle: materialTitle.value,
     subject: '文风配图',
     uiKey: materialCoverUiKey(materialScopeId.value),
-    generate: () =>
-      generateStyleCoverImage({
-        title: draft.value.title,
-        summary: draft.value.summary,
-        genre: draft.value.genre,
-        style: draft.value.style,
-        tone: draft.value.tone,
-        writingHints: draft.value.writingHints,
-        tags: draft.value.tags,
-      }),
+    generate: (progress) =>
+      generateStyleCoverImage(
+        {
+          title: draft.value.title,
+          summary: draft.value.summary,
+          genre: draft.value.genre,
+          style: draft.value.style,
+          tone: draft.value.tone,
+          writingHints: draft.value.writingHints,
+          tags: draft.value.tags,
+        },
+        undefined,
+        { onStage: progress.setStage }
+      ),
     onSuccess: async (coverUrl) => {
-      draft.value.coverUrl = coverUrl
+      await persistGeneratedStyleCover(coverUrl, targetItemId)
     },
-    successMessage: '文风配图已生成',
+    successMessage: willPersist
+      ? '文风配图已保存到素材库'
+      : '文风配图已生成，请保存物料后写入库',
   })
 }
 
@@ -253,6 +347,9 @@ function generatePortrait() {
     globalAlert.showError('请先通过对话完善角色姓名', '无法生成头像')
     return
   }
+
+  const targetItemId = editingId.value
+  const willPersist = Boolean(targetItemId)
 
   const portraitDraft = buildCharacterPortraitDraft(draft.value.character, {
     title: draft.value.title,
@@ -267,7 +364,7 @@ function generatePortrait() {
     projectTitle: materialTitle.value,
     subject: `角色·${name}`,
     uiKey: materialPortraitUiKey(materialScopeId.value),
-    generate: () =>
+    generate: (progress) =>
       generateCharacterPortrait(
         draft.value.character,
         {
@@ -276,12 +373,12 @@ function generatePortrait() {
         },
         undefined,
         undefined,
-        { portraitDraft }
+        { portraitDraft, onStage: progress.setStage }
       ),
     onSuccess: async (portraitUrl) => {
-      draft.value.character.portrait_url = portraitUrl
+      await persistGeneratedPortrait(portraitUrl, targetItemId)
     },
-    successMessage: '头像已生成',
+    successMessage: willPersist ? '头像已保存到素材库' : '头像已生成，请保存物料后写入库',
   })
 }
 

@@ -10,6 +10,7 @@ import {
   getMainWindow,
   createLoginWindow,
   cleanupModules,
+  isWindowPhaseTransitioning,
 } from './lib/window-manager'
 import { findDeeplinkInArgv, handleDeeplinkUrl } from './lib/deeplink'
 import { isScreenshotMode } from './lib/screenshot-mode'
@@ -66,6 +67,7 @@ export function createMntoolsApp(config: MntoolsAppConfig): void {
   })
 
   app.on('window-all-closed', () => {
+    if (isWindowPhaseTransitioning()) return
     cleanupModules()
     if (isScreenshotMode()) return
     if (process.platform !== 'darwin') app.quit()

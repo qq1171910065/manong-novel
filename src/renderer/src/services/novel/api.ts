@@ -46,7 +46,7 @@ import type {
 } from '@shared/novel/types'
 import type { SectionPolishContext } from '@renderer/novel/utils/section-polish'
 import { novelClient } from './client'
-import { persistProject } from './project-persistence'
+import { isProjectSaveConflictError, persistProject, ProjectSaveConflictError } from './project-persistence'
 import { ensureBlueprintAssetIds } from './blueprint-asset'
 import { applyProjectModelPrefs } from './project-model'
 import * as writing from './writing-service'
@@ -68,6 +68,7 @@ import {
   splitIntoChapters,
   type ImportParseProgress,
 } from './import-service'
+import { isSparseImportSettings } from '@shared/novel/import-status'
 import { readNovelTextFile } from './file-text'
 import { countChapterChars } from '@shared/novel/chapter-length-plan'
 import { exportProjectJson, exportProjectTxt } from './project-export'
@@ -78,6 +79,10 @@ async function saveNovelProject(
   project: NovelProject,
   options?: { skipReplay?: boolean; expectedUpdatedAt?: string | null }
 ): Promise<NovelProject> {
+  // skipReplay 单用时不带乐观锁；显式 expectedUpdatedAt 仍校验
+  if (options?.skipReplay && options.expectedUpdatedAt === undefined) {
+    return persistProject(project, { skipReplay: true })
+  }
   return persistProject(project, {
     skipReplay: options?.skipReplay,
     expectedUpdatedAt: options?.expectedUpdatedAt ?? project.updated_at,
@@ -162,20 +167,76 @@ export class NovelAPI {
       signal?: AbortSignal
       modelPrefs?: import('./project-model').ProjectModelPrefs | null
       onProgress?: (progress: ImportParseProgress) => void
+      /** continue=断点续跑；optimize=保留摘要重跑设定；restart=清空断点全量重跑 */
+      mode?: import('./import-service').ImportParseMode
     }
   ): Promise<NovelProject> {
     const project = await novelClient.getProject(projectId)
     if (project.source_type !== 'txt_import') {
       throw new Error('当前项目不是 txt 导入作品')
     }
-    if (project.import_parsed) {
-      throw new Error('该项目已完成智能解析')
+
+    const mode = options?.mode ?? 'continue'
+    if (
+      mode === 'continue' &&
+      project.import_parsed &&
+      !isSparseImportSettings(project.blueprint)
+    ) {
+      throw new Error('该项目已完成智能解析。如需再跑请选择「优化解析」或「重新开始」。')
+    }
+
+    if (mode === 'restart' || mode === 'optimize') {
+      delete project.import_parse_checkpoint
+      project.import_parsed = false
     }
 
     applyProjectModelPrefs(project, options?.modelPrefs)
-    const blueprint = await analyzeImportedNovel(project, options)
+    // 并行摘要批次会并发触发 checkpoint；串行落盘并跳过乐观锁，避免 PROJECT_SAVE_CONFLICT
+    let checkpointQueue: Promise<void> = Promise.resolve()
+    const blueprint = await analyzeImportedNovel(project, {
+      ...options,
+      mode,
+      onCheckpoint: ({ checkpoint, blueprint: partialBlueprint }) => {
+        checkpointQueue = checkpointQueue
+          .catch(() => undefined)
+          .then(async () => {
+            project.import_parse_checkpoint = checkpoint
+            if (partialBlueprint) {
+              project.blueprint = {
+                ...project.blueprint,
+                ...partialBlueprint,
+                chapter_outline:
+                  partialBlueprint.chapter_outline || project.blueprint?.chapter_outline,
+              }
+            }
+            if (checkpoint.summaries && project.blueprint?.chapter_outline) {
+              const outline = project.blueprint.chapter_outline.map((row) => {
+                const summary = checkpoint.summaries?.[String(row.chapter_number)]
+                return summary ? { ...row, summary } : row
+              })
+              project.blueprint = { ...project.blueprint, chapter_outline: outline }
+            }
+            // 解析中途断点：不做 commit 投影、不卡住乐观锁（与章节生成 checkpoint 一致）
+            const saved = await saveNovelProject(project, { skipReplay: true })
+            Object.assign(project, saved)
+          })
+        return checkpointQueue
+      },
+    })
+    await checkpointQueue.catch(() => undefined)
     applyImportAnalysis(project, blueprint)
-    return saveNovelProject(project)
+    try {
+      // project.updated_at 已由最近 checkpoint 同步；若期间 UI 另有写入则再抢一次最新锁
+      return await saveNovelProject(project)
+    } catch (error) {
+      if (!isProjectSaveConflictError(error)) throw error
+      const latest =
+        error instanceof ProjectSaveConflictError
+          ? error.latestProject
+          : await novelClient.getProject(projectId)
+      project.updated_at = latest.updated_at
+      return saveNovelProject(project, { expectedUpdatedAt: latest.updated_at })
+    }
   }
 
   static async exportNovelTxt(projectId: string): Promise<boolean> {
@@ -190,6 +251,10 @@ export class NovelAPI {
 
   static getNovel(projectId: string): Promise<NovelProject> {
     return novelClient.getProject(projectId)
+  }
+
+  static getNovelForReading(projectId: string): Promise<NovelProject> {
+    return novelClient.getProjectForReading(projectId)
   }
 
   static getChapter(projectId: string, chapterNumber: number): Promise<Chapter> {
@@ -208,11 +273,21 @@ export class NovelAPI {
     modelPrefs?: import('./project-model').ProjectModelPrefs | null
   ): Promise<ConverseResponse> {
     ensureWritingRuntime()
-    const project = await novelClient.getProject(projectId)
-    applyProjectModelPrefs(project, modelPrefs)
-    const response = await writing.converseConcept(project, userInput, conversationState, options)
-    await saveNovelProject(project)
-    return response
+    let lastError: unknown
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const project = await novelClient.getProject(projectId)
+        applyProjectModelPrefs(project, modelPrefs)
+        const loadedAt = project.updated_at
+        const response = await writing.converseConcept(project, userInput, conversationState, options)
+        await saveNovelProject(project, { expectedUpdatedAt: loadedAt })
+        return response
+      } catch (error) {
+        lastError = error
+        if (!isProjectSaveConflictError(error) || attempt === 2) throw error
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError))
   }
 
   static async converseSectionPolish(

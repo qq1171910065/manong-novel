@@ -1,14 +1,42 @@
 <!-- AIMETA P=概览区_小说基本信息|R=基本信息展示|NR=不含编辑功能|E=component:OverviewSection|X=ui|A=概览组件|D=vue|S=dom|RD=./README.ai -->
 <template>
   <div class="nd-section">
-    <div v-if="importPending" class="nd-import-banner">
-      <p class="nd-import-banner__title">{{ t('novelDetail.overview.importBannerTitle') }}</p>
-      <p class="nd-import-banner__desc">
-        {{ t('novelDetail.overview.importBannerDesc', { count: importedChapterCount ?? 0 }) }}
-      </p>
-    </div>
+    <section
+      v-if="importPending || canOptimizeParse"
+      class="nd-block nd-import-parse-bar"
+    >
+      <div class="nd-import-parse-bar__copy">
+        <p class="nd-import-parse-bar__title">
+          {{
+            importPending
+              ? t('novelDetail.overview.importBannerTitle')
+              : t('novelDetail.overview.optimizeBannerTitle')
+          }}
+        </p>
+        <p class="nd-import-parse-bar__desc">
+          {{
+            importPending
+              ? hasParseCheckpoint || importParsing
+                ? t('novelDetail.overview.continueBannerDesc', { count: importedChapterCount || 0 })
+                : t('novelDetail.overview.importBannerDesc', { count: importedChapterCount || 0 })
+              : t('novelDetail.overview.optimizeBannerDesc')
+          }}
+        </p>
+      </div>
+      <div class="nd-import-parse-bar__actions">
+        <button
+          v-if="canOptimizeParse && !importPending"
+          type="button"
+          class="detail-action-btn detail-action-btn--primary md-ripple"
+          :disabled="importParsing"
+          @click="emit('open-import-parse-modes')"
+        >
+          {{ t('novelDetail.primaryAction.smartParse') }}
+        </button>
+      </div>
+    </section>
 
-    <section class="nd-block nd-overview-hero">
+    <section class="nd-block nd-overview-hero" data-onboarding="overview-hero">
       <div class="nd-overview-hero__grid">
         <div class="nd-overview-hero__content">
           <DetailEditableZone
@@ -38,7 +66,7 @@
             </p>
           </DetailEditableZone>
 
-          <div class="nd-overview-hero__meta">
+          <div class="nd-overview-hero__meta" data-onboarding="style-meta">
             <DetailEditableZone
               v-for="item in metaStats"
               :key="item.key"
@@ -74,7 +102,6 @@
             :editable="editable"
             :generating="coverGenerating"
             :default-prompt="coverPrompt"
-            :project-model="projectModel"
             @update:model-value="emitCoverUpdate"
             @generate="emitCoverGenerate"
             @remove="emitCoverUpdate(null)"
@@ -163,6 +190,9 @@ const props = defineProps<{
   editable?: boolean
   importPending?: boolean
   importedChapterCount?: number
+  hasParseCheckpoint?: boolean
+  canOptimizeParse?: boolean
+  importParsing?: boolean
   coverGenerating?: boolean
   projectId?: string
   projectTitle?: string
@@ -177,6 +207,8 @@ const emit = defineEmits<{
   (e: 'field-saved'): void
   (e: 'cover-update', value: string | null): void
   (e: 'cover-generate', prompt: string): void
+  (e: 'import-parse', mode: 'continue' | 'optimize' | 'restart'): void
+  (e: 'open-import-parse-modes'): void
 }>()
 
 const editModalOpen = ref(false)
@@ -188,10 +220,6 @@ const fieldSaving = ref(false)
 const displayTitle = computed(
   () => props.data?.title?.trim() || props.projectTitle?.trim() || t('novelDetail.common.unnamedProject')
 )
-
-const projectModel = computed(() => ({
-  chat_model_id: props.data?.chat_model_id || undefined,
-}))
 
 const coverPrompt = computed(() =>
   buildCoverPrompt({
@@ -305,28 +333,6 @@ function emitCoverGenerate(prompt: string) {
   font-weight: 600;
   color: var(--primary);
   background: color-mix(in srgb, var(--primary) 12%, transparent);
-}
-
-.nd-import-banner {
-  margin-bottom: 16px;
-  padding: 14px 16px;
-  border-radius: 12px;
-  border: 1px solid color-mix(in srgb, var(--primary) 24%, transparent);
-  background: color-mix(in srgb, var(--primary) 8%, transparent);
-}
-
-.nd-import-banner__title {
-  margin: 0 0 6px;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--foreground);
-}
-
-.nd-import-banner__desc {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.55;
-  color: var(--muted);
 }
 </style>
 

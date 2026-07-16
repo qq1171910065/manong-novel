@@ -1,4 +1,4 @@
-import { formatGatewayContentFilterError } from '@shared/gateway/format-error'
+import { formatGatewayApiError, isRetryableGatewayError } from '@shared/gateway/format-error'
 import { getGatewayChatPort } from '@shared/gateway/chat-port'
 import type { GatewayTokenUsage } from '@shared/gateway/chat-port'
 import {
@@ -59,6 +59,48 @@ export function buildGatewayMessages(
   return [{ role: 'user', content: system }, first, ...rest]
 }
 
+async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (!ms) return
+  if (signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError')
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(new DOMException('The operation was aborted.', 'AbortError'))
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+async function chatWithRetries<T>(
+  run: () => Promise<T>,
+  options?: { signal?: AbortSignal; retries?: number }
+): Promise<T> {
+  const retries = options?.retries ?? 2
+  let lastError: unknown
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await run()
+    } catch (error) {
+      lastError = error
+      if (options?.signal?.aborted) throw error
+      if (error instanceof DOMException && error.name === 'AbortError') throw error
+      if (attempt >= retries || !isRetryableGatewayError(error)) {
+        throw new Error(
+          formatGatewayApiError(error instanceof Error ? error.message : String(error))
+        )
+      }
+      await sleep(800 * (attempt + 1) + Math.floor(Math.random() * 400), options?.signal)
+    }
+  }
+  throw new Error(
+    formatGatewayApiError(lastError instanceof Error ? lastError.message : String(lastError))
+  )
+}
+
 export async function chat(
   systemPrompt: string,
   conversation: Array<{ role: string; content: string }>,
@@ -106,6 +148,43 @@ export async function chat(
     throw new DOMException('The operation was aborted.', 'AbortError')
   }
 
+  // 无流式回调时走非流式：避免全局 SSE 单通道被智能解析并发互相顶掉
+  if (!streamHandlers) {
+    try {
+      const result = await chatWithRetries(
+        async () => {
+          const completion = await port.chatCompletion(model, messages, {
+            temperature,
+            timeoutMs,
+            max_tokens: params?.max_tokens,
+            signal: params?.signal,
+          })
+          const payload = params?.contentOnly
+            ? resolveChapterStreamPayload(completion.content, completion.reasoning || '')
+            : pickBestLlmPayload(completion.content, completion.reasoning || '')
+          if (params?.statsProjectId) {
+            runtime.recordAiCall(params.statsProjectId, completion.usage)
+          }
+          params?.onRawPayload?.({
+            content: completion.content,
+            reasoning: completion.reasoning || '',
+          })
+          return payload
+        },
+        { signal: params?.signal, retries: 2 }
+      )
+      if (pipelineId && runtime.finishPipelineLog) {
+        runtime.finishPipelineLog(pipelineId, { response: result })
+      }
+      return result
+    } catch (error) {
+      if (pipelineId && runtime.finishPipelineLog) {
+        runtime.finishPipelineLog(pipelineId, { error })
+      }
+      throw error
+    }
+  }
+
   let cancelStream: (() => void) | undefined
   let timedOut = false
   let outputLimitReached = false
@@ -123,11 +202,15 @@ export async function chat(
     }, timeoutMs)
   }
 
-  const streamPromise = new Promise<{ content: string; reasoning: string; usage?: GatewayTokenUsage }>((resolve, reject) => {
+  const streamPromise = new Promise<{
+    content: string
+    reasoning: string
+    usage?: GatewayTokenUsage
+  }>((resolve, reject) => {
     let contentText = ''
     let reasoningText = ''
     let usage: GatewayTokenUsage | undefined
-    let streamStatus: ChatStreamStatus = streamHandlers ? 'pending' : 'done'
+    let streamStatus: ChatStreamStatus = 'pending'
     let settled = false
 
     const settleAbort = () => {
@@ -254,7 +337,7 @@ export async function chat(
               return
             }
             settled = true
-            reject(new Error(formatGatewayContentFilterError(err)))
+            reject(new Error(formatGatewayApiError(err)))
           },
         },
         { temperature, timeoutMs, max_tokens: params?.max_tokens, signal: params?.signal }
@@ -262,7 +345,11 @@ export async function chat(
       .then((cancel) => {
         cancelStream = cancel
       })
-      .catch(reject)
+      .catch((error) => {
+        reject(
+          new Error(formatGatewayApiError(error instanceof Error ? error.message : String(error)))
+        )
+      })
   })
 
   resetTimeout()

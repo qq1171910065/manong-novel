@@ -1,4 +1,4 @@
-﻿/* Unified arena dialog shell — form / preview / confirm */
+/* Unified arena dialog shell — form / preview / confirm (glass) */
 
 .novel-dialog-overlay {
   position: fixed;
@@ -7,24 +7,34 @@
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgba(15, 18, 42, 0.42);
-  backdrop-filter: blur(6px);
+  background: rgba(15, 18, 42, 0.28);
+  backdrop-filter: blur(10px) saturate(1.15);
+  -webkit-backdrop-filter: blur(10px) saturate(1.15);
 }
 
 .novel-dialog {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   max-height: min(86vh, 780px);
-  border-radius: 24px;
-  border: 1px solid rgba(255, 255, 255, 0.78);
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 32px 80px rgba(50, 56, 120, 0.22);
+  border-radius: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.7);
+  box-shadow:
+    0 28px 72px rgba(50, 56, 120, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(22px) saturate(1.35);
+  -webkit-backdrop-filter: blur(22px) saturate(1.35);
   overflow: hidden;
 }
 
 .novel-dialog--form {
   width: min(560px, 100%);
   max-height: min(82vh, 760px);
+}
+
+.novel-dialog--confirm {
+  width: min(420px, 100%);
+  max-height: none;
 }
 
 .novel-dialog--preview-md {
@@ -55,8 +65,8 @@
 }
 
 .novel-dialog__head {
-  padding: 16px 18px;
-  border-bottom: 1px solid rgba(130, 142, 207, 0.12);
+  padding: 18px 22px;
+  border-bottom: 1px solid rgba(130, 142, 207, 0.14);
 }
 
 .novel-dialog__head--with-close {
@@ -93,15 +103,15 @@
 
 .novel-dialog__title {
   margin: 0;
-  color: #171145;
-  font-size: 20px;
-  font-weight: 680;
+  color: #1a1840;
+  font-size: 18px;
+  font-weight: 700;
   line-height: 1.35;
 }
 
 .novel-dialog__body {
   overflow: auto;
-  padding: 16px 18px;
+  padding: 18px 22px;
   scrollbar-width: thin;
   min-height: 0;
 }
@@ -118,18 +128,45 @@
   line-height: 1.5;
 }
 
+.novel-dialog__icon {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--brand-soft, rgba(91, 87, 243, 0.12));
+  color: var(--brand, #5b57f3);
+}
+
+.novel-dialog__icon.is-error {
+  background: rgba(239, 68, 68, 0.12);
+  color: #dc2626;
+}
+
+.novel-dialog__icon.is-success {
+  background: rgba(34, 197, 94, 0.12);
+  color: #16a34a;
+}
+
+.novel-dialog__icon.is-warning {
+  background: rgba(245, 158, 11, 0.14);
+  color: #d97706;
+}
+
 .novel-dialog__foot {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  padding: 14px 18px;
-  border-top: 1px solid rgba(130, 142, 207, 0.12);
+  padding: 16px 22px;
+  border-top: 1px solid rgba(130, 142, 207, 0.14);
+  background: transparent;
 }
 
 .novel-dialog__actions {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   margin-left: auto;
 }
 
@@ -138,15 +175,22 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-height: 36px;
-  padding: 0 14px;
-  border: 1px solid rgba(130, 142, 207, 0.15);
+  min-height: 38px;
+  padding: 0 18px;
+  border: 1px solid rgba(130, 142, 207, 0.22);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.58);
+  background: rgba(255, 255, 255, 0.55);
   color: #26305e;
   font: inherit;
   font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+
+.novel-dialog__btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.82);
+  border-color: rgba(130, 142, 207, 0.32);
 }
 
 .novel-dialog__btn:disabled {
@@ -160,10 +204,19 @@
   background: linear-gradient(180deg, #7774ff, #5b57f3);
 }
 
+.novel-dialog__btn--primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #8582ff, #6864f5);
+}
+
 .novel-dialog__btn--danger {
   color: #fff;
   border-color: transparent;
-  background: linear-gradient(180deg, #ef4444, #dc2626);
+  background: #ef4444;
+  box-shadow: 0 8px 20px rgba(239, 68, 68, 0.28);
+}
+
+.novel-dialog__btn--danger:hover:not(:disabled) {
+  background: #dc2626;
 }
 
 .novel-dialog-fade-enter-active,
