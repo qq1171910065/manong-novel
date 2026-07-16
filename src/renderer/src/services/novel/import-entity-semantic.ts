@@ -280,35 +280,35 @@ export async function extractEntitiesSemantically(
 
   const evidence = buildStratifiedEvidence(chunks)
 
-  options?.onProgress?.('校验子代理正在甄别角色…', 0, 3)
-  const verifiedCharacters = await verifyEntityCategory(
-    project,
-    'characters',
-    takeWithLateReserve(merged.characters, 100),
-    evidence,
-    sourceText,
-    options
-  )
-
-  options?.onProgress?.('校验子代理正在甄别地点…', 1, 3)
-  const verifiedLocations = await verifyEntityCategory(
-    project,
-    'locations',
-    takeWithLateReserve(merged.locations, 64),
-    evidence,
-    sourceText,
-    options
-  )
-
-  options?.onProgress?.('校验子代理正在甄别阵营…', 2, 3)
-  const verifiedFactions = await verifyEntityCategory(
-    project,
-    'factions',
-    takeWithLateReserve(merged.factions, 48),
-    evidence,
-    sourceText,
-    options
-  )
+  // 三类校验互不依赖，并行可省约 2 轮串行等待；甄别标准不变
+  options?.onProgress?.('校验子代理并行甄别角色/地点/阵营…', 0, 3)
+  const [verifiedCharacters, verifiedLocations, verifiedFactions] = await Promise.all([
+    verifyEntityCategory(
+      project,
+      'characters',
+      takeWithLateReserve(merged.characters, 100),
+      evidence,
+      sourceText,
+      options
+    ),
+    verifyEntityCategory(
+      project,
+      'locations',
+      takeWithLateReserve(merged.locations, 64),
+      evidence,
+      sourceText,
+      options
+    ),
+    verifyEntityCategory(
+      project,
+      'factions',
+      takeWithLateReserve(merged.factions, 48),
+      evidence,
+      sourceText,
+      options
+    ),
+  ])
+  options?.onProgress?.('校验子代理甄别完成…', 3, 3)
 
   return {
     characters: verifiedCharacters.length

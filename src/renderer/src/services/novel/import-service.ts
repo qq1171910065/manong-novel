@@ -6,6 +6,7 @@ import type {
   ImportBlueprintSubstep,
   ImportParseCheckpoint,
   NovelProject,
+  WorldListItem,
 } from '@shared/novel/types'
 import { resolveImportParseProgressPercent } from '@shared/novel/import-parse-progress'
 import { parseLlmJsonObject, sanitizeJsonLikeText, unwrapMarkdownJson } from './json-utils'
@@ -86,11 +87,16 @@ const LONG_TIMEOUT_MS = 600_000
 const ENRICH_TIMEOUT_MS = 180_000
 const SUMMARY_TIMEOUT_MS = 240_000
 const SUMMARY_BATCH_SIZE = 8
-const SUMMARY_CONCURRENCY = 2
-/** 角色档案 LLM 补全并发 */
+/** 摘要批并发：同质任务并行不降单章质量；3 在效果与限流间取平衡 */
+const SUMMARY_CONCURRENCY = 3
+/** 角色档案 / 世界条目 LLM 补全并发 */
 const CAST_ENRICH_CONCURRENCY = 2
-/** LLM 详写角色档案上限，其余用启发式（显著缩短蓝图阶段） */
+/** LLM 详写角色档案上限（按重要度），其余启发式兜底 */
 const CAST_LLM_PROFILE_CAP = 36
+/** 每批 LLM 档案人数 */
+const CAST_LLM_BATCH_SIZE = 6
+/** 关系 hub 补全并发（merge 后再合并，不降密度目标） */
+const RELATIONSHIP_HUB_CONCURRENCY = 2
 /** 每批摘要完成后立即落盘，避免长批次间隔丢进度 */
 const CHECKPOINT_EVERY_BATCHES = 1
 const PROGRESS_HEARTBEAT_MS = 8_000
@@ -259,7 +265,7 @@ function normalizeBlueprintData(data: Record<string, unknown>): Blueprint {
   return blueprint
 }
 
-function normalizeCharacterList(raw: unknown): Blueprint['characters'] {
+function normalizeCharacterList(raw: unknown): NonNullable<Blueprint['characters']> {
   if (!Array.isArray(raw)) return []
   const result: NonNullable<Blueprint['characters']> = []
   for (const item of raw) {
@@ -295,7 +301,7 @@ function normalizeCharacterList(raw: unknown): Blueprint['characters'] {
   return result
 }
 
-function normalizeRelationshipList(raw: unknown): Blueprint['relationships'] {
+function normalizeRelationshipList(raw: unknown): NonNullable<Blueprint['relationships']> {
   if (!Array.isArray(raw)) return []
   const result: NonNullable<Blueprint['relationships']> = []
   for (const item of raw) {
@@ -447,10 +453,10 @@ function mergeCharacterProfiles(
 }
 
 function mergeNamedWorldItems(
-  existing: NonNullable<Blueprint['world_setting']>['key_locations'],
-  patch: NonNullable<Blueprint['world_setting']>['key_locations'],
+  existing: WorldListItem[] | undefined,
+  patch: WorldListItem[] | undefined,
   kind: 'location' | 'faction' = 'location'
-): NonNullable<Blueprint['world_setting']>['key_locations'] {
+): WorldListItem[] {
   const list = [...(existing || [])]
   const byName = new Map(
     list.map((item, index) => [(item.name || item.title || '').trim(), index] as const)
@@ -1139,8 +1145,8 @@ async function enrichWorldItemDescriptionsInBatches(
     kind: 'location' | 'faction',
     names: string[],
     label: string
-  ): Promise<void> => {
-    if (!names.length) return
+  ): Promise<NonNullable<Blueprint['world_setting']>['key_locations'] | NonNullable<Blueprint['world_setting']>['factions'] | undefined> => {
+    if (!names.length) return undefined
     const batches: string[][] = []
     for (let i = 0; i < names.length; i += batchSize) {
       batches.push(names.slice(i, i + batchSize))
@@ -1206,20 +1212,19 @@ async function enrichWorldItemDescriptionsInBatches(
       }
     })
 
-    const cur = next.world_setting || {}
+    const base = next.world_setting || {}
     if (kind === 'location') {
-      let locs = cur.key_locations || []
+      let locs = base.key_locations || []
       for (const patch of results) {
         if (patch) locs = mergeNamedWorldItems(locs, patch as typeof locs, 'location')
       }
-      next = { ...next, world_setting: { ...cur, key_locations: locs } }
-    } else {
-      let factions = cur.factions || []
-      for (const patch of results) {
-        if (patch) factions = mergeNamedWorldItems(factions, patch as typeof factions, 'faction')
-      }
-      next = { ...next, world_setting: { ...cur, factions } }
+      return locs
     }
+    let factions = base.factions || []
+    for (const patch of results) {
+      if (patch) factions = mergeNamedWorldItems(factions, patch as typeof factions, 'faction')
+    }
+    return factions
   }
 
   report(options, {
@@ -1228,17 +1233,143 @@ async function enrichWorldItemDescriptionsInBatches(
     current: 3,
     total: BLUEPRINT_STEP_TOTAL,
   })
-  // 先地点后阵营，避免并行写同一 blueprint；各自内部批次并发
-  await runKindBatches('location', weakLocations, '地点')
-  await runKindBatches('faction', weakFactions, '阵营')
-
+  // 地点与阵营互不依赖：并行后各自写回，避免串行白等
+  const [locPatch, factionPatch] = await Promise.all([
+    runKindBatches('location', weakLocations, '地点'),
+    runKindBatches('faction', weakFactions, '阵营'),
+  ])
   const cur = next.world_setting || {}
   next.world_setting = {
     ...cur,
-    key_locations: dedupeNamedWorldItems(cur.key_locations || []),
-    factions: dedupeNamedWorldItems(cur.factions || []),
+    key_locations: dedupeNamedWorldItems(
+      (locPatch as typeof cur.key_locations) || cur.key_locations || []
+    ),
+    factions: dedupeNamedWorldItems((factionPatch as typeof cur.factions) || cur.factions || []),
   }
   return next
+}
+
+/**
+ * 按重要度对空壳角色做 LLM 分批补档：最多 CAST_LLM_PROFILE_CAP 人详写，其余启发式。
+ * （此前函数缺失会导致 cast 阶段直接 catch 跳过）
+ */
+async function enrichCharacterProfilesInBatches(
+  project: NovelProject,
+  chapters: ParsedChapter[],
+  verifiedCharacters: string[],
+  blueprint: Blueprint,
+  options?: ImportParseOptions
+): Promise<Blueprint> {
+  seedCharactersFromVerified(blueprint, verifiedCharacters)
+
+  const existing = blueprint.characters || []
+  const weakNames = [
+    ...new Set(
+      existing
+        .filter((c) => c.name?.trim() && !characterHasProfileBody(c))
+        .map((c) => c.name.trim())
+    ),
+  ]
+  if (!weakNames.length) return blueprint
+
+  const ranked = rankCharactersByImportance(chapters, weakNames)
+  const llmTargets = ranked.slice(0, CAST_LLM_PROFILE_CAP)
+  const heuristicOnly = ranked.slice(CAST_LLM_PROFILE_CAP)
+
+  const batches: string[][] = []
+  for (let i = 0; i < llmTargets.length; i += CAST_LLM_BATCH_SIZE) {
+    batches.push(llmTargets.slice(i, i + CAST_LLM_BATCH_SIZE))
+  }
+
+  report(options, {
+    phase: 'blueprint',
+    message: `正在分批补全角色档案（LLM ${llmTargets.length} / 共 ${ranked.length}）…`,
+    current: 4,
+    total: BLUEPRINT_STEP_TOTAL,
+  })
+
+  const results = await runPool(batches, CAST_ENRICH_CONCURRENCY, async (batch, batchIndex) => {
+    if (options?.signal?.aborted) {
+      throw new DOMException('Aborted', 'AbortError')
+    }
+    report(options, {
+      phase: 'blueprint',
+      message: `正在补全角色档案 ${Math.min((batchIndex + 1) * CAST_LLM_BATCH_SIZE, llmTargets.length)}/${llmTargets.length}…`,
+      current: 4,
+      total: BLUEPRINT_STEP_TOTAL,
+    })
+    const highlights = extractCharacterHighlights(chapters, batch, 180, 12_000)
+    const synopsis = (blueprint.full_synopsis || blueprint.one_sentence_summary || '').slice(0, 800)
+    const systemPrompt = `你是网文角色档案编辑。只输出合法 JSON（禁止 Markdown、禁止解释）：
+{
+  "characters": [
+    {
+      "name": "角色名",
+      "description": "不少于60字的可展示简介：出身、经历、当前处境",
+      "identity": "身份定位",
+      "personality": "性格与行事风格",
+      "goals": "目标动机",
+      "abilities": "能力或手段（未知写文中未明）",
+      "relationship_to_protagonist": "与主角关系"
+    }
+  ]
+}
+硬性约束：
+1. 第一个字符必须是 {。
+2. 必须覆盖给定每个角色名，禁止新增名单外角色。
+3. 所有字符串必须是可直接展示的中文成品，禁止提示词复述与思考过程。`
+
+    try {
+      const raw = await chat(
+        systemPrompt,
+        [
+          {
+            role: 'user',
+            content: `【书名】${blueprint.title || project.title}
+【梗概】${synopsis || '无'}
+【本批角色】${batch.join('、')}
+
+=== 角色相关片段 ===
+${highlights || '无'}
+
+请输出本批角色档案 JSON：`,
+          },
+        ],
+        {
+          project,
+          statsProjectId: project.id,
+          temperature: 0.2,
+          timeoutMs: ENRICH_TIMEOUT_MS,
+          signal: options?.signal,
+        }
+      )
+      const list = extractCharactersFromEnrichRaw(raw)
+      const allow = new Set(batch)
+      return list.filter((c) => allow.has((c.name || '').trim()))
+    } catch (error) {
+      if (options?.signal?.aborted) throw error
+      return []
+    }
+  })
+
+  let merged = existing
+  for (const patch of results) {
+    if (patch?.length) merged = mergeCharacterProfiles(merged, patch)
+  }
+
+  const stillWeak = llmTargets.filter((name) => {
+    const row = merged.find((c) => c.name.trim() === name)
+    return !row || !characterHasProfileBody(row)
+  })
+  const heuristicNames = [...new Set([...heuristicOnly, ...stillWeak])]
+  if (heuristicNames.length) {
+    merged = mergeCharacterProfiles(
+      merged,
+      buildHeuristicCharacterProfiles(chapters, heuristicNames)
+    )
+  }
+
+  return { ...blueprint, characters: merged }
 }
 
 function extractCharactersFromEnrichRaw(raw: string): NonNullable<Blueprint['characters']> {
@@ -1465,16 +1596,21 @@ ${highlights || '无'}
   let rels = await askRelationships(hubs, cast.slice(0, 20), Math.min(targetRels, 14), '主力关系')
 
   if (rels.length < targetRels) {
-    for (const hub of hubs.slice(0, 4)) {
-      if (rels.length >= targetRels) break
-      report(options, {
-        phase: 'blueprint',
-        message: `正在补全「${hub}」相关人物关系 ${rels.length}/${targetRels}…`,
-        current: 5,
-        total: BLUEPRINT_STEP_TOTAL,
-      })
+    const hubJobs = hubs.slice(0, 4)
+    report(options, {
+      phase: 'blueprint',
+      message: `正在并行补全核心人物关系 ${rels.length}/${targetRels}…`,
+      current: 5,
+      total: BLUEPRINT_STEP_TOTAL,
+    })
+    const moreList = await runPool(hubJobs, RELATIONSHIP_HUB_CONCURRENCY, async (hub) => {
+      if (options?.signal?.aborted) {
+        throw new DOMException('Aborted', 'AbortError')
+      }
       const peers = cast.filter((n) => n !== hub).slice(0, 12)
-      const more = await askRelationships([hub], peers, 4, `${hub}关系`)
+      return askRelationships([hub], peers, 4, `${hub}关系`)
+    })
+    for (const more of moreList) {
       rels = mergeRelationships(rels, more)
     }
   }
@@ -2553,20 +2689,10 @@ async function executeAnalyzeImportedNovel(
   )
 
   blueprint.chapter_outline = buildChapterOutline(chapters, summaries)
-  // 章节摘要齐备后：无论是否已有梗概，偏稀都重写；并用摘要地板兜底
+  // 章节摘要齐备后：先用摘要地板；仍偏稀再 LLM 精炼（达标则跳过，不降质量门槛）
   const castNames = (blueprint.characters || []).map((c) => c.name).filter(Boolean)
   const weakSynopsis = isWeakImportSynopsis(blueprint.full_synopsis)
   if (weakSynopsis || !blueprint.one_sentence_summary?.trim() || !blueprint.full_synopsis?.trim()) {
-    reportProgress({
-      phase: 'blueprint',
-      message: '正在根据全书摘要精炼完整故事梗概…',
-    })
-    try {
-      blueprint = await enrichSynopsisIfMissing(project, chapters, blueprint, options)
-    } catch (error) {
-      if (options?.signal?.aborted) throw error
-    }
-    blueprint = finalizeBlueprintSynopsis(blueprint, chapters)
     const fromSummaries = buildSynopsisFromChapterSummaries(
       chapters,
       blueprint.chapter_outline,
@@ -2583,6 +2709,30 @@ async function executeAnalyzeImportedNovel(
           fromSummaries.full_synopsis
         )
       }
+    }
+
+    if (
+      isWeakImportSynopsis(blueprint.full_synopsis) ||
+      !blueprint.one_sentence_summary?.trim() ||
+      !blueprint.full_synopsis?.trim()
+    ) {
+      reportProgress({
+        phase: 'blueprint',
+        message: '正在根据全书摘要精炼完整故事梗概…',
+      })
+      try {
+        blueprint = await enrichSynopsisIfMissing(project, chapters, blueprint, options)
+      } catch (error) {
+        if (options?.signal?.aborted) throw error
+      }
+    }
+
+    blueprint = finalizeBlueprintSynopsis(blueprint, chapters)
+    if (fromSummaries && isWeakImportSynopsis(blueprint.full_synopsis)) {
+      blueprint.full_synopsis = pickRicherText(
+        blueprint.full_synopsis,
+        fromSummaries.full_synopsis
+      )
     }
   }
 
